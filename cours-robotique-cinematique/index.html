@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cinématique robotique sur automate (PLC) — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Cinématique robotique sur automate (PLC)</h1>
+      <p class="sub">Réviser la cinématique des bras manipulateurs — paramétrisation DH/MDH,
+      cinématique directe, Jacobien et calibration — avec une implémentation pensée pour un
+      automate industriel en IEC&nbsp;61131-3 (Structured Text). 7 chapitres en français :
+      théorie, code commenté et exercices à solutions repliables.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Comment suivre ce cours ?</strong> Lis les chapitres dans l'ordre. Chaque page contient
+      de la théorie, des exemples de code <em>Structured Text</em> commentés, des encarts
+      « ⚠️ Piège », « 🔧 Sur automate » et « ⏱️ Temps de cycle », et des exercices. Les
+      <em>solutions sont repliables</em> : essaie d'abord, puis clique sur « Voir la solution ».
+      Les conventions de notation (repères, angles, unités) sont fixées au chapitre 1 et tenues
+      partout ensuite.
+    </div>
+
+    <div class="part-title">Partie A — Fondations géométriques</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html"><span class="num">01</span><span><strong>Introduction &amp; contexte automate</strong><span class="desc">repères, pose, SE(3), IEC 61131-3, structures de données ST, conventions du cours</span></span></a></li>
+      <li><a href="chapitre-02.html"><span class="num">02</span><span><strong>Transformations rigides &amp; orientation</strong><span class="desc">matrices homogènes 4×4, rotations élémentaires, RPY &amp; quaternions</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie B — Modélisation cinématique</div>
+    <ul class="toc">
+      <li><a href="chapitre-03.html"><span class="num">03</span><span><strong>Paramétrisation Denavit-Hartenberg</strong><span class="desc">convention DH classique (distale), règles de placement, avantages et contraintes</span></span></a></li>
+      <li><a href="chapitre-04.html"><span class="num">04</span><span><strong>MDH &amp; autres paramétrisations</strong><span class="desc">MDH de Craig, Hayati, produit d'exponentielles (POE/torseurs), URDF — comparatif</span></span></a></li>
+      <li><a href="chapitre-05.html"><span class="num">05</span><span><strong>Cinématique directe sur PLC</strong><span class="desc">chaînage des transformations, bloc fonctionnel ST, exemple 6 axes, temps de cycle</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie C — Vitesses &amp; précision</div>
+    <ul class="toc">
+      <li><a href="chapitre-06.html"><span class="num">06</span><span><strong>Le Jacobien</strong><span class="desc">Jacobien géométrique &amp; analytique, vitesses, statique, singularités, implémentation ST</span></span></a></li>
+      <li><a href="chapitre-07.html"><span class="num">07</span><span><strong>Calibration robotique</strong><span class="desc">modèle d'erreur, identification, méthodes (open/closed-loop, screw axis, circle point), avantages/inconvénients</span></span></a></li>
+    </ul>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) · à suivre dans l'ordre 🤖
+  </footer>
+</body>
+</html>

@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — Paramétrisation Denavit-Hartenberg</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). ST ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>Paramétrisation Denavit-Hartenberg</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre <strong>pourquoi</strong> la convention de Denavit-Hartenberg (DH) réduit chaque liaison à <strong>4 paramètres</strong> seulement.</li>
+        <li>Connaître le sens des quatre paramètres <span class="math-inline">θ, d, a, α</span> (convention <strong>distale / standard</strong>).</li>
+        <li>Savoir <strong>placer les repères</strong> sur une chaîne série selon l'algorithme DH.</li>
+        <li>Reconstruire la <strong>matrice DH 4×4</strong> à partir du produit <span class="math-inline">Rot<sub>z</sub>·Trans<sub>z</sub>·Trans<sub>x</sub>·Rot<sub>x</sub></span>.</li>
+        <li>Lire et écrire une <strong>table DH</strong> (bras planaire 2R, bras anthropomorphe 6 axes).</li>
+        <li>Cerner les <strong>avantages</strong> mais aussi les <strong>limites</strong> de DH classique (axes parallèles, calibration, arborescence).</li>
+        <li>Implémenter <code>DhTransform</code> en <strong>Structured Text</strong> et vérifier le cas dégénéré.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi Denavit-Hartenberg ?</h2>
+    <p>
+      Au chapitre 2, nous avons appris à composer des repères par produit de transformations homogènes :
+      <span class="math-inline"><sup>0</sup>T<sub>n</sub> = <sup>0</sup>T<sub>1</sub> · <sup>1</sup>T<sub>2</sub> · … · <sup>n-1</sup>T<sub>n</sub></span>.
+      La cinématique directe se ramène donc à écrire, liaison par liaison, chaque
+      <span class="math-inline"><sup>i-1</sup>T<sub>i</sub></span>. Le problème : écrire <em>à la main</em>
+      une matrice 4×4 par liaison est <strong>fastidieux et fragile</strong>. Une transformation rigide
+      quelconque possède <strong>6 degrés de liberté</strong> (3 pour la rotation, 3 pour la translation) ;
+      remplir 6 nombres — plus les fonctions trigonométriques — pour chacune des liaisons, sans se tromper
+      de signe ni d'axe, c'est le genre d'exercice où les erreurs se glissent silencieusement.
+    </p>
+    <p>
+      En 1955, <strong>Jacques Denavit</strong> et <strong>Richard Hartenberg</strong> ont proposé une
+      <strong>convention de placement des repères</strong> qui impose <em>deux contraintes</em> géométriques
+      sur la façon d'attacher chaque repère à son segment. Ces deux contraintes suppriment 2 des 6 degrés de
+      liberté : il ne reste alors que <strong>4 paramètres</strong> pour décrire la transformation entre deux
+      repères consécutifs. On passe de 6 nombres arbitraires par liaison à 4 nombres <em>normalisés</em>, ce
+      qui donne une <strong>table compacte</strong> — une ligne, quatre colonnes, par liaison — universellement
+      lue et documentée.
+    </p>
+
+    <div class="callout note">
+      <p>
+        <strong>L'idée en une phrase.</strong> DH ne change pas la géométrie du robot ; il choisit
+        <em>où</em> et <em>comment</em> poser les repères de manière à ce que chaque passage de
+        <span class="math-inline">R<sub>i-1</sub></span> à <span class="math-inline">R<sub>i</sub></span> ne
+        coûte que quatre nombres au lieu de six. C'est une discipline de placement, pas une formule magique.
+      </p>
+    </div>
+
+    <h2>2. Les quatre paramètres DH</h2>
+    <p>
+      Il existe <strong>deux conventions</strong> de Denavit-Hartenberg (voir la mise en garde plus bas et le
+      chapitre 4). Ce chapitre présente la convention <strong>distale</strong>, dite aussi
+      <strong>« standard »</strong> ou <em>classique</em> : c'est la plus répandue dans la littérature
+      académique et dans de nombreuses documentations constructeur. Les quatre paramètres de la liaison
+      <span class="math-inline">i</span> sont :
+    </p>
+    <table>
+      <thead>
+        <tr><th>Paramètre</th><th>Nom</th><th>Nature du mouvement</th><th>Variable si…</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="math-inline">θ<sub>i</sub></span></td><td>angle articulaire</td><td>rotation autour de <span class="math-inline">z<sub>i-1</sub></span></td><td>liaison <strong>rotoïde</strong></td></tr>
+        <tr><td><span class="math-inline">d<sub>i</sub></span></td><td>décalage (<em>offset</em>)</td><td>translation le long de <span class="math-inline">z<sub>i-1</sub></span></td><td>liaison <strong>prismatique</strong></td></tr>
+        <tr><td><span class="math-inline">a<sub>i</sub></span></td><td>longueur du bras</td><td>translation le long de <span class="math-inline">x<sub>i</sub></span></td><td>toujours constant</td></tr>
+        <tr><td><span class="math-inline">α<sub>i</sub></span></td><td>torsion (<em>twist</em>)</td><td>rotation autour de <span class="math-inline">x<sub>i</sub></span></td><td>toujours constant</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Deux paramètres se rapportent à l'axe <strong>z</strong> (celui de la liaison précédente) et deux à
+      l'axe <strong>x</strong> (la normale commune). Pour chaque liaison, <strong>un seul</strong> des quatre
+      est <em>variable</em> — celui qui correspond au type de la liaison — et les trois autres sont des
+      <strong>constantes géométriques</strong> figées par la construction mécanique :
+    </p>
+    <ul>
+      <li>Liaison <strong>rotoïde</strong> : <span class="math-inline">θ<sub>i</sub></span> varie (c'est la variable articulaire <span class="math-inline">q<sub>i</sub></span>) ; <span class="math-inline">d<sub>i</sub>, a<sub>i</sub>, α<sub>i</sub></span> sont constants.</li>
+      <li>Liaison <strong>prismatique</strong> : <span class="math-inline">d<sub>i</sub></span> varie (c'est <span class="math-inline">q<sub>i</sub></span>) ; <span class="math-inline">θ<sub>i</sub>, a<sub>i</sub>, α<sub>i</sub></span> sont constants.</li>
+    </ul>
+
+    <div class="callout note">
+      <p>
+        <strong>Offset constant vs variable articulaire.</strong> Dans notre type <code>T_DH</code>
+        (chapitre 1), le champ <code>theta</code> stocke l'<em>offset constant</em> (souvent 0) et le champ
+        <code>d</code> l'offset prismatique constant. Lors de la cinématique directe, on <strong>ajoute</strong>
+        la variable articulaire <span class="math-inline">q<sub>i</sub></span> au paramètre variable :
+        <span class="math-inline">θ<sub>i</sub> := theta + q<sub>i</sub></span> pour une rotoïde,
+        <span class="math-inline">d<sub>i</sub> := d + q<sub>i</sub></span> pour une prismatique. On garde ainsi
+        la géométrie constante séparée de l'état, comme au chapitre 1.
+      </p>
+    </div>
+
+    <h2>3. Placer les repères : l'algorithme DH</h2>
+    <p>
+      Les quatre paramètres n'ont de sens que parce que les repères sont posés selon des règles précises.
+      Voici l'algorithme, à appliquer du repère de base <span class="math-inline">R<sub>0</sub></span> vers
+      l'effecteur <span class="math-inline">R<sub>n</sub></span>.
+    </p>
+
+    <h3>3.1 L'axe z : porté par l'axe de la liaison</h3>
+    <p>
+      On place l'axe <span class="math-inline">z<sub>i</sub></span> <strong>le long de l'axe de la liaison
+      i+1</strong> — c'est-à-dire l'axe autour duquel (rotoïde) ou le long duquel (prismatique) se fait le
+      mouvement de la liaison suivante. C'est la règle la plus importante et la source de la première
+      contrainte : le repère <span class="math-inline">R<sub>i</sub></span> « regarde vers » l'articulation qui
+      vient. Le sens positif de <span class="math-inline">z<sub>i</sub></span> fixe le sens positif de rotation
+      ou de translation de cette liaison.
+    </p>
+
+    <h3>3.2 L'axe x : la normale commune</h3>
+    <p>
+      On place ensuite <span class="math-inline">x<sub>i</sub></span> le long de la <strong>normale
+      commune</strong> aux axes <span class="math-inline">z<sub>i-1</sub></span> et
+      <span class="math-inline">z<sub>i</sub></span> : c'est le segment le plus court reliant ces deux droites
+      (la perpendiculaire commune). Le sens de <span class="math-inline">x<sub>i</sub></span> pointe de
+      <span class="math-inline">z<sub>i-1</sub></span> vers <span class="math-inline">z<sub>i</sub></span>.
+      C'est cette normale commune qui matérialise géométriquement la <strong>longueur</strong>
+      <span class="math-inline">a<sub>i</sub></span> (sa longueur) et la <strong>torsion</strong>
+      <span class="math-inline">α<sub>i</sub></span> (l'angle entre les deux z, mesuré autour de x).
+    </p>
+
+    <h3>3.3 L'origine : à l'intersection</h3>
+    <p>
+      L'origine <span class="math-inline">O<sub>i</sub></span> se trouve à l'<strong>intersection de la
+      normale commune avec l'axe <span class="math-inline">z<sub>i</sub></span></strong>. Enfin,
+      <span class="math-inline">y<sub>i</sub></span> complète le repère orthonormé direct
+      (<span class="math-inline">y<sub>i</sub> = z<sub>i</sub> × x<sub>i</sub></span>).
+    </p>
+    <p>
+      Une fois les repères posés, les quatre paramètres se <strong>lisent directement</strong> sur le dessin :
+    </p>
+    <ul>
+      <li><span class="math-inline">d<sub>i</sub></span> = distance, le long de <span class="math-inline">z<sub>i-1</sub></span>, de l'ancienne normale commune à la nouvelle ;</li>
+      <li><span class="math-inline">θ<sub>i</sub></span> = angle, autour de <span class="math-inline">z<sub>i-1</sub></span>, entre <span class="math-inline">x<sub>i-1</sub></span> et <span class="math-inline">x<sub>i</sub></span> ;</li>
+      <li><span class="math-inline">a<sub>i</sub></span> = longueur de la normale commune (distance entre les deux axes z) ;</li>
+      <li><span class="math-inline">α<sub>i</sub></span> = angle, autour de <span class="math-inline">x<sub>i</sub></span>, entre <span class="math-inline">z<sub>i-1</sub></span> et <span class="math-inline">z<sub>i</sub></span>.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Ordre de lecture : d'abord z, ensuite x.</strong> On fixe <em>tous</em> les axes z le long des
+        axes de liaison, puis on trace les normales communes pour les x. En procédant dans cet ordre, les
+        quatre paramètres tombent naturellement. Tenter de placer un repère complet d'un seul coup mène presque
+        toujours à une erreur de torsion.
+      </p>
+    </div>
+
+    <h2>4. La matrice DH standard</h2>
+    <p>
+      La transformation <span class="math-inline"><sup>i-1</sup>T<sub>i</sub></span> résulte de
+      <strong>quatre mouvements élémentaires appliqués dans l'ordre</strong> : deux le long / autour de
+      <span class="math-inline">z</span>, puis deux le long / autour de <span class="math-inline">x</span>.
+      C'est précisément parce que ces quatre opérations suffisent (grâce au placement des repères) que DH
+      n'a besoin que de quatre paramètres :
+    </p>
+    <div class="math">
+      <sup>i-1</sup>T<sub>i</sub> = Rot<sub>z</sub>(θ<sub>i</sub>) · Trans<sub>z</sub>(d<sub>i</sub>) · Trans<sub>x</sub>(a<sub>i</sub>) · Rot<sub>x</sub>(α<sub>i</sub>)
+    </div>
+    <p>
+      En développant le produit (avec les raccourcis <span class="math-inline">cθ = cos θ</span>,
+      <span class="math-inline">sθ = sin θ</span>, <span class="math-inline">cα = cos α</span>,
+      <span class="math-inline">sα = sin α</span>), on obtient la <strong>matrice DH standard</strong> 4×4 :
+    </p>
+    <div class="math">
+      <sup>i-1</sup>T<sub>i</sub> =
+      [ cθ &nbsp; −sθ cα &nbsp; sθ sα &nbsp; a cθ ;
+        sθ &nbsp; cθ cα &nbsp; −cθ sα &nbsp; a sθ ;
+        0 &nbsp; sα &nbsp; cα &nbsp; d ;
+        0 &nbsp; 0 &nbsp; 0 &nbsp; 1 ]
+    </div>
+    <p>
+      Observez la structure : la première colonne ne contient que <span class="math-inline">θ</span>
+      (c'est l'image de l'axe x tourné autour de z) ; la dernière colonne est la
+      <strong>translation</strong> <span class="math-inline">(a cθ, a sθ, d)</span> ; le bloc central couple
+      <span class="math-inline">θ</span> et <span class="math-inline">α</span>. Le facteur
+      <span class="math-inline">cα / sα</span> qui apparaît dans les colonnes 2 et 3 est la
+      <strong>torsion</strong> : c'est lui qui fait sortir le mécanisme du plan.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>L'ordre des quatre facteurs n'est pas commutatif.</strong> La séquence est bien
+        <span class="math-inline">z</span> d'abord (rotation θ puis translation d), <span class="math-inline">x</span>
+        ensuite (translation a puis rotation α). Intervertir <span class="math-inline">Trans<sub>x</sub></span> et
+        <span class="math-inline">Rot<sub>x</sub></span>, ou faire les x avant les z, produit une matrice
+        <em>différente</em> qui ressemble pourtant à s'y méprendre à la bonne. C'est aussi ce qui distingue la
+        convention distale (ce chapitre) de la convention modifiée (chapitre 4), où l'ordre et l'indexation
+        changent.
+      </p>
+    </div>
+
+    <h3>4.1 Le cas dégénéré : retrouver R<sub>z</sub></h3>
+    <p>
+      Avec <span class="math-inline">d = a = α = 0</span>, la matrice se réduit à une simple rotation homogène
+      autour de <span class="math-inline">z</span> :
+    </p>
+    <div class="math">
+      <sup>i-1</sup>T<sub>i</sub> =
+      [ cθ &nbsp; −sθ &nbsp; 0 &nbsp; 0 ;
+        sθ &nbsp; cθ &nbsp; 0 &nbsp; 0 ;
+        0 &nbsp; 0 &nbsp; 1 &nbsp; 0 ;
+        0 &nbsp; 0 &nbsp; 0 &nbsp; 1 ]
+      = R<sub>z</sub>(θ)
+    </div>
+    <p>
+      C'est un excellent <strong>test de non-régression</strong> pour valider une implémentation : si
+      <code>DhTransform</code> avec <span class="math-inline">d=a=α=0</span> ne redonne pas exactement
+      <span class="math-inline">R<sub>z</sub>(θ)</span>, c'est qu'un signe ou une position est erroné.
+    </p>
+
+    <h2>5. La table DH</h2>
+    <p>
+      Décrire un robot revient alors à remplir un <strong>tableau à quatre colonnes</strong>
+      (<span class="math-inline">θ, d, a, α</span>), une ligne par liaison. C'est la
+      <strong>« fiche géométrique »</strong> du robot : compacte, portable, universelle.
+    </p>
+
+    <h3>5.1 Exemple (a) : le bras planaire 2R</h3>
+    <p>
+      Deux liaisons rotoïdes dans le plan, de longueurs <span class="math-inline">L<sub>1</sub></span> et
+      <span class="math-inline">L<sub>2</sub></span>. Les axes des deux liaisons sont parallèles (tous deux
+      perpendiculaires au plan), donc la torsion est nulle ; le mécanisme reste plan, donc les offsets
+      <span class="math-inline">d</span> sont nuls ; la longueur de chaque segment se lit sur
+      <span class="math-inline">a<sub>i</sub></span> :
+    </p>
+    <table>
+      <thead>
+        <tr><th>i</th><th>θ<sub>i</sub></th><th>d<sub>i</sub></th><th>a<sub>i</sub></th><th>α<sub>i</sub></th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td><span class="math-inline">θ<sub>1</sub></span> (var.)</td><td>0</td><td>L<sub>1</sub></td><td>0</td></tr>
+        <tr><td>2</td><td><span class="math-inline">θ<sub>2</sub></span> (var.)</td><td>0</td><td>L<sub>2</sub></td><td>0</td></tr>
+      </tbody>
+    </table>
+    <p>
+      On retrouve bien la position d'effecteur du chapitre précédent :
+      <span class="math-inline">x = L<sub>1</sub>c<sub>1</sub> + L<sub>2</sub>c<sub>12</sub></span>,
+      <span class="math-inline">y = L<sub>1</sub>s<sub>1</sub> + L<sub>2</sub>s<sub>12</sub></span>, en
+      multipliant les deux matrices DH.
+    </p>
+
+    <h3>5.2 Exemple (b) : un bras anthropomorphe 6 axes</h3>
+    <p>
+      Voici une table DH <strong>générique</strong> pour un bras anthropomorphe à 6 axes rotoïdes avec
+      <strong>poignet sphérique</strong> (les trois derniers axes se coupent en un point). Les valeurs sont
+      plausibles ; les torsions <span class="math-inline">α = ±90°</span> (soit <span class="math-inline">±π/2</span>
+      rad) sont caractéristiques du changement d'orientation des axes entre l'épaule, le coude et le poignet.
+      Rappel : <strong>toutes les valeurs sont en radians et en mètres</strong>.
+    </p>
+    <table>
+      <thead>
+        <tr><th>i</th><th>θ<sub>i</sub></th><th>d<sub>i</sub> (m)</th><th>a<sub>i</sub> (m)</th><th>α<sub>i</sub> (rad)</th><th>rôle</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td><span class="math-inline">θ<sub>1</sub></span> (var.)</td><td>0,340</td><td>0</td><td>−π/2</td><td>base / rotation</td></tr>
+        <tr><td>2</td><td><span class="math-inline">θ<sub>2</sub></span> (var.)</td><td>0</td><td>0,350</td><td>0</td><td>épaule</td></tr>
+        <tr><td>3</td><td><span class="math-inline">θ<sub>3</sub></span> (var.)</td><td>0</td><td>0,040</td><td>−π/2</td><td>coude</td></tr>
+        <tr><td>4</td><td><span class="math-inline">θ<sub>4</sub></span> (var.)</td><td>0,310</td><td>0</td><td>+π/2</td><td>poignet 1</td></tr>
+        <tr><td>5</td><td><span class="math-inline">θ<sub>5</sub></span> (var.)</td><td>0</td><td>0</td><td>−π/2</td><td>poignet 2</td></tr>
+        <tr><td>6</td><td><span class="math-inline">θ<sub>6</sub></span> (var.)</td><td>0,080</td><td>0</td><td>0</td><td>bride outil</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Comment la lire.</strong> Chaque ligne <span class="math-inline">i</span> donne la transformation
+      <span class="math-inline"><sup>i-1</sup>T<sub>i</sub></span> à injecter dans la matrice DH standard. Les
+      six <span class="math-inline">θ<sub>i</sub></span> sont <em>variables</em> (six liaisons rotoïdes) : ce
+      sont les consignes moteur. Le reste est <em>constant</em> :
+    </p>
+    <ul>
+      <li><span class="math-inline">d<sub>1</sub> = 0,340</span> m : la hauteur de l'épaule au-dessus de la base ;</li>
+      <li><span class="math-inline">a<sub>2</sub> = 0,350</span> m : la longueur du bras (épaule → coude) ;</li>
+      <li><span class="math-inline">a<sub>3</sub> = 0,040</span> m : un petit décalage au coude ;</li>
+      <li><span class="math-inline">d<sub>4</sub> = 0,310</span> m : la longueur de l'avant-bras (coude → poignet) ;</li>
+      <li><span class="math-inline">d<sub>6</sub> = 0,080</span> m : la distance du centre du poignet à la bride outil ;</li>
+      <li>les <span class="math-inline">α<sub>i</sub> = ±π/2</span> encodent le fait que les axes successifs sont perpendiculaires (typique d'un poignet sphérique).</li>
+    </ul>
+    <p>
+      Pour obtenir la pose de l'outil, on remplit six matrices DH et on les chaîne :
+      <span class="math-inline"><sup>0</sup>T<sub>6</sub> = <sup>0</sup>T<sub>1</sub> · <sup>1</sup>T<sub>2</sub> · … · <sup>5</sup>T<sub>6</sub></span>
+      (code au §8). La même fonction générique traite les 2R, les 6 axes, ou n'importe quel bras série.
+    </p>
+
+    <h2>6. Les avantages de DH</h2>
+    <p>
+      Pourquoi cette convention s'est-elle imposée pendant plus d'un demi-siècle ?
+    </p>
+    <ul>
+      <li>
+        <strong>Nombre minimal de paramètres.</strong> 4 par liaison au lieu de 6 pour une transformation
+        générale — les 2 contraintes de placement (axe z sur la liaison, axe x sur la normale commune) suppriment
+        exactement 2 degrés de liberté. Moins de nombres à mesurer, à stocker, à identifier en calibration.
+      </li>
+      <li>
+        <strong>Standardisation.</strong> Une table DH est comprise à l'identique par tout roboticien ; c'est un
+        langage commun, indépendant de l'outil logiciel.
+      </li>
+      <li>
+        <strong>Table compacte et portable.</strong> Un robot 6 axes tient en un tableau de 6 lignes ×
+        4 colonnes = 24 nombres, faciles à figer en constantes dans un automate.
+      </li>
+      <li>
+        <strong>Universellement documentée.</strong> Manuels constructeur, articles, bibliothèques
+        (ROS, Robotics Toolbox…) : DH est partout.
+      </li>
+      <li>
+        <strong>Code générique unique.</strong> Une seule fonction <code>DhTransform</code> + une boucle de
+        produit matriciel traitent <em>tout</em> robot série, quel que soit le nombre d'axes. C'est exactement
+        ce qu'on va coder au §8.
+      </li>
+    </ul>
+
+    <div class="callout plc">
+      <p>
+        <strong>Sur automate, la table DH est parfaite.</strong> 24 <code>LREAL</code> constants tiennent dans
+        un <code>ARRAY[0..5] OF T_DH</code> figé à la compilation, sans allocation. Les
+        <span class="math-inline">cos α</span> / <span class="math-inline">sin α</span> ne dépendent pas des
+        angles articulaires : on peut les <strong>précalculer</strong> une fois au démarrage et les garder au
+        chaud, ce qui allège la boucle cyclique (voir chapitre 5).
+      </p>
+    </div>
+
+    <h2>7. Les limites de DH classique</h2>
+    <p>
+      DH standard n'est pas sans défauts. Ces limites motivent directement le chapitre 4 (convention modifiée
+      MDH, paramétrisation de Hayati…).
+    </p>
+
+    <h3>7.1 Placement non unique</h3>
+    <p>
+      L'algorithme laisse des <strong>libertés</strong> : sens de l'axe z, choix de la normale commune quand
+      plusieurs conviennent, position du premier et du dernier repère. Résultat : <strong>deux ingénieurs
+      peuvent produire deux tables DH différentes pour le même robot</strong>, toutes deux correctes. C'est
+      pourquoi les tables d'un même bras diffèrent parfois d'un fournisseur ou d'un article à l'autre.
+    </p>
+
+    <h3>7.2 Conventions multiples</h3>
+    <p>
+      Il existe la convention <strong>distale</strong> (standard, celle de ce chapitre) et la convention
+      <strong>proximale / modifiée</strong> (dite « MDH » de Khalil-Kleinfinger, chapitre 4). Elles diffèrent
+      par l'ordre des facteurs et l'indexation des repères : <em>une même table de nombres ne donne pas la même
+      cinématique selon la convention</em>.
+    </p>
+    <div class="callout piege">
+      <p>
+        <strong>Vérifiez toujours la convention d'une table fournisseur.</strong> Reprendre une table DH d'une
+        documentation sans savoir si elle est <em>standard</em> ou <em>modifiée</em> est une erreur classique et
+        coûteuse : la pose calculée sera fausse d'une liaison de décalage, souvent de façon subtile. Le symptôme
+        typique : le robot est correct « à un maillon près ».
+      </p>
+    </div>
+
+    <h3>7.3 Le problème des axes parallèles</h3>
+    <p>
+      C'est la limite la plus sérieuse. Quand deux axes consécutifs
+      <span class="math-inline">z<sub>i-1</sub></span> et <span class="math-inline">z<sub>i</sub></span> sont
+      <strong>parallèles</strong>, la normale commune n'est <strong>pas unique</strong> : une infinité de
+      perpendiculaires conviennent. Pire, pour des axes <em>quasi</em> parallèles — le cas réel, car aucun robot
+      n'est parfait — la normale commune est <strong>mal conditionnée</strong> : un minuscule défaut de
+      parallélisme (quelques centièmes de degré) fait <strong>sauter</strong> brutalement la valeur de
+      <span class="math-inline">a</span> et de <span class="math-inline">d</span>.
+    </p>
+    <div class="math">
+      z<sub>i-1</sub> ∥ z<sub>i</sub>  →  normale commune indéterminée  →  a<sub>i</sub>, d<sub>i</sub> discontinus
+    </div>
+    <p>
+      Concrètement, la paramétrisation DH devient <strong>discontinue et instable</strong> précisément dans une
+      configuration très courante (deux axes d'épaule/coude nominalement parallèles). C'est catastrophique pour
+      la <strong>calibration</strong> (chapitre 7), qui cherche à identifier les écarts géométriques réels :
+      l'algorithme d'identification voit un paramètre qui varie énormément pour un défaut minuscule, donc mal
+      conditionné numériquement. La solution — la paramétrisation de <strong>Hayati</strong> et la convention
+      <strong>MDH</strong> — fait l'objet du chapitre 4.
+    </p>
+
+    <h3>7.4 Pas d'arborescence</h3>
+    <p>
+      DH décrit une <strong>chaîne ouverte simple</strong> (base → … → effecteur). Il ne gère pas nativement les
+      structures <strong>arborescentes</strong> (un tronc portant plusieurs branches : deux bras, plusieurs
+      doigts d'une pince, robot humanoïde). Il faut alors plusieurs chaînes DH ou une autre formulation
+      (arbre cinématique, twists / exponentielles de screw).
+    </p>
+
+    <h2>8. Implémentation en Structured Text</h2>
+    <p>
+      On code la fonction <code>DhTransform</code> qui construit la matrice DH standard à partir des quatre
+      paramètres, en réutilisant le type <code>T_MAT4</code> du chapitre 1. Le résultat est passé en
+      <code>VAR_IN_OUT</code> pour éviter toute copie — réflexe temps réel.
+    </p>
+    <pre><code class="language-pascal">// Construit la matrice DH standard (convention distale) dans T :
+//   T := Rot_z(theta) * Trans_z(d) * Trans_x(a) * Rot_x(alpha)
+// theta, alpha en radians ; d, a en mètres. LREAL partout.
+FUNCTION DhTransform : BOOL
+VAR_INPUT
+    theta : LREAL;   // rad — inclut déjà la variable articulaire si rotoïde
+    d     : LREAL;   // m   — inclut déjà la variable articulaire si prismatique
+    a     : LREAL;   // m
+    alpha : LREAL;   // rad
+END_VAR
+VAR_IN_OUT
+    T : T_MAT4;      // matrice résultat 4×4
+END_VAR
+VAR
+    ct, st : LREAL;  // cos/sin de theta
+    ca, sa : LREAL;  // cos/sin de alpha
+END_VAR
+    // Précalcul des fonctions trigonométriques (une seule fois chacune).
+    ct := COS(theta);
+    st := SIN(theta);
+    ca := COS(alpha);
+    sa := SIN(alpha);
+
+    // Ligne 0
+    T[0,0] := ct;   T[0,1] := -st * ca;   T[0,2] :=  st * sa;   T[0,3] := a * ct;
+    // Ligne 1
+    T[1,0] := st;   T[1,1] :=  ct * ca;   T[1,2] := -ct * sa;   T[1,3] := a * st;
+    // Ligne 2
+    T[2,0] := 0.0;  T[2,1] :=  sa;        T[2,2] :=  ca;        T[2,3] := d;
+    // Ligne 3 (homogène)
+    T[3,0] := 0.0;  T[3,1] := 0.0;        T[3,2] := 0.0;        T[3,3] := 1.0;
+
+    DhTransform := TRUE;
+END_FUNCTION</code></pre>
+
+    <p>
+      Enchaîner les liaisons donne la cinématique directe. On part de l'identité et on
+      <strong>post-multiplie</strong> chaque matrice de liaison, en ajoutant la variable articulaire
+      <code>q</code> au paramètre variable selon le type de liaison.
+    </p>
+    <pre><code class="language-pascal">// Cinématique directe d'un bras série à N liaisons décrites par une table DH.
+// dh[i] : géométrie constante ; q[i] : variable articulaire (rad ou m).
+// Résultat T0n := 0_T_N (base -> effecteur).
+FUNCTION FkDh : BOOL
+VAR_IN_OUT
+    dh  : ARRAY[0..5] OF T_DH;    // table DH (6 liaisons ici)
+    q   : ARRAY[0..5] OF LREAL;   // variables articulaires
+    T0n : T_MAT4;                 // résultat
+END_VAR
+VAR
+    i        : INT;
+    theta, d : LREAL;
+    Ti       : T_MAT4;   // 0_T_i courant (accumulateur)
+    Tliaison : T_MAT4;   // i-1_T_i de la liaison
+    Ttmp     : T_MAT4;   // résultat temporaire (jamais aliasé)
+END_VAR
+    Mat4Identity(M := Ti);           // 0_T_0 = identité
+
+    FOR i := 0 TO 5 DO
+        // Ajout de la variable articulaire au bon paramètre.
+        IF dh[i].isPrismatic THEN
+            theta := dh[i].theta;          // constant
+            d     := dh[i].d + q[i];       // prismatique : d varie
+        ELSE
+            theta := dh[i].theta + q[i];   // rotoïde : theta varie
+            d     := dh[i].d;              // constant
+        END_IF
+
+        DhTransform(theta := theta, d := d, a := dh[i].a, alpha := dh[i].alpha,
+                    T := Tliaison);
+
+        // Ttmp := Ti * Tliaison   (C distinct de A et B — cf. Mat4Mul)
+        Mat4Mul(A := Ti, B := Tliaison, C := Ttmp);
+        Ti := Ttmp;                        // on avance l'accumulateur
+    END_FOR
+
+    T0n := Ti;
+    FkDh := TRUE;
+END_FUNCTION</code></pre>
+
+    <div class="callout temps">
+      <p>
+        <strong>Coût borné.</strong> Chaque liaison = 4 appels trigonométriques + un produit 4×4
+        (64 multiplications). Six liaisons ≈ quelques microsecondes, parfaitement déterministe dans une tâche
+        cyclique. Aucune boucle de longueur inconnue, aucune allocation : tout tient dans des tableaux fixes,
+        conformément au modèle temps réel du chapitre 1.
+      </p>
+    </div>
+
+    <div class="callout piege">
+      <p>
+        <strong>Ne jamais aliaser le résultat de <code>Mat4Mul</code>.</strong> On multiplie dans
+        <code>Ttmp</code> (distinct de <code>Ti</code> et <code>Tliaison</code>) puis on recopie dans
+        <code>Ti</code>. Écrire <code>Mat4Mul(A := Ti, B := Tliaison, C := Ti)</code> écraserait des
+        coefficients de <code>Ti</code> encore nécessaires au calcul → pose fausse. C'est le même piège
+        d'<em>aliasing</em> qu'au chapitre 1.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Coder DhTransform et vérifier le cas dégénéré</h3>
+      <p>
+        Réimplémentez <code>DhTransform</code>, puis vérifiez que pour
+        <span class="math-inline">d = a = α = 0</span> elle redonne exactement
+        <span class="math-inline">R<sub>z</sub>(θ)</span> homogène. Testez avec
+        <span class="math-inline">θ = 0,7</span> rad.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_TestDhDegenere
+VAR
+    T       : T_MAT4;
+    theta   : LREAL := 0.7;   // rad
+    ct, st  : LREAL;
+    ok      : BOOL := TRUE;
+END_VAR
+
+// Cas dégénéré : d = a = alpha = 0  ->  T doit valoir Rz(theta).
+DhTransform(theta := theta, d := 0.0, a := 0.0, alpha := 0.0, T := T);
+
+ct := COS(theta);
+st := SIN(theta);
+
+// Coefficients attendus de Rz(theta) homogène.
+IF ABS(T[0,0] - ct)  > 1E-12 THEN ok := FALSE; END_IF
+IF ABS(T[0,1] + st)  > 1E-12 THEN ok := FALSE; END_IF   // -sin
+IF ABS(T[1,0] - st)  > 1E-12 THEN ok := FALSE; END_IF
+IF ABS(T[1,1] - ct)  > 1E-12 THEN ok := FALSE; END_IF
+IF ABS(T[2,2] - 1.0) > 1E-12 THEN ok := FALSE; END_IF
+IF ABS(T[0,3])       > 1E-12 THEN ok := FALSE; END_IF   // translation nulle
+IF ABS(T[2,3])       > 1E-12 THEN ok := FALSE; END_IF
+// ok = TRUE si la matrice DH dégénérée est bien Rz(theta).</code></pre>
+        <p>
+          Avec <span class="math-inline">α = 0</span> on a <span class="math-inline">cα = 1</span> et
+          <span class="math-inline">sα = 0</span> : le couplage colonnes 2/3 disparaît, et il ne reste que la
+          rotation planaire autour de z. On compare toujours à une <strong>tolérance</strong>
+          (<code>1E-12</code>), jamais avec <code>=</code> strict.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Paramètres variables : rotoïde vs prismatique</h3>
+      <p>
+        Pour chacun des quatre paramètres <span class="math-inline">θ, d, a, α</span>, indiquez lequel est
+        <em>variable</em> et lesquels sont <em>constants</em>, d'abord pour une liaison <strong>rotoïde</strong>,
+        puis pour une liaison <strong>prismatique</strong>. Écrivez ensuite le bout de code ST qui construit le
+        <span class="math-inline">θ</span> et le <span class="math-inline">d</span> effectifs à partir d'un
+        <code>T_DH</code> et de la variable articulaire <code>q</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <strong>Rotoïde :</strong> <span class="math-inline">θ</span> variable ;
+          <span class="math-inline">d, a, α</span> constants.<br>
+          <strong>Prismatique :</strong> <span class="math-inline">d</span> variable ;
+          <span class="math-inline">θ, a, α</span> constants.<br>
+          Dans les deux cas, <span class="math-inline">a</span> et <span class="math-inline">α</span> sont
+          <em>toujours</em> constants (géométrie figée du segment).
+        </p>
+        <pre><code class="language-pascal">// liaison : T_DH ; q : variable articulaire ; theta, d : sorties effectives.
+IF liaison.isPrismatic THEN
+    theta := liaison.theta;         // constant
+    d     := liaison.d + q;         // prismatique : d = offset + course
+ELSE
+    theta := liaison.theta + q;     // rotoïde : theta = offset + angle
+    d     := liaison.d;             // constant
+END_IF
+// a := liaison.a ; alpha := liaison.alpha  (toujours constants)</code></pre>
+        <p>
+          C'est exactement la logique utilisée dans <code>FkDh</code> : l'offset constant du champ
+          <code>theta</code> (ou <code>d</code>) et la variable articulaire <code>q</code> s'<strong>additionnent</strong>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Table DH d'un bras 2R et transformation résultante</h3>
+      <p>
+        Remplissez une table DH pour un bras planaire 2R avec
+        <span class="math-inline">L<sub>1</sub> = 0,5</span> m et
+        <span class="math-inline">L<sub>2</sub> = 0,3</span> m, puis calculez
+        <span class="math-inline"><sup>0</sup>T<sub>2</sub></span> pour
+        <span class="math-inline">q<sub>1</sub> = q<sub>2</sub> = 0</span> (bras tendu). Vérifiez que
+        la position d'effecteur vaut bien <span class="math-inline">(0,8 ; 0 ; 0)</span>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_Test2R
+VAR
+    dh   : ARRAY[0..1] OF T_DH;
+    q    : ARRAY[0..1] OF LREAL;
+    Ti, Tliaison, Ttmp : T_MAT4;
+    i        : INT;
+    theta, d : LREAL;
+    ok       : BOOL := TRUE;
+END_VAR
+
+// --- Table DH du bras 2R : theta variable, d = 0, a = Li, alpha = 0 ---
+dh[0].theta := 0.0; dh[0].d := 0.0; dh[0].a := 0.5; dh[0].alpha := 0.0; dh[0].isPrismatic := FALSE;
+dh[1].theta := 0.0; dh[1].d := 0.0; dh[1].a := 0.3; dh[1].alpha := 0.0; dh[1].isPrismatic := FALSE;
+
+q[0] := 0.0;   // bras tendu
+q[1] := 0.0;
+
+// --- Chaînage 0_T_2 = 0_T_1 * 1_T_2 ---
+Mat4Identity(M := Ti);
+FOR i := 0 TO 1 DO
+    theta := dh[i].theta + q[i];    // rotoïde
+    d     := dh[i].d;
+    DhTransform(theta := theta, d := d, a := dh[i].a, alpha := dh[i].alpha, T := Tliaison);
+    Mat4Mul(A := Ti, B := Tliaison, C := Ttmp);
+    Ti := Ttmp;
+END_FOR
+
+// --- Vérification : effecteur en (0.8, 0, 0) ---
+IF ABS(Ti[0,3] - 0.8) > 1E-12 THEN ok := FALSE; END_IF   // x = L1 + L2
+IF ABS(Ti[1,3])       > 1E-12 THEN ok := FALSE; END_IF   // y = 0
+IF ABS(Ti[2,3])       > 1E-12 THEN ok := FALSE; END_IF   // z = 0</code></pre>
+        <p>
+          Bras tendu (<span class="math-inline">q<sub>1</sub>=q<sub>2</sub>=0</span>) : les deux segments
+          s'alignent sur x, donc <span class="math-inline">x = L<sub>1</sub>+L<sub>2</sub> = 0,8</span> m.
+          Essayez ensuite <span class="math-inline">q<sub>2</sub> = π/2</span> : vous devez trouver
+          <span class="math-inline">(0,5 ; 0,3 ; 0)</span>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Précalcul des cos α / sin α constants</h3>
+      <p>
+        Les <span class="math-inline">α<sub>i</sub></span> ne dépendent pas des angles articulaires : leurs
+        <span class="math-inline">cos</span> et <span class="math-inline">sin</span> peuvent être calculés une
+        seule fois au démarrage. Proposez un type <code>T_DH_PRE</code> stockant, en plus des paramètres, les
+        <span class="math-inline">cα<sub>i</sub></span> et <span class="math-inline">sα<sub>i</sub></span>
+        précalculés, et la fonction d'initialisation associée.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">// Version "précalculée" d'une liaison DH : on garde cos/sin de alpha au chaud.
+TYPE T_DH_PRE :
+STRUCT
+    theta       : LREAL;
+    d           : LREAL;
+    a           : LREAL;
+    alpha       : LREAL;
+    isPrismatic : BOOL;
+    cAlpha      : LREAL;   // cos(alpha) — précalculé
+    sAlpha      : LREAL;   // sin(alpha) — précalculé
+END_STRUCT
+END_TYPE
+
+// À appeler une seule fois (démarrage / après calibration).
+FUNCTION DhPrepare : BOOL
+VAR_IN_OUT
+    dh : ARRAY[0..5] OF T_DH_PRE;
+END_VAR
+VAR
+    i : INT;
+END_VAR
+    FOR i := 0 TO 5 DO
+        dh[i].cAlpha := COS(dh[i].alpha);
+        dh[i].sAlpha := SIN(dh[i].alpha);
+    END_FOR
+    DhPrepare := TRUE;
+END_FUNCTION</code></pre>
+        <p>
+          Dans la boucle cyclique, on ne recalcule alors que <span class="math-inline">cos θ</span> /
+          <span class="math-inline">sin θ</span> (qui dépendent de <span class="math-inline">q</span>) et on
+          réutilise <code>cAlpha</code> / <code>sAlpha</code>. C'est le principe du chapitre 1 : on
+          <strong>précalcule tout ce qui est constant</strong> hors de la boucle chaude.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>La convention <strong>Denavit-Hartenberg</strong> réduit chaque liaison à <strong>4 paramètres</strong> <span class="math-inline">(θ, d, a, α)</span> au lieu de 6, grâce à 2 contraintes de placement des repères.</li>
+        <li>Placement (convention <strong>distale / standard</strong>) : <span class="math-inline">z<sub>i</sub></span> sur l'axe de la liaison i+1 ; <span class="math-inline">x<sub>i</sub></span> sur la normale commune ; origine à l'intersection.</li>
+        <li>Matrice DH standard = <span class="math-inline">Rot<sub>z</sub>(θ)·Trans<sub>z</sub>(d)·Trans<sub>x</sub>(a)·Rot<sub>x</sub>(α)</span> ; cas dégénéré <span class="math-inline">d=a=α=0 → R<sub>z</sub>(θ)</span>.</li>
+        <li>Une <strong>table DH</strong> (1 ligne par liaison) décrit tout le robot : rotoïde → <span class="math-inline">θ</span> variable ; prismatique → <span class="math-inline">d</span> variable.</li>
+        <li><strong>Avantages</strong> : paramètres minimaux, standard, compact, documenté, code générique unique.</li>
+        <li><strong>Limites</strong> : placement non unique, conventions multiples (distale vs modifiée), <strong>axes parallèles</strong> mal conditionnés pour la calibration, pas d'arborescence — d'où le chapitre 4.</li>
+        <li>En ST : <code>DhTransform</code> remplit un <code>T_MAT4</code> ; <code>FkDh</code> chaîne les liaisons via <code>Mat4Mul</code> sans aliasing, en <strong>LREAL</strong> et tableaux fixes.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>Transformations rigides &amp; orientation</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>MDH &amp; autres paramétrisations</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) 🤖
+  </footer>
+</body>
+</html>

@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — Le Jacobien</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). ST ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>Le Jacobien</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre le <strong>Jacobien</strong> <span class="math-inline">J(q)</span> comme la dérivée de la cinématique directe : le lien entre <strong>vitesses articulaires</strong> et <strong>vitesses cartésiennes</strong>.</li>
+        <li>Construire le <strong>Jacobien géométrique</strong> colonne par colonne, directement à partir des repères cumulés de la FK — sans dériver aucune formule.</li>
+        <li>Distinguer Jacobien <strong>géométrique</strong> (<span class="math-inline">ω</span>) et <strong>analytique</strong> (<span class="math-inline">φ̇</span>), et savoir lequel utiliser.</li>
+        <li>Exploiter le Jacobien : commande cartésienne en vitesse, <strong>dualité statique</strong> force/couple, cinématique inverse numérique.</li>
+        <li>Reconnaître et traiter les <strong>singularités</strong> (manipulabilité, moindres carrés amortis).</li>
+        <li>Coder le tout en <strong>Structured Text</strong>, en réutilisant les repères déjà calculés par la cinématique directe (chapitre 5).</li>
+      </ul>
+    </div>
+
+    <h2>1. Le Jacobien : la dérivée de la cinématique directe</h2>
+    <p>
+      La cinématique directe (chapitre 5) est une fonction <em>non linéaire</em> qui associe à la
+      configuration articulaire <span class="math-inline">q ∈ ℝ<sup>n</sup></span> la pose de l'effecteur
+      <span class="math-inline"><sup>0</sup>T<sub>n</sub>(q) ∈ SE(3)</span>. Le <strong>Jacobien</strong>
+      est sa <strong>dérivée</strong> : il décrit comment un petit mouvement des articulations engendre un
+      petit mouvement de l'outil. Plus précisément, il relie les <strong>vitesses articulaires</strong>
+      <span class="math-inline">q̇</span> aux <strong>vitesses cartésiennes</strong> de l'effecteur :
+    </p>
+    <div class="math">
+      [ v ; ω ] = J(q) · q̇
+    </div>
+    <p>
+      où <span class="math-inline">v ∈ ℝ³</span> est la <strong>vitesse linéaire</strong> (3×1) de l'origine
+      de l'effecteur et <span class="math-inline">ω ∈ ℝ³</span> sa <strong>vitesse angulaire</strong> (3×1).
+      Le vecteur empilé <span class="math-inline">[v ; ω]</span> est le <strong>torseur cinématique</strong>
+      (<em>twist</em>) de l'outil. Comme il a 6 composantes et qu'il y a <span class="math-inline">n</span>
+      articulations, <span class="math-inline">J(q)</span> est une matrice <strong>6×n</strong>.
+    </p>
+    <div class="math">
+      J(q) ∈ ℝ<sup>6×n</sup>,&nbsp;&nbsp; q̇ ∈ ℝ<sup>n</sup>,&nbsp;&nbsp; [v ; ω] ∈ ℝ<sup>6</sup>
+    </div>
+    <p>
+      Les trois premières lignes de <span class="math-inline">J</span> forment le <strong>Jacobien de
+      translation</strong> <span class="math-inline">J<sub>v</sub></span> (3×n), les trois dernières le
+      <strong>Jacobien de rotation</strong> <span class="math-inline">J<sub>ω</sub></span> (3×n). Le Jacobien
+      dépend de la configuration <span class="math-inline">q</span> : ce n'est <em>pas</em> une constante, il
+      se recalcule à chaque point de la trajectoire.
+    </p>
+    <div class="callout note">
+      <p>
+        <strong>Une intuition de descente.</strong> Puisque <span class="math-inline">[v ; ω] = J q̇</span>,
+        en multipliant par un petit intervalle de temps on obtient <span class="math-inline">Δx ≈ J · Δq</span> :
+        le Jacobien est la <strong>linéarisation locale</strong> de la cinématique directe. C'est exactement
+        cette relation qu'on inversera pour la commande cartésienne et la cinématique inverse numérique.
+      </p>
+    </div>
+
+    <h2>2. Le Jacobien géométrique, colonne par colonne</h2>
+    <p>
+      Il existe une manière remarquablement pratique de construire <span class="math-inline">J</span> sans
+      dériver aucune expression trigonométrique : la <strong>méthode géométrique</strong>. Chaque colonne
+      <span class="math-inline">i</span> de <span class="math-inline">J</span> exprime la contribution de la
+      <em>seule</em> articulation <span class="math-inline">i</span> au mouvement de l'effecteur, quand toutes
+      les autres sont figées. Sa forme dépend du <strong>type</strong> de la liaison.
+    </p>
+
+    <h3>2.1 Éléments géométriques nécessaires</h3>
+    <p>
+      Tout se lit dans les <strong>repères cumulés</strong> <span class="math-inline"><sup>0</sup>T<sub>i</sub></span>
+      que la cinématique directe du chapitre 5 a déjà produits (le tableau <code>T0i</code>). Pour la liaison
+      <span class="math-inline">i</span> on a besoin de deux vecteurs, tous deux exprimés dans le repère de base :
+    </p>
+    <ul>
+      <li>
+        <span class="math-inline">z<sub>i-1</sub></span> : l'<strong>axe</strong> de la liaison <span class="math-inline">i</span>,
+        qui est la <strong>3ᵉ colonne de la rotation</strong> de <span class="math-inline"><sup>0</sup>T<sub>i-1</sub></span>
+        (l'axe <em>z</em> du repère <span class="math-inline">i-1</span>) ;
+      </li>
+      <li>
+        <span class="math-inline">p<sub>i-1</sub></span> : l'<strong>origine</strong> du repère <span class="math-inline">i-1</span>,
+        c'est-à-dire la partie <strong>translation</strong> de <span class="math-inline"><sup>0</sup>T<sub>i-1</sub></span> ;
+      </li>
+    </ul>
+    <p>
+      ainsi que <span class="math-inline">p<sub>n</sub></span>, l'origine de l'effecteur (translation de
+      <span class="math-inline"><sup>0</sup>T<sub>n</sub></span>).
+    </p>
+
+    <h3>2.2 Colonne pour une liaison rotoïde</h3>
+    <p>
+      Une articulation <strong>rotoïde</strong> tourne autour de son axe <span class="math-inline">z<sub>i-1</sub></span>.
+      Elle engendre à la fois une vitesse angulaire (l'outil tourne) et une vitesse linéaire (l'outil décrit un
+      cercle autour de l'axe). La contribution est :
+    </p>
+    <div class="math">
+      colonne<sub>i</sub> = [ z<sub>i-1</sub> × (p<sub>n</sub> − p<sub>i-1</sub>) ; z<sub>i-1</sub> ]
+    </div>
+    <p>
+      La partie haute <span class="math-inline">z<sub>i-1</sub> × (p<sub>n</sub> − p<sub>i-1</sub>)</span> est
+      la vitesse linéaire (un rayon <span class="math-inline">p<sub>n</sub> − p<sub>i-1</sub></span> mis en
+      rotation autour de l'axe, d'où le produit vectoriel), la partie basse <span class="math-inline">z<sub>i-1</sub></span>
+      est la vitesse angulaire (l'outil tourne autour de l'axe de la liaison).
+    </p>
+
+    <h3>2.3 Colonne pour une liaison prismatique</h3>
+    <p>
+      Une articulation <strong>prismatique</strong> translate le long de son axe <span class="math-inline">z<sub>i-1</sub></span>.
+      Elle ne crée <em>aucune</em> rotation de l'effecteur, seulement une translation dans la direction de l'axe :
+    </p>
+    <div class="math">
+      colonne<sub>i</sub> = [ z<sub>i-1</sub> ; 0 ]
+    </div>
+    <p>
+      La partie basse est nulle (pas de vitesse angulaire), la partie haute est simplement l'axe de glissement.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Attention à l'indexation 0-based en ST.</strong> La liaison <span class="math-inline">i</span>
+        (comptée de 1 à <span class="math-inline">n</span> dans les manuels) utilise l'axe et l'origine du repère
+        <em>précédent</em> <span class="math-inline">i-1</span>. Dans notre tableau <code>T0i : ARRAY[0..N]</code>,
+        le repère <span class="math-inline">0</span> est la base et le repère <span class="math-inline">N</span>
+        l'effecteur. La colonne <code>j</code> du Jacobien (avec <code>j := 0..N-1</code>) correspond à la
+        liaison mathématique <span class="math-inline">j+1</span> et se construit à partir de <code>T0i[j]</code>
+        (le repère <span class="math-inline">i-1</span>) et de <code>T0i[N]</code> (l'effecteur). Décaler d'un cran
+        par erreur donne un Jacobien faux mais d'allure plausible — bug redoutable à débusquer.
+      </p>
+    </div>
+
+    <h2>3. Jacobien géométrique vs Jacobien analytique</h2>
+    <p>
+      Le Jacobien construit ci-dessus est dit <strong>géométrique</strong> : sa partie basse fournit la
+      <strong>vitesse angulaire</strong> physique <span class="math-inline">ω</span> de l'effecteur (un vecteur
+      bien défini, mesurable par un gyromètre). Mais on représente souvent l'orientation par un jeu de
+      <strong>trois angles</strong> — par exemple les angles de <em>roulis-tangage-lacet</em> (RPY,
+      <span class="math-inline">φ = (φ<sub>x</sub>, φ<sub>y</sub>, φ<sub>z</sub>)</span>). On peut alors vouloir
+      relier <span class="math-inline">q̇</span> aux <strong>dérivées de ces angles</strong>
+      <span class="math-inline">φ̇</span> : c'est le rôle du Jacobien <strong>analytique</strong>.
+    </p>
+    <p>
+      Or <span class="math-inline">ω</span> et <span class="math-inline">φ̇</span> ne sont
+      <strong>pas</strong> égaux : la vitesse angulaire n'est pas la simple dérivée des trois angles, mais une
+      combinaison qui dépend de la convention choisie. Une matrice de transformation
+      <span class="math-inline">E(φ)</span> les relie (<span class="math-inline">ω = E(φ) · φ̇</span>), d'où :
+    </p>
+    <div class="math">
+      J<sub>analytique</sub> = [[ I , 0 ] ; [ 0 , E(φ)<sup>⁻¹</sup> ]] · J<sub>géométrique</sub>
+    </div>
+    <p>
+      La partie translation (bloc identité <span class="math-inline">I</span>) est inchangée ; seule la partie
+      orientation est « re-projetée » sur la base des angles via <span class="math-inline">E(φ)<sup>⁻¹</sup></span>,
+      qui dépend de la convention d'angles retenue.
+    </p>
+    <table>
+      <thead>
+        <tr><th></th><th>Jacobien géométrique</th><th>Jacobien analytique</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Sortie orientation</td><td><span class="math-inline">ω</span> (vitesse angulaire physique)</td><td><span class="math-inline">φ̇</span> (dérivée des angles choisis)</td></tr>
+        <tr><td>Dépend d'une convention</td><td>non</td><td>oui (RPY, Euler…)</td></tr>
+        <tr><td>Singularités de représentation</td><td>aucune</td><td>oui (« gimbal lock » de <span class="math-inline">E</span>)</td></tr>
+        <tr><td>Usage privilégié</td><td>commande, statique, IK</td><td>suivi d'une consigne en angles</td></tr>
+      </tbody>
+    </table>
+    <div class="callout astuce">
+      <p>
+        <strong>Privilégiez le géométrique pour la commande.</strong> Il ne dépend d'aucune convention et
+        n'introduit <em>aucune</em> singularité de représentation (le « gimbal lock » des angles d'Euler, où
+        <span class="math-inline">E(φ)</span> devient singulière indépendamment de la géométrie du bras). On
+        n'emploie l'analytique que lorsque la tâche est explicitement exprimée en dérivées d'angles. Dans tout
+        le reste de ce chapitre, <span class="math-inline">J</span> désigne le Jacobien <strong>géométrique</strong>.
+      </p>
+    </div>
+
+    <h2>4. À quoi sert le Jacobien ?</h2>
+
+    <h3>4.1 Commande cartésienne en vitesse</h3>
+    <p>
+      C'est l'usage le plus direct. On veut imposer à l'outil un torseur de vitesse
+      <span class="math-inline">[v ; ω]</span> (déplacer la pince à 5 cm/s vers l'avant, par exemple). Il faut
+      pour cela les vitesses articulaires correspondantes — on <strong>inverse</strong> la relation. Pour un
+      robot <strong>6 axes</strong> non singulier, <span class="math-inline">J</span> est carrée (6×6) et
+      inversible :
+    </p>
+    <div class="math">
+      q̇ = J<sup>⁻¹</sup> · [ v ; ω ]
+    </div>
+    <p>
+      Pour un robot <strong>redondant</strong> (<span class="math-inline">n &gt; 6</span>) ou non carré, on
+      remplace l'inverse par la <strong>pseudo-inverse de Moore-Penrose</strong>
+      <span class="math-inline">J<sup>+</sup></span>, qui fournit la solution de norme minimale :
+    </p>
+    <div class="math">
+      J<sup>+</sup> = J<sup>T</sup> (J J<sup>T</sup>)<sup>⁻¹</sup>,&nbsp;&nbsp; q̇ = J<sup>+</sup> · [ v ; ω ]
+    </div>
+
+    <h3>4.2 Dualité statique : force et couple</h3>
+    <p>
+      Le Jacobien relie aussi les <strong>efforts</strong>, par une élégante dualité. Si l'effecteur exerce (ou
+      subit) un torseur d'effort <span class="math-inline">F = [f ; m]</span> (force 3×1 + moment 3×1), les
+      <strong>couples articulaires</strong> <span class="math-inline">τ</span> nécessaires pour l'équilibrer sont
+      donnés par la <strong>transposée</strong> du Jacobien :
+    </p>
+    <div class="math">
+      τ = J<sup>T</sup> · F
+    </div>
+    <p>
+      La même matrice qui transporte les vitesses de l'articulaire vers le cartésien transporte les efforts du
+      cartésien vers l'articulaire. C'est la base de la <strong>commande en effort</strong>, de la compensation
+      de gravité et de l'estimation de la charge portée par l'outil. Remarquez que <span class="math-inline">J</span>
+      est 6×n, donc <span class="math-inline">J<sup>T</sup></span> est n×6 : elle prend bien un effort 6×1 et
+      rend <span class="math-inline">n</span> couples articulaires.
+    </p>
+
+    <h3>4.3 Cinématique inverse numérique</h3>
+    <p>
+      Enfin, le Jacobien est la porte d'entrée de la <strong>cinématique inverse numérique</strong>. Pour
+      atteindre une pose cible, on itère : à partir de la configuration courante, on calcule l'écart de pose
+      <span class="math-inline">Δx</span>, on résout le pas articulaire, on met à jour, on recommence
+      (méthode de Newton, ou <em>resolved-rate</em>) :
+    </p>
+    <div class="math">
+      Δq = J<sup>⁻¹</sup> · Δx,&nbsp;&nbsp; q ← q + Δq
+    </div>
+    <div class="callout note">
+      <p>
+        <strong>Lien avec le chapitre Rust 12.</strong> C'est exactement la boucle d'IK numérique développée
+        dans le cours Rust (chapitre 12) : linéarisation <span class="math-inline">Δx ≈ J·Δq</span>, résolution
+        du pas, itération, avec amortissement près des singularités. Le présent chapitre en fournit la brique
+        manquante — <em>comment obtenir <span class="math-inline">J</span></em> pour un bras 3D quelconque — et
+        la version temps réel sur automate.
+      </p>
+    </div>
+
+    <h2>5. Singularités et manipulabilité</h2>
+    <p>
+      Une <strong>singularité</strong> est une configuration où <span class="math-inline">J</span> perd son
+      <strong>rang</strong> : pour un robot 6×6, cela se traduit par <span class="math-inline">det J = 0</span>.
+      Physiquement, l'effecteur <strong>perd instantanément un degré de liberté cartésien</strong> : il existe
+      une direction de l'espace dans laquelle il ne peut plus se déplacer, quelles que soient les vitesses
+      articulaires.
+    </p>
+    <p>
+      Le danger, pour la commande, est <strong>numérique</strong>. Près d'une singularité, l'inverse
+      <span class="math-inline">J<sup>⁻¹</sup></span> explose : un déplacement cartésien minuscule exige des
+      vitesses articulaires <strong>énormes</strong> (<span class="math-inline">q̇ = J<sup>⁻¹</sup>[v;ω]</span>
+      diverge). Sur un robot réel, cela se traduit par des à-coups violents, des pics de couple, voire un arrêt
+      de sécurité — au mieux. Types classiques pour un bras 6 axes :
+    </p>
+    <ul>
+      <li><strong>Singularité d'épaule</strong> : le poignet se retrouve à l'aplomb de l'axe 1 (axe vertical de base).</li>
+      <li><strong>Singularité de coude</strong> : le bras est <em>tendu</em> (ou totalement replié) — l'effecteur est en limite d'atteinte, comme le 2R à <span class="math-inline">θ<sub>2</sub> = 0</span>.</li>
+      <li><strong>Singularité de poignet</strong> : deux axes du poignet s'<em>alignent</em> (typiquement axes 4 et 6 colinéaires) et une rotation devient redondante.</li>
+    </ul>
+    <p>
+      Pour <strong>quantifier</strong> la proximité d'une singularité, on utilise la <strong>manipulabilité</strong>
+      de Yoshikawa :
+    </p>
+    <div class="math">
+      w = √( det( J · J<sup>T</sup> ) )
+    </div>
+    <p>
+      <span class="math-inline">w</span> est grand loin des singularités (le robot se meut aisément dans toutes
+      les directions) et <span class="math-inline">w → 0</span> à la singularité. Pour un robot carré,
+      <span class="math-inline">w = |det J|</span>. C'est un indicateur scalaire précieux à surveiller en continu.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Ne jamais inverser aveuglément <span class="math-inline">J</span> près d'une singularité.</strong>
+        Une consigne cartésienne parfaitement raisonnable peut produire une consigne articulaire à des milliers de
+        degrés par seconde si <span class="math-inline">det J ≈ 0</span>. Le symptôme : le robot « fouette »
+        brutalement en approchant du bras tendu ou d'un alignement de poignet. Testez toujours la manipulabilité
+        <span class="math-inline">w</span> (ou le conditionnement de <span class="math-inline">J</span>)
+        <em>avant</em> d'appliquer <span class="math-inline">q̇</span>.
+      </p>
+    </div>
+
+    <p>
+      La parade standard est la méthode des <strong>moindres carrés amortis</strong> (Damped Least Squares,
+      amortissement de Levenberg) : on ajoute un terme de régularisation <span class="math-inline">λ²</span> qui
+      borne l'amplitude de la solution même quand <span class="math-inline">J</span> devient singulière :
+    </p>
+    <div class="math">
+      q̇ = J<sup>T</sup> ( J J<sup>T</sup> + λ² I )<sup>⁻¹</sup> · [ v ; ω ]
+    </div>
+    <div class="callout astuce">
+      <p>
+        <strong>Amortir plutôt qu'inverser.</strong> La matrice <span class="math-inline">(J J<sup>T</sup> + λ² I)</span>
+        est <em>toujours</em> inversible (elle ne devient jamais singulière), ce qui borne
+        <span class="math-inline">q̇</span> par construction. Loin des singularités et pour
+        <span class="math-inline">λ → 0</span> on retrouve la pseudo-inverse (précision maximale) ; près d'une
+        singularité, <span class="math-inline">λ² I</span> lisse la commande au prix d'une petite erreur
+        résiduelle. On choisit <span class="math-inline">λ</span> petit et fixe, ou adaptatif selon
+        <span class="math-inline">w</span>. Combinez avec une <strong>planification</strong> qui évite d'approcher
+        les singularités connues : la robustesse en ligne ne remplace pas une trajectoire propre.
+      </p>
+    </div>
+
+    <h2>6. Implémentation en Structured Text</h2>
+    <p>
+      On réutilise les types du chapitre 1 (<code>T_VEC3</code>, <code>T_MAT4</code>, <code>T_DH</code>) et le
+      tableau de repères cumulés <code>T0i</code> produit par la cinématique directe (chapitre 5). On ajoute un
+      type pour le Jacobien, une fonction de produit vectoriel, et le bloc fonctionnel qui remplit
+      <span class="math-inline">J</span>.
+    </p>
+
+    <h3>6.1 Type du Jacobien et constante de dimension</h3>
+    <pre><code class="language-pascal">// Dimension maximale (nb. d'axes) allouee statiquement. 8 couvre la
+// plupart des bras (6 axes) et laisse de la marge pour les robots redondants.
+VAR_GLOBAL CONSTANT
+    N_MAX : INT := 8;
+END_VAR
+
+// Jacobien geometrique 6 x n : 6 lignes (v puis omega), N_MAX colonnes.
+// Lignes 0..2 = Jv (translation), lignes 3..5 = Jomega (rotation).
+TYPE T_JAC : ARRAY[0..5, 0..N_MAX-1] OF LREAL; END_TYPE</code></pre>
+
+    <h3>6.2 Produit vectoriel</h3>
+    <p>
+      Le cœur de la colonne rotoïde est un produit vectoriel <span class="math-inline">a × b</span>. On le code
+      une fois, en passant le résultat par <code>VAR_IN_OUT</code> (aucune copie, réflexe temps réel).
+    </p>
+    <pre><code class="language-pascal">// Produit vectoriel r := a x b  (vecteurs 3x1).
+// r doit etre DISTINCT de a et de b (aliasing interdit, cf. chapitre 1).
+FUNCTION Cross : BOOL
+VAR_INPUT
+    a : T_VEC3;
+    b : T_VEC3;
+END_VAR
+VAR_IN_OUT
+    r : T_VEC3;   // resultat
+END_VAR
+    r[0] := a[1] * b[2] - a[2] * b[1];
+    r[1] := a[2] * b[0] - a[0] * b[2];
+    r[2] := a[0] * b[1] - a[1] * b[0];
+    Cross := TRUE;
+END_FUNCTION</code></pre>
+
+    <h3>6.3 Le bloc fonctionnel FB_GeometricJacobian</h3>
+    <p>
+      Il prend le tableau des repères cumulés <code>T0i</code> (calculés par la FK), la table DH (pour connaître
+      le type de chaque liaison via <code>isPrismatic</code>) et le nombre d'axes <code>n</code>, puis remplit
+      <span class="math-inline">J</span>. La boucle parcourt les liaisons : pour chacune on extrait
+      <span class="math-inline">z<sub>i-1</sub></span> (3ᵉ colonne de la rotation de <code>T0i[j]</code>) et
+      <span class="math-inline">p<sub>i-1</sub></span> (translation de <code>T0i[j]</code>), puis on écrit la
+      colonne selon le type de liaison.
+    </p>
+    <pre><code class="language-pascal">// Construit le Jacobien geometrique 6 x n dans J.
+//
+// ENTREES :
+//   T0i : repere cumule 0->i pour i = 0..n, produit par la FK (chapitre 5).
+//         T0i[0] = base (identite), T0i[n] = effecteur.
+//   dh  : table Denavit-Hartenberg (n liaisons) ; seul isPrismatic sert ici.
+//   n   : nombre d'axes (1..N_MAX).
+// SORTIE :
+//   J   : Jacobien 6 x n. Colonne j (j=0..n-1) = contribution de la liaison j+1.
+//         Lignes 0..2 = vitesse lineaire, lignes 3..5 = vitesse angulaire.
+FUNCTION_BLOCK FB_GeometricJacobian
+VAR_IN_OUT
+    T0i : ARRAY[0..N_MAX] OF T_MAT4;   // reperes cumules (0..n utilises)
+    dh  : ARRAY[0..N_MAX-1] OF T_DH;   // parametres DH
+    J   : T_JAC;                       // resultat 6 x n
+END_VAR
+VAR_INPUT
+    n : INT;                           // nombre d'axes
+END_VAR
+VAR
+    j        : INT;                    // colonne / liaison (0-based)
+    z        : T_VEC3;                 // axe z_(i-1), 3e colonne de R
+    p_prev   : T_VEC3;                 // origine p_(i-1)
+    p_n      : T_VEC3;                 // origine effecteur p_n
+    diff     : T_VEC3;                 // p_n - p_(i-1)
+    vlin     : T_VEC3;                 // z x diff (partie translation rotoide)
+    dummy    : BOOL;
+END_VAR
+
+// --- Origine de l'effecteur p_n = translation de T0i[n] (colonne 3) ---
+p_n[0] := T0i[n][0, 3];
+p_n[1] := T0i[n][1, 3];
+p_n[2] := T0i[n][2, 3];
+
+// --- Boucle sur les n liaisons ---
+FOR j := 0 TO n - 1 DO
+    // Axe z_(i-1) = 3e colonne de la rotation de T0i[j] (indices [.,2]).
+    z[0] := T0i[j][0, 2];
+    z[1] := T0i[j][1, 2];
+    z[2] := T0i[j][2, 2];
+
+    // Origine p_(i-1) = translation de T0i[j] (colonne 3).
+    p_prev[0] := T0i[j][0, 3];
+    p_prev[1] := T0i[j][1, 3];
+    p_prev[2] := T0i[j][2, 3];
+
+    IF dh[j].isPrismatic THEN
+        // Liaison PRISMATIQUE : colonne = [ z ; 0 ].
+        J[0, j] := z[0];   J[1, j] := z[1];   J[2, j] := z[2];   // Jv = z
+        J[3, j] := 0.0;    J[4, j] := 0.0;    J[5, j] := 0.0;    // Jomega = 0
+    ELSE
+        // Liaison ROTOIDE : colonne = [ z x (p_n - p_prev) ; z ].
+        diff[0] := p_n[0] - p_prev[0];
+        diff[1] := p_n[1] - p_prev[1];
+        diff[2] := p_n[2] - p_prev[2];
+
+        dummy := Cross(a := z, b := diff, r := vlin);   // vlin := z x diff
+
+        J[0, j] := vlin[0];   J[1, j] := vlin[1];   J[2, j] := vlin[2];  // Jv
+        J[3, j] := z[0];      J[4, j] := z[1];      J[5, j] := z[2];     // Jomega = z
+    END_IF
+END_FOR</code></pre>
+
+    <div class="callout plc">
+      <p>
+        <strong>Tableaux fixes, pas de recalcul trigonométrique.</strong> <code>T_JAC</code> est dimensionné à
+        <code>N_MAX</code> colonnes sur la mémoire statique : aucune allocation. Surtout, <code>FB_GeometricJacobian</code>
+        ne recalcule <strong>aucun sinus ni cosinus</strong> : toute la trigonométrie a déjà été payée par la
+        cinématique directe, condensée dans <code>T0i</code>. Le Jacobien n'est plus qu'une extraction de colonnes
+        et <span class="math-inline">n</span> produits vectoriels.
+      </p>
+    </div>
+
+    <h2>7. Aspects temps réel</h2>
+    <p>
+      Le Jacobien géométrique est <strong>quasi gratuit</strong> quand il suit une cinématique directe : il
+      <strong>réutilise les repères déjà calculés</strong> (<code>T0i</code>) et ne fait que lire des colonnes et
+      calculer <span class="math-inline">n</span> produits vectoriels. Aucun <code>SIN</code>/<code>COS</code>
+      supplémentaire. Le coût est de l'ordre de <strong>quelques microsecondes</strong>, parfaitement borné et
+      déterministe — négligeable devant la FK elle-même.
+    </p>
+    <div class="callout temps">
+      <p>
+        <strong>Ordre de grandeur.</strong> Un produit vectoriel = 6 multiplications + 3 soustractions ≈ quelques
+        dizaines de nanosecondes. Pour un bras 6 axes : 6 produits vectoriels + extractions ≈ 1 µs, une fois la FK
+        faite. La <strong>construction</strong> du Jacobien n'est donc jamais le goulot d'étranglement. C'est son
+        <strong>inversion</strong> (pour la commande) qui coûte davantage : une résolution 6×6 par élimination de
+        Gauss, c'est de l'ordre de <span class="math-inline">6³/3 ≈ 72</span> opérations flottantes — quelques µs
+        de plus, mais toujours <strong>borné</strong> et faisable dans un cycle de 250 µs à 1 ms.
+      </p>
+    </div>
+    <div class="callout plc">
+      <p>
+        <strong>Surveillez le conditionnement.</strong> L'élimination de Gauss 6×6 tient dans le cycle, mais elle
+        <strong>diverge</strong> si <span class="math-inline">J</span> est mal conditionnée (proche d'une
+        singularité) : les pivots deviennent minuscules et les erreurs explosent. En pratique, sur automate : (1)
+        calculez la manipulabilité <span class="math-inline">w</span> à chaque cycle et déclenchez une alarme sous
+        un seuil ; (2) basculez sur les <strong>moindres carrés amortis</strong> (§5) dès que
+        <span class="math-inline">w</span> chute — l'ajout de <span class="math-inline">λ² I</span> garantit un
+        pivot non nul et une commande bornée, préservant le déterminisme du cycle.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Jacobien analytique du bras 2R et sa singularité</h3>
+      <p>
+        Pour le bras planaire 2R (segments <span class="math-inline">L<sub>1</sub>, L<sub>2</sub></span>, angles
+        <span class="math-inline">θ<sub>1</sub>, θ<sub>2</sub></span>) dont la FK donne la position
+        <span class="math-inline">(x, y)</span>, dérivez à la main le Jacobien analytique
+        <span class="math-inline">J = ∂(x,y)/∂(θ<sub>1</sub>,θ<sub>2</sub>)</span>, montrez que
+        <span class="math-inline">det J = L<sub>1</sub> L<sub>2</sub> sin θ<sub>2</sub></span>, et identifiez les
+        singularités. Codez ensuite <span class="math-inline">J</span> en ST.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Avec <span class="math-inline">x = L<sub>1</sub>c<sub>1</sub> + L<sub>2</sub>c<sub>12</sub></span> et
+          <span class="math-inline">y = L<sub>1</sub>s<sub>1</sub> + L<sub>2</sub>s<sub>12</sub></span>
+          (notations <span class="math-inline">c<sub>12</sub> = cos(θ<sub>1</sub>+θ<sub>2</sub>)</span>), on dérive :
+        </p>
+        <div class="math">
+          J = [[ −L<sub>1</sub>s<sub>1</sub> − L<sub>2</sub>s<sub>12</sub> , −L<sub>2</sub>s<sub>12</sub> ] ;
+              [  L<sub>1</sub>c<sub>1</sub> + L<sub>2</sub>c<sub>12</sub> ,  L<sub>2</sub>c<sub>12</sub> ]]
+        </div>
+        <p>
+          Le déterminant se simplifie (en développant et via
+          <span class="math-inline">s<sub>1</sub>c<sub>12</sub> − c<sub>1</sub>s<sub>12</sub> = −sin θ<sub>2</sub></span>) :
+        </p>
+        <div class="math">
+          det J = L<sub>1</sub> L<sub>2</sub> sin θ<sub>2</sub>
+        </div>
+        <p>
+          Il s'annule pour <span class="math-inline">θ<sub>2</sub> = 0</span> (bras <strong>tendu</strong>) ou
+          <span class="math-inline">θ<sub>2</sub> = π</span> (bras <strong>replié</strong>) : ce sont les
+          singularités du 2R, où l'effecteur ne peut plus se déplacer radialement.
+        </p>
+        <pre><code class="language-pascal">// Jacobien analytique 2x2 du bras 2R. J range en ARRAY[0..1, 0..1].
+FUNCTION Jacobian2R : BOOL
+VAR_INPUT
+    t1, t2 : LREAL;   // angles (rad)
+    L1, L2 : LREAL;   // longueurs de segment (m)
+END_VAR
+VAR_IN_OUT
+    J : ARRAY[0..1, 0..1] OF LREAL;
+END_VAR
+VAR
+    s1, c1, s12, c12 : LREAL;
+END_VAR
+    s1  := SIN(t1);        c1  := COS(t1);
+    s12 := SIN(t1 + t2);   c12 := COS(t1 + t2);
+
+    J[0, 0] := -L1 * s1 - L2 * s12;   J[0, 1] := -L2 * s12;
+    J[1, 0] :=  L1 * c1 + L2 * c12;   J[1, 1] :=  L2 * c12;
+    Jacobian2R := TRUE;
+END_FUNCTION</code></pre>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Coder et tester le produit vectoriel</h3>
+      <p>
+        Implémentez <code>Cross(a, b, r)</code> et vérifiez sur la base canonique que
+        <span class="math-inline">e<sub>x</sub> × e<sub>y</sub> = e<sub>z</sub></span> (aux erreurs d'arrondi près).
+        Vérifiez aussi que <span class="math-inline">a × a = 0</span>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_TestCross
+VAR
+    ex : T_VEC3 := [1.0, 0.0, 0.0];
+    ey : T_VEC3 := [0.0, 1.0, 0.0];
+    r  : T_VEC3;
+    ok : BOOL := TRUE;
+    d  : BOOL;
+END_VAR
+
+// ex x ey doit valoir ez = (0, 0, 1)
+d := Cross(a := ex, b := ey, r := r);
+IF ABS(r[0] - 0.0) > 1E-12 THEN ok := FALSE; END_IF
+IF ABS(r[1] - 0.0) > 1E-12 THEN ok := FALSE; END_IF
+IF ABS(r[2] - 1.0) > 1E-12 THEN ok := FALSE; END_IF
+
+// a x a doit valoir 0
+d := Cross(a := ex, b := ex, r := r);
+IF ABS(r[0]) + ABS(r[1]) + ABS(r[2]) > 1E-12 THEN ok := FALSE; END_IF
+// ok = TRUE si les deux proprietes sont verifiees</code></pre>
+        <p>
+          On compare toujours avec une <strong>tolérance</strong> (<code>1E-12</code>), jamais avec
+          <code>=</code> strict — même réflexe qu'au chapitre 1. Le produit vectoriel étant antisymétrique,
+          <span class="math-inline">a × a = 0</span> est un test d'autocohérence gratuit.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Extraire z et p d'une T_MAT4</h3>
+      <p>
+        Écrivez deux fonctions qui, à partir d'une transformation homogène <span class="math-inline">T ∈</span>
+        <code>T_MAT4</code>, extraient l'axe <span class="math-inline">z</span> (3ᵉ colonne de la rotation) et
+        l'origine <span class="math-inline">p</span> (translation). Ce sont les deux briques que
+        <code>FB_GeometricJacobian</code> utilise pour chaque liaison.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">// Axe z du repere : 3e colonne de la rotation = colonne d'indice 2, lignes 0..2.
+FUNCTION GetAxisZ : BOOL
+VAR_IN_OUT
+    T : T_MAT4;
+    z : T_VEC3;
+END_VAR
+    z[0] := T[0, 2];
+    z[1] := T[1, 2];
+    z[2] := T[2, 2];
+    GetAxisZ := TRUE;
+END_FUNCTION
+
+// Origine du repere : partie translation = colonne d'indice 3, lignes 0..2.
+FUNCTION GetOrigin : BOOL
+VAR_IN_OUT
+    T : T_MAT4;
+    p : T_VEC3;
+END_VAR
+    p[0] := T[0, 3];
+    p[1] := T[1, 3];
+    p[2] := T[2, 3];
+    GetOrigin := TRUE;
+END_FUNCTION</code></pre>
+        <p>
+          Rappel de la structure d'une <span class="math-inline">T_MAT4</span> : le bloc 3×3 en haut à gauche est
+          la rotation (ses colonnes 0, 1, 2 sont les axes <span class="math-inline">x, y, z</span> du repère
+          exprimés dans la base), la colonne 3 (lignes 0..2) est la translation. Extraire l'axe
+          <span class="math-inline">z</span>, c'est donc lire la colonne d'indice <strong>2</strong> ; l'origine,
+          la colonne d'indice <strong>3</strong>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Calculer la manipulabilité d'un 2R</h3>
+      <p>
+        À partir du Jacobien 2×2 de l'exercice 1, calculez la manipulabilité
+        <span class="math-inline">w = √(det(J·J<sup>T</sup>))</span>. Montrez que pour un robot carré cela se réduit
+        à <span class="math-inline">w = |det J|</span>, et vérifiez que <span class="math-inline">w → 0</span> au
+        bras tendu (<span class="math-inline">θ<sub>2</sub> = 0</span>).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Pour <span class="math-inline">J</span> carrée, <span class="math-inline">det(J·J<sup>T</sup>) =
+          det(J)·det(J<sup>T</sup>) = (det J)²</span>, donc <span class="math-inline">w = √((det J)²) = |det J|</span>.
+          Pour le 2R, <span class="math-inline">w = |L<sub>1</sub> L<sub>2</sub> sin θ<sub>2</sub>|</span>, qui tend
+          bien vers 0 quand <span class="math-inline">θ<sub>2</sub> → 0</span> ou <span class="math-inline">π</span>.
+        </p>
+        <pre><code class="language-pascal">// Manipulabilite d'un 2R : w = |det J| = |L1 * L2 * sin(t2)|.
+FUNCTION Manipulability2R : LREAL
+VAR_INPUT
+    t2     : LREAL;   // angle du coude (rad)
+    L1, L2 : LREAL;
+END_VAR
+    Manipulability2R := ABS(L1 * L2 * SIN(t2));
+END_FUNCTION
+
+// --- Verification (pseudo-programme) ---
+// w(t2 = PI/2) = L1*L2         -> manipulabilite maximale
+// w(t2 = 0)    = 0             -> singularite (bras tendu)
+// w(t2 = PI)   = 0             -> singularite (bras replie)</code></pre>
+        <p>
+          En pratique, surveillez <span class="math-inline">w</span> à chaque cycle et déclenchez le passage aux
+          moindres carrés amortis (ou une alarme) dès qu'il descend sous un seuil calibré sur le robot. C'est le
+          garde-fou temps réel contre l'explosion de <span class="math-inline">q̇</span> près des singularités.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Le <strong>Jacobien</strong> <span class="math-inline">J(q)</span> (6×n) est la <strong>dérivée de la FK</strong> : <span class="math-inline">[v ; ω] = J(q)·q̇</span>.</li>
+        <li><strong>Méthode géométrique</strong>, colonne par colonne, à partir des repères <span class="math-inline"><sup>0</sup>T<sub>i</sub></span> : rotoïde <span class="math-inline">[z<sub>i-1</sub> × (p<sub>n</sub> − p<sub>i-1</sub>) ; z<sub>i-1</sub>]</span>, prismatique <span class="math-inline">[z<sub>i-1</sub> ; 0]</span>. Attention à l'indexation 0-based.</li>
+        <li>Le <strong>géométrique</strong> (sortie <span class="math-inline">ω</span>) est privilégié pour la commande ; l'<strong>analytique</strong> (sortie <span class="math-inline">φ̇</span>) dépend d'une convention d'angles et a ses propres singularités.</li>
+        <li>Usages : commande en vitesse <span class="math-inline">q̇ = J<sup>⁻¹</sup>[v;ω]</span> (ou <span class="math-inline">J<sup>+</sup></span> si redondant), dualité statique <span class="math-inline">τ = J<sup>T</sup>·F</span>, IK numérique <span class="math-inline">Δq = J<sup>⁻¹</sup>Δx</span>.</li>
+        <li><strong>Singularités</strong> : <span class="math-inline">det J = 0</span> → perte d'un DDL, explosion de <span class="math-inline">q̇</span>. Mesurer la <strong>manipulabilité</strong> <span class="math-inline">w = √(det(JJ<sup>T</sup>))</span>, amortir avec <span class="math-inline">J<sup>T</sup>(JJ<sup>T</sup>+λ²I)<sup>⁻¹</sup></span>.</li>
+        <li><strong>Temps réel :</strong> le Jacobien réutilise les repères de la FK (aucun sin/cos), coût ≈ quelques µs, déterministe ; l'inversion 6×6 reste bornée mais exige de <strong>surveiller le conditionnement</strong>.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Cinématique directe sur PLC</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>Calibration robotique</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) 🤖
+  </footer>
+</body>
+</html>

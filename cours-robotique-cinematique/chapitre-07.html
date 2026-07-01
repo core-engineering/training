@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — Calibration robotique</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). ST ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>Calibration robotique</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Distinguer <strong>répétabilité</strong> et <strong>exactitude absolue</strong>, et comprendre pourquoi un robot précise n'est pas forcément exact.</li>
+        <li>Comprendre pourquoi les <strong>paramètres nominaux</strong> (table DH du constructeur) diffèrent du robot <strong>réel</strong>.</li>
+        <li>Classer la calibration en <strong>trois niveaux</strong> : articulaire, cinématique, non géométrique.</li>
+        <li>Poser le <strong>modèle d'erreur</strong> <span class="math-inline">δp = J<sub>id</sub> · δφ</span> et l'<strong>identification</strong> par moindres carrés / Levenberg-Marquardt.</li>
+        <li>Comparer les <strong>méthodes de mesure</strong> (open-loop, closed-loop, screw axis, vision) — coût, précision, faisabilité.</li>
+        <li>Maîtriser la <strong>procédure de bout en bout</strong> et le partage des rôles <strong>PC / automate</strong> : identification hors ligne, FK corrigée en ligne.</li>
+      </ul>
+    </div>
+
+    <h2>1. Répétabilité n'est pas exactitude</h2>
+    <p>
+      Un robot industriel est nativement <strong>très répétable</strong> : envoyez-le cent fois à la
+      même consigne articulaire, il revient à la même pose physique à <span class="math-inline">≈</span>&nbsp;0,02–0,1&nbsp;mm
+      près. C'est ce que garantit sa mécanique de qualité et ses codeurs. Mais lui demander d'atteindre
+      une pose <em>cartésienne</em> calculée sur le papier — via la cinématique inverse à partir de la
+      table DH du constructeur — révèle une tout autre réalité : l'<strong>exactitude absolue</strong>
+      est souvent médiocre, de l'ordre de <span class="math-inline">≈</span>&nbsp;0,5–2&nbsp;mm, parfois pire.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Notion</th><th>Définition</th><th>Ordre de grandeur typique</th><th>Améliorée par</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Répétabilité</strong></td><td>dispersion des poses atteintes pour une <em>même</em> consigne, répétée</td><td>0,02 – 0,1 mm</td><td>la mécanique (native, rien à faire)</td></tr>
+        <tr><td><strong>Exactitude absolue</strong></td><td>écart entre la pose <em>commandée</em> (calculée) et la pose <em>réelle</em></td><td>0,5 – 2 mm</td><td>la <strong>calibration</strong></td></tr>
+      </tbody>
+    </table>
+    <p>
+      La cause est simple : le modèle géométrique embarqué utilise les paramètres <strong>nominaux</strong>
+      (les cotes du plan), alors que le robot posé devant vous a des paramètres <strong>réels</strong>
+      légèrement différents. Les sources d'écart s'accumulent : <strong>tolérances de fabrication</strong>
+      (un segment long de 400,00&nbsp;mm au plan mesure 400,12&nbsp;mm), <strong>assemblage</strong> (axes
+      pas exactement parallèles ou perpendiculaires), <strong>usure</strong>, <strong>flexion sous la
+      gravité</strong>, et <strong>dilatation thermique</strong>. Chaque écart, propagé le long de la
+      chaîne cinématique, se traduit à l'effecteur par une erreur de pose amplifiée par les bras de levier.
+    </p>
+    <p>
+      La <strong>calibration</strong> consiste à <em>identifier les paramètres réels</em> du robot à
+      partir de mesures, puis à corriger le modèle. On rehausse ainsi l'exactitude absolue jusqu'au
+      niveau de la répétabilité (typiquement &lt; 0,2&nbsp;mm après calibration cinématique). C'est
+      indispensable dès qu'on veut :
+    </p>
+    <ul>
+      <li>de la <strong>programmation hors-ligne</strong> (<em>offline programming</em>) : générer les
+        trajectoires depuis un modèle CAO et les jouer <em>sans retouche manuelle</em> ;</li>
+      <li>l'<strong>interchangeabilité</strong> : remplacer un robot par un autre du même modèle sans
+        reprogrammer les points ;</li>
+      <li>des tâches exigeantes en position absolue : perçage, mesure, collage, assemblage guidé CAO.</li>
+    </ul>
+
+    <div class="callout piege">
+      <p>
+        <strong>Ne confondez jamais les deux.</strong> Une fiche technique qui annonce « répétabilité
+        ±0,03&nbsp;mm » ne dit <em>rien</em> de l'exactitude absolue, qui peut être 30 fois pire. Un
+        robot « précis » au sens répétable peut viser systématiquement 1&nbsp;mm à côté de la cible
+        calculée. La calibration ne touche pas la répétabilité (déjà excellente) : elle attaque
+        uniquement l'exactitude.
+      </p>
+    </div>
+
+    <h2>2. Trois niveaux de calibration</h2>
+    <p>
+      La littérature classe la calibration en <strong>trois niveaux</strong> emboîtés, du plus simple
+      au plus complet. Chaque niveau supérieur englobe et raffine le précédent.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Niveau</th><th>Nom</th><th>Ce qu'on identifie</th><th>Nb. de paramètres (bras 6 axes)</th><th>Fréquence / effort</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1</strong></td>
+          <td>Calibration <strong>articulaire</strong><br>(« mastering »)</td>
+          <td>les <strong>offsets de zéro</strong> des codeurs : un <span class="math-inline">Δθ</span> par axe</td>
+          <td>6 (un par axe)</td>
+          <td>très fréquent, simple, souvent guidé par le constructeur</td>
+        </tr>
+        <tr>
+          <td><strong>2</strong></td>
+          <td>Calibration <strong>cinématique</strong><br>(géométrique)</td>
+          <td>tout le <strong>modèle géométrique</strong> réel : <span class="math-inline">Δa, Δα, Δd, Δθ</span> de chaque liaison</td>
+          <td>≈ 24–30 (≈ 4 par liaison)</td>
+          <td>occasionnel, cœur de ce chapitre, métrologie requise</td>
+        </tr>
+        <tr>
+          <td><strong>3</strong></td>
+          <td>Calibration <strong>non géométrique</strong></td>
+          <td><strong>raideurs</strong> articulaires, <strong>jeu</strong> (backlash) des réducteurs, <strong>flexibilité</strong> des segments, effets <strong>thermiques</strong>, effet de la <strong>charge</strong></td>
+          <td>variable, modèle enrichi (souvent +10 à +40)</td>
+          <td>rare, haut de gamme, modèle complexe</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Le <strong>niveau 1</strong> est de loin le plus courant : après un choc, un changement de moteur
+      ou une perte de référence codeur, on « remaître » le robot en amenant chaque axe sur un repère
+      mécanique et en ré-inscrivant l'offset de zéro. C'est indispensable mais insuffisant pour
+      l'exactitude absolue, car il ne corrige pas la géométrie des segments.
+    </p>
+    <p>
+      Le <strong>niveau 2</strong> est le cœur du présent chapitre : il identifie l'ensemble de la
+      table DH réelle (ou MDH / Hayati, cf. chapitre 4). Bien mené, il ramène l'exactitude au niveau de
+      la répétabilité. Le <strong>niveau 3</strong> va plus loin en modélisant les déformations
+      dépendant de la charge et de la configuration — utile pour les très hautes exigences (mesure,
+      usinage robotisé), mais avec un modèle nettement plus lourd à identifier et à embarquer.
+    </p>
+
+    <div class="callout note">
+      <p>
+        <strong>Un modèle vaut ce que vaut son identification.</strong> Ajouter des paramètres au
+        modèle (niveau 3) n'améliore l'exactitude que si ces paramètres sont réellement
+        <em>observables</em> dans vos mesures (section 4). Un modèle plus riche mal identifié est
+        souvent <em>moins</em> bon qu'un modèle simple bien identifié.
+      </p>
+    </div>
+
+    <h2>3. Modèle d'erreur et identification</h2>
+    <h3>3.1 Linéarisation : le jacobien d'identification</h3>
+    <p>
+      Notons <span class="math-inline">φ</span> le vecteur de <em>tous</em> les paramètres géométriques
+      (les <span class="math-inline">a, α, d, θ</span> de chaque liaison, empilés). La cinématique
+      directe donne la pose de l'effecteur <span class="math-inline">p = FK(q, φ)</span> pour une
+      configuration articulaire <span class="math-inline">q</span>. Le robot réel a des paramètres
+      <span class="math-inline">φ = φ<sub>nom</sub> + δφ</span> légèrement décalés du nominal. Au
+      <strong>premier ordre</strong>, l'erreur de pose s'écrit comme une combinaison linéaire des
+      erreurs de paramètres :
+    </p>
+    <div class="math">
+      δp = FK(q, φ) − FK(q, φ<sub>nom</sub>) ≈ J<sub>id</sub>(q) · δφ,&nbsp;&nbsp;&nbsp; avec&nbsp; [J<sub>id</sub>]<sub>·k</sub> = ∂ FK(q, φ) / ∂ φ<sub>k</sub>
+    </div>
+    <p>
+      La matrice <span class="math-inline">J<sub>id</sub></span> est le <strong>jacobien
+      d'identification</strong> : sa colonne <span class="math-inline">k</span> est la sensibilité de
+      la pose au paramètre <span class="math-inline">φ<sub>k</sub></span>. À ne pas confondre avec le
+      Jacobien <em>géométrique</em> du chapitre 6 (qui dérive par rapport aux <em>variables</em>
+      articulaires <span class="math-inline">q</span>) : ici on dérive par rapport aux
+      <em>paramètres du modèle</em> <span class="math-inline">φ</span>. En pratique, on obtient chaque
+      colonne très commodément par <strong>différences finies</strong> sur la FK (exercice 1).
+    </p>
+
+    <h3>3.2 Empiler les mesures et résoudre au sens des moindres carrés</h3>
+    <p>
+      On place le robot dans <span class="math-inline">N</span> configurations
+      <span class="math-inline">q<sup>(1)</sup>, …, q<sup>(N)</sup></span> et on <strong>mesure</strong>
+      la pose réelle (ou au moins la position) de l'effecteur avec une métrologie externe (section 5).
+      Pour chaque configuration on forme le <strong>résidu</strong> entre pose mesurée et pose prédite :
+      <span class="math-inline">δp<sup>(i)</sup> = p<sub>mesurée</sub><sup>(i)</sup> − FK(q<sup>(i)</sup>, φ)</span>.
+      En empilant les <span class="math-inline">N</span> équations
+      <span class="math-inline">δp<sup>(i)</sup> ≈ J<sub>id</sub>(q<sup>(i)</sup>) · δφ</span>, on obtient
+      un grand système linéaire (fortement <strong>surdéterminé</strong> : bien plus d'équations que de
+      paramètres). On le résout au sens des <strong>moindres carrés</strong> — les fameuses
+      <strong>équations normales</strong> :
+    </p>
+    <div class="math">
+      δφ = ( J<sub>id</sub><sup>T</sup> J<sub>id</sub> )<sup>⁻¹</sup> J<sub>id</sub><sup>T</sup> δp&nbsp;&nbsp;&nbsp;⟺&nbsp;&nbsp;&nbsp; ( J<sub>id</sub><sup>T</sup> J<sub>id</sub> ) δφ = J<sub>id</sub><sup>T</sup> δp
+    </div>
+    <p>
+      où <span class="math-inline">J<sub>id</sub></span> et <span class="math-inline">δp</span> sont
+      empilés sur toutes les mesures. Comme le modèle n'est linéaire qu'au <em>premier ordre</em>, on
+      <strong>itère</strong> : on met à jour <span class="math-inline">φ ← φ + δφ</span>, on recalcule
+      les résidus et le jacobien, et on recommence jusqu'à ce que <span class="math-inline">‖δp‖</span>
+      cesse de décroître (Σ des carrés des résidus stabilisée). En pratique on préfère
+      <strong>Levenberg-Marquardt</strong>, qui interpole entre la descente de gradient (robuste, loin
+      de la solution) et Gauss-Newton (rapide, près de la solution) via un terme d'amortissement
+      <span class="math-inline">λ</span> :
+    </p>
+    <div class="math">
+      ( J<sub>id</sub><sup>T</sup> J<sub>id</sub> + λ·diag(J<sub>id</sub><sup>T</sup> J<sub>id</sub>) ) δφ = J<sub>id</sub><sup>T</sup> δp
+    </div>
+    <p>
+      Levenberg-Marquardt est <strong>plus robuste</strong> : il converge même quand les équations
+      normales sont mal conditionnées (le terme <span class="math-inline">λ</span> régularise), ce qui
+      arrive fréquemment en calibration à cause des paramètres peu observables (section 4).
+    </p>
+
+    <div class="callout temps">
+      <p>
+        <strong>C'est un calcul lourd, pas cyclique.</strong> Inverser une matrice ≈ 30×30, sur des
+        dizaines à des centaines de poses, en itérant Levenberg-Marquardt : cela prend des millisecondes
+        à des secondes sur un PC. Ce n'est <strong>pas</strong> destiné à la tâche temps réel 1&nbsp;kHz
+        de l'automate. On le fait <strong>hors ligne</strong> (section 7). Ce qui tourne en ligne, c'est
+        seulement la FK avec les paramètres <em>déjà</em> corrigés — quelques microsecondes.
+      </p>
+    </div>
+
+    <h2>4. Identifiabilité des paramètres</h2>
+    <p>
+      Toute la difficulté théorique de la calibration cinématique tient en un mot :
+      <strong>identifiabilité</strong>. Certains paramètres sont <em>redondants</em> ou
+      <em>non observables</em> — les mesures ne contiennent tout simplement pas l'information pour les
+      distinguer. Le cas d'école est le <strong>couplage <span class="math-inline">d</span> /
+      <span class="math-inline">θ</span> sur axes parallèles</strong> : quand deux axes consécutifs sont
+      (presque) parallèles, la convention DH classique devient <strong>discontinue</strong> — une petite
+      variation réelle produit un saut du paramètre <span class="math-inline">d</span> vers l'infini.
+      C'est précisément pour cela qu'on introduit la <strong>convention de Hayati</strong> (le paramètre
+      <span class="math-inline">β</span>, cf. chapitre 4) pour ces liaisons : elle rend le modèle
+      continu et identifiable.
+    </p>
+    <p>
+      Un bon modèle d'identification doit être :
+    </p>
+    <ul>
+      <li><strong>complet</strong> : capable de représenter toute erreur géométrique possible ;</li>
+      <li><strong>minimal</strong> : pas de paramètre redondant (sinon <span class="math-inline">J<sub>id</sub><sup>T</sup>J<sub>id</sub></span> est singulière) ;</li>
+      <li><strong>continu</strong> : pas de saut du modèle pour une variation infime du robot (d'où Hayati sur les axes parallèles).</li>
+    </ul>
+    <p>
+      Le <strong>conditionnement</strong> de la matrice d'identification renseigne sur l'observabilité :
+      un jacobien mal conditionné (grande valeur de <span class="math-inline">cond(J<sub>id</sub>)</span>,
+      c.-à-d. rapport valeur singulière max / min très élevé) signale des paramètres mal observés — leur
+      estimation sera bruitée ou instable. On choisit alors les <strong>configurations de mesure</strong>
+      pour <em>améliorer</em> l'observabilité : c'est l'<strong>optimisation d'observabilité</strong>. On
+      la quantifie par des <strong>indices O1–O5</strong> construits sur les valeurs singulières
+      <span class="math-inline">σ<sub>i</sub></span> de <span class="math-inline">J<sub>id</sub></span>
+      (produit, minimum, minimum/maximum, etc.) et on sélectionne le jeu de poses qui les maximise.
+      Intuitivement : des poses <strong>bien réparties</strong> dans tout l'espace de travail, sollicitant
+      chaque axe sur une large plage, valent beaucoup mieux qu'une grappe de poses voisines.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Le sur-paramétrage fait « exploser » les paramètres.</strong> Si vous mettez dans le
+        modèle un paramètre non identifiable (redondant, ou non observable dans vos poses), les moindres
+        carrés vont lui affecter une valeur énorme et absurde pour absorber le bruit — souvent
+        compensée par une valeur énorme et opposée sur un autre paramètre. Le modèle « colle » alors aux
+        mesures d'apprentissage mais généralise mal. Symptômes : un <span class="math-inline">δφ</span>
+        gigantesque, un conditionnement catastrophique. Remèdes : modèle minimal (Hayati sur axes
+        parallèles), régularisation (Levenberg-Marquardt), et validation indépendante (section 6).
+      </p>
+    </div>
+
+    <h2>5. Les méthodes de mesure</h2>
+    <p>
+      Identifier <span class="math-inline">δφ</span> suppose de comparer la pose <em>prédite</em> à une
+      pose <em>réelle</em> — donc de <strong>mesurer</strong> quelque chose sur le robot physique. Les
+      méthodes se classent selon <em>ce qu'elles mesurent</em> et <em>avec quel équipement</em>. C'est
+      le choix le plus structurant d'un projet de calibration : il conditionne le coût, la précision et
+      la faisabilité sur site.
+    </p>
+
+    <h3>5.1 Open-loop — métrologie externe de la pose</h3>
+    <p>
+      On mesure <strong>directement</strong> la pose (ou au moins la position) de l'effecteur dans un
+      repère externe, avec un instrument de métrologie : <strong>laser tracker</strong> (le plus
+      répandu, très précis), <strong>bras de mesure / CMM</strong>, <strong>photogrammétrie / vision
+      stéréo</strong>, <strong>théodolites</strong>, capteurs laser. On dispose alors de la mesure
+      complète et on identifie <em>tout</em> le modèle.
+    </p>
+    <ul>
+      <li><strong>Avantages :</strong> mesure directe et précise de la pose absolue ; identifie
+        l'ensemble des paramètres ; grande précision (laser tracker : quelques µm à quelques dizaines de µm).</li>
+      <li><strong>Inconvénients :</strong> équipement <strong>cher</strong> (un laser tracker coûte le
+        prix d'un robot) ; mise en œuvre lourde (installation, repère, ligne de visée dégagée) ;
+        généralement <strong>hors production</strong>.</li>
+    </ul>
+
+    <h3>5.2 Closed-loop — auto-calibration basée contraintes</h3>
+    <p>
+      Plutôt que de mesurer une pose absolue, on impose au robot des <strong>contraintes physiques</strong>
+      connues et on exploite le fait qu'elles doivent être satisfaites : pointer la <strong>TCP sur un
+      point fixe</strong> depuis plusieurs orientations, la contraindre sur un <strong>plan</strong>,
+      maintenir une <strong>distance fixe</strong> (barre étalon <em>ball-bar</em> ou
+      <em>double-ball-bar</em> télescopique), ou utiliser des <strong>capteurs redondants embarqués</strong>.
+      Les résidus sur la contrainte (le point n'est pas exactement fixe selon le modèle) nourrissent
+      l'identification.
+    </p>
+    <ul>
+      <li><strong>Avantages :</strong> peu ou <strong>pas de métrologie externe</strong> ; faible coût ;
+        réalisable <strong>en atelier / sur site</strong>, voire en production ponctuelle.</li>
+      <li><strong>Inconvénients :</strong> <strong>moins de paramètres observables</strong> (une contrainte
+        de point ne fixe pas l'orientation, une contrainte de plan encore moins) ; procédure parfois
+        délicate ; précision généralement moindre que l'open-loop.</li>
+    </ul>
+
+    <h3>5.3 Screw axis measurement — analyse cercle-point</h3>
+    <p>
+      On bouge <strong>un seul axe à la fois</strong>. Un point de l'effecteur décrit alors un
+      <strong>cercle</strong> dans l'espace. En <em>ajustant</em> (fit) ce cercle (et son plan), on
+      identifie directement la <strong>position</strong> et la <strong>direction</strong> de l'axe
+      articulaire correspondant — c'est-à-dire sa vis (<em>screw axis</em>). En répétant pour chaque
+      axe, on reconstruit géométriquement toute la chaîne.
+    </p>
+    <ul>
+      <li><strong>Avantages :</strong> <strong>intuitif</strong> et <strong>robuste</strong> ; identifie
+        géométriquement les axes réels ; interprétation physique claire.</li>
+      <li><strong>Inconvénients :</strong> nécessite de <strong>bouger axe par axe</strong> (procédure
+        séquentielle) ; <strong>sensible au bruit</strong> quand les mouvements sont petits (le fit de
+        cercle sur un arc court est mal conditionné).</li>
+    </ul>
+
+    <h3>5.4 Vision / méthodes autonomes et bas coût</h3>
+    <p>
+      Enfin, des méthodes <strong>vision</strong> (caméra embarquée observant une mire fixe, ou fixe
+      observant une mire sur l'effecteur), la <strong>contrainte planaire</strong>, ou la
+      <strong>self-calibration</strong> par caméra embarquée offrent un compromis <strong>bas coût et
+      automatisable</strong> : pas d'instrument dédié coûteux, procédure programmable. La contrepartie est
+      une <strong>précision variable</strong>, dépendante de la résolution caméra, de la calibration de
+      la caméra elle-même et des conditions d'éclairage.
+    </p>
+
+    <h3>5.5 Tableau comparatif</h3>
+    <table>
+      <thead>
+        <tr><th>Méthode</th><th>Coût</th><th>Précision</th><th>Paramètres identifiables</th><th>Sur site / en production</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Open-loop</strong> (laser tracker, CMM, photogrammétrie)</td>
+          <td>Élevé à très élevé</td>
+          <td>Excellente (µm – dizaines de µm)</td>
+          <td>Tout le modèle (pose complète)</td>
+          <td>Difficile (métrologie lourde, hors prod.)</td>
+        </tr>
+        <tr>
+          <td><strong>Closed-loop</strong> (point fixe, plan, ball-bar)</td>
+          <td>Faible</td>
+          <td>Moyenne</td>
+          <td>Sous-ensemble (contraintes partielles)</td>
+          <td>Oui (peu de métrologie externe)</td>
+        </tr>
+        <tr>
+          <td><strong>Screw axis</strong> / circle point</td>
+          <td>Faible à modéré</td>
+          <td>Bonne (sensible au bruit sur petits arcs)</td>
+          <td>Géométrie des axes (position + direction)</td>
+          <td>Oui, mais axe par axe</td>
+        </tr>
+        <tr>
+          <td><strong>Vision</strong> / autonome / planaire</td>
+          <td>Faible</td>
+          <td>Variable (dépend de la caméra)</td>
+          <td>Variable selon le montage</td>
+          <td>Oui, automatisable</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>6. Procédure type de bout en bout</h2>
+    <p>
+      Une campagne de calibration cinématique suit toujours la même trame ordonnée :
+    </p>
+    <ol>
+      <li><strong>Choisir le modèle.</strong> Sélectionner la paramétrisation : MDH, Hayati pour les
+        axes parallèles, ou POE (produit d'exponentielles). Objectif : complet, minimal, continu (section 4).</li>
+      <li><strong>Choisir la métrologie.</strong> Selon budget et exigence : open-loop (laser tracker)
+        pour la précision maximale, closed-loop pour un coût minimal sur site (section 5).</li>
+      <li><strong>Collecter <span class="math-inline">N</span> poses bien distribuées.</strong> Générer
+        des configurations qui <em>maximisent l'observabilité</em> (indices O1–O5), réparties dans tout
+        l'espace de travail. Positionner le robot, laisser stabiliser, mesurer, horodater.</li>
+      <li><strong>Identifier par LS / Levenberg-Marquardt.</strong> Empiler résidus et jacobien
+        d'identification, résoudre, itérer jusqu'à convergence (section 3).</li>
+      <li><strong>Valider sur un jeu indépendant.</strong> Réserver un ensemble de poses <em>non
+        utilisées</em> pour l'identification et y mesurer l'erreur résiduelle. C'est le seul juge honnête
+        de la qualité : cela détecte le sur-apprentissage (exercice 3).</li>
+      <li><strong>Mettre à jour le modèle du contrôleur.</strong> Inscrire les paramètres corrigés dans
+        le robot / l'automate, en mémoire persistante, pour que la FK (et l'IK) les utilisent (section 7).</li>
+    </ol>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Séparez toujours apprentissage et validation.</strong> Réservez p.&nbsp;ex. 70&nbsp;% des
+        poses à l'identification et 30&nbsp;% à la validation. Une erreur résiduelle faible en
+        apprentissage <em>mais</em> élevée en validation = sur-apprentissage : votre modèle a
+        « appris le bruit ». Réduisez alors le nombre de paramètres ou améliorez la distribution des poses.
+      </p>
+    </div>
+
+    <h2>7. Mise en œuvre sur automate</h2>
+    <p>
+      Le partage des rôles entre le <strong>PC/outil d'identification</strong> et l'<strong>automate</strong>
+      est le point de conception clé de ce chapitre.
+    </p>
+
+    <div class="callout plc">
+      <p>
+        <strong>L'identification ne va PAS dans la boucle temps réel.</strong> Levenberg-Marquardt,
+        l'inversion de grands systèmes, l'itération sur des dizaines de poses : c'est un calcul <em>hors
+        ligne</em>, sur PC ou dans un outil dédié — ou, à la rigueur, dans une <strong>tâche de fond
+        basse priorité</strong> de l'automate. Jamais dans la tâche cyclique 1&nbsp;kHz. L'automate, lui,
+        (a) <strong>pilote la collecte</strong> (positionnement aux poses de mesure, horodatage,
+        acquisition des mesures) ; (b) <strong>stocke les paramètres calibrés</strong> en mémoire
+        <strong>rémanente / persistante</strong> (<code>VAR RETAIN</code> ou recette) ; (c) exécute la
+        <strong>FK (chapitre 5) avec ces paramètres corrigés</strong> à chaque cycle ; (d) peut appliquer
+        en ligne une simple <strong>correction d'offset articulaire</strong> (niveau 1).
+      </p>
+    </div>
+
+    <p>
+      Concrètement, on stocke les corrections dans une structure persistante, une par liaison, puis on
+      les <strong>ajoute à la table DH nominale</strong> juste avant d'appeler la FK. La géométrie
+      nominale reste intacte (traçabilité), la correction est isolée et rechargeable comme une recette.
+    </p>
+    <pre><code class="language-pascal">// ---- Correction géométrique calibrée, par liaison ----
+// Δa, Δα, Δd, Δθ sont les écarts identifiés hors ligne
+// (paramètres RÉELS − paramètres NOMINAUX). Voir chapitre 4 (MDH/Hayati).
+TYPE T_CALIB_LINK :
+STRUCT
+    d_theta : LREAL;   // rad — offset de zéro (niveau 1) + correction géométrique
+    d_d     : LREAL;   // m
+    d_a     : LREAL;   // m
+    d_alpha : LREAL;   // rad
+END_STRUCT
+END_TYPE
+
+// Table de correction complète d'un bras 6 axes, en mémoire persistante.
+TYPE T_CALIB : ARRAY[0..5] OF T_CALIB_LINK; END_TYPE
+
+// Déclaration côté programme : RETAIN => survit à l'arrêt/redémarrage.
+// On la charge une fois (recette) après identification hors ligne.
+VAR RETAIN
+    gCalib : T_CALIB;    // corrections calibrées, chargées après identification
+END_VAR</code></pre>
+
+    <p>
+      La fonction ci-dessous fabrique la table DH <em>corrigée</em> à partir de la table
+      <em>nominale</em> et des corrections calibrées. On l'appelle une fois (les corrections sont
+      constantes), et le résultat alimente <code>FB_ForwardKinematics</code> (chapitre 5) à chaque cycle.
+    </p>
+    <pre><code class="language-pascal">// Applique la correction calibrée à la table DH nominale.
+// dhNom  : table du constructeur (nominale, inchangée).
+// calib  : corrections identifiées hors ligne (gCalib).
+// dhCal  : table corrigée, à passer ensuite à la FK.
+FUNCTION ApplyCalibration : BOOL
+VAR_IN_OUT
+    dhNom : ARRAY[0..5] OF T_DH;    // nominale (lecture)
+    calib : T_CALIB;               // corrections (lecture)
+    dhCal : ARRAY[0..5] OF T_DH;   // corrigée (écriture)
+END_VAR
+VAR
+    i : INT;
+END_VAR
+    FOR i := 0 TO 5 DO
+        // On recopie la liaison nominale puis on ajoute la correction.
+        dhCal[i].isPrismatic := dhNom[i].isPrismatic;
+        dhCal[i].theta := dhNom[i].theta + calib[i].d_theta;   // rad
+        dhCal[i].d     := dhNom[i].d     + calib[i].d_d;        // m
+        dhCal[i].a     := dhNom[i].a     + calib[i].d_a;        // m
+        dhCal[i].alpha := dhNom[i].alpha + calib[i].d_alpha;    // rad
+    END_FOR
+    ApplyCalibration := TRUE;
+END_FUNCTION</code></pre>
+
+    <p>
+      Le flux global tient en une phrase : <em>hors ligne</em> on identifie
+      <span class="math-inline">δφ</span> et on l'inscrit dans <code>gCalib</code> ; <em>en ligne</em>,
+      <code>ApplyCalibration</code> produit <code>dhCal</code>, et la FK tourne sur <code>dhCal</code> —
+      exacte, en quelques microsecondes, dans le cycle.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Persistance et unités.</strong> Oublier le <code>RETAIN</code> (ou son équivalent
+        recette) et vos corrections s'évaporent au prochain redémarrage : le robot repart en nominal,
+        exactitude dégradée, sans alarme. Autre piège classique : mélanger degrés et radians dans
+        <code>d_theta</code>/<code>d_alpha</code> — comme partout dans le cours, ces corrections
+        angulaires sont en <strong>radians</strong>, les corrections de longueur en <strong>mètres</strong>.
+      </p>
+    </div>
+
+    <h2>8. Les pièges de la calibration</h2>
+    <div class="callout piege">
+      <p>
+        <strong>Les cinq pièges à connaître.</strong>
+        (1) <strong>Sur-apprentissage</strong> — trop de paramètres : le modèle colle au bruit,
+        excellent en apprentissage, médiocre en validation.
+        (2) <strong>Paramètres non identifiables</strong> — redondants ou non observables : leur
+        estimation « explose » (valeurs absurdes, souvent compensées entre elles), conditionnement
+        catastrophique.
+        (3) <strong>Température</strong> — le robot se dilate pendant la campagne ; mesurer sur plusieurs
+        heures avec un robot qui chauffe pollue l'identification. Laisser stabiliser thermiquement,
+        mesurer dans des conditions constantes.
+        (4) <strong>Diversité insuffisante des poses</strong> — une grappe de poses voisines n'excite
+        pas tous les paramètres : mauvaise observabilité, identification bruitée.
+        (5) <strong>Confondre répétabilité et exactitude</strong> — croire qu'un robot répétable est
+        exact, ou valider la calibration sur la répétabilité au lieu de l'exactitude absolue.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Une colonne du jacobien d'identification par différences finies</h3>
+      <p>
+        On veut la colonne de <span class="math-inline">J<sub>id</sub></span> correspondant au paramètre
+        <span class="math-inline">a</span> de la liaison <span class="math-inline">k</span>. Écrivez une
+        fonction qui, pour une configuration <span class="math-inline">q</span> donnée, calcule la
+        sensibilité de la <em>position</em> de l'effecteur à ce paramètre par
+        <span class="math-inline">( FK(a<sub>k</sub> + δ) − FK(a<sub>k</sub>) ) / δ</span>. On suppose
+        disponibles <code>FB_ForwardKinematics</code> (chapitre 5), qui remplit une pose
+        <code>T_POSE</code> à partir d'un <code>T_ROBOT6</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">// Colonne de J_id pour le paramètre a de la liaison k : sensibilité de
+// la position (x,y,z) de l'effecteur, par différence finie avant.
+FUNCTION IdColumn_a : BOOL
+VAR_IN_OUT
+    robot : T_ROBOT6;    // table DH + q (lecture)
+    k     : INT;         // indice de liaison
+    col   : T_VEC3;      // résultat : d(pos)/d(a_k)  (écriture)
+END_VAR
+VAR
+    fk        : FB_ForwardKinematics;
+    p0, p1    : T_POSE;
+    aSave     : LREAL;
+    delta     : LREAL := 1.0E-6;   // m — petit pas
+    robotPert : T_ROBOT6;          // copie perturbée
+    i         : INT;
+END_VAR
+    // 1) Pose nominale.
+    fk(robot := robot, pose => p0);
+
+    // 2) Copie du robot, puis perturbation du seul paramètre a_k.
+    robotPert := robot;                 // copie de la structure entière
+    aSave := robotPert.dh[k].a;
+    robotPert.dh[k].a := aSave + delta;
+
+    // 3) Pose perturbée.
+    fk(robot := robotPert, pose => p1);
+
+    // 4) Différence finie composante par composante.
+    col[0] := (p1.x - p0.x) / delta;
+    col[1] := (p1.y - p0.y) / delta;
+    col[2] := (p1.z - p0.z) / delta;
+
+    IdColumn_a := TRUE;
+END_FUNCTION</code></pre>
+        <p>
+          On répète pour <span class="math-inline">Δα, Δd, Δθ</span> de chaque liaison pour obtenir
+          <em>toutes</em> les colonnes ; la partie orientation de <span class="math-inline">J<sub>id</sub></span>
+          se traite de même sur la matrice de rotation. Le pas <span class="math-inline">δ</span> doit être
+          petit (linéarisation) mais pas au point de noyer la différence dans les erreurs d'arrondi
+          <code>LREAL</code> : <span class="math-inline">10<sup>−6</sup></span> est un bon compromis. La
+          différence <em>centrée</em> <span class="math-inline">( FK(a+δ) − FK(a−δ) ) / (2δ)</span> est plus
+          précise si le budget de calcul le permet.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Appliquer un offset calibré avant la FK</h3>
+      <p>
+        On a identifié pour la liaison 2 un écart de longueur
+        <span class="math-inline">Δa<sub>2</sub> = +0,15&nbsp;mm</span> et un offset de zéro
+        <span class="math-inline">Δθ<sub>2</sub> = −0,002&nbsp;rad</span>. Montrez comment charger ces
+        valeurs dans <code>gCalib</code> puis obtenir la table DH corrigée à passer à la FK.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_ChargeCalib
+VAR
+    robot  : T_ROBOT6;                 // contient dh nominale + q
+    dhCal  : ARRAY[0..5] OF T_DH;      // table corrigée pour la FK
+    fk     : FB_ForwardKinematics;
+    pose   : T_POSE;
+END_VAR
+
+// --- 1) Charger les corrections identifiées (une seule fois, ex. recette) ---
+// ATTENTION unités : mètres et radians, pas de mm ni de degrés.
+gCalib[2].d_a     := 0.15 / 1000.0;    // 0,15 mm -> 0,00015 m
+gCalib[2].d_theta := -0.002;           // rad
+// (les autres liaisons restent à 0 si non calibrées)
+
+// --- 2) Fabriquer la table corrigée à partir de la nominale ---
+ApplyCalibration(dhNom := robot.dh, calib := gCalib, dhCal := dhCal);
+
+// --- 3) FK sur la table CORRIGEE ---
+// On substitue dhCal à la table nominale du robot avant l'appel.
+robot.dh := dhCal;
+fk(robot := robot, pose => pose);
+// 'pose' est maintenant l'estimation EXACTE (modèle calibré).</code></pre>
+        <p>
+          Point clé : la conversion <strong>aux frontières</strong> (0,15&nbsp;mm →&nbsp;0,00015&nbsp;m).
+          La table nominale reste stockée telle quelle ; seule la copie <code>dhCal</code> porte la
+          correction, ce qui garde la traçabilité et permet de revenir au nominal à tout moment.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Pourquoi valider sur un jeu indépendant ?</h3>
+      <p>
+        Après identification, l'erreur moyenne résiduelle sur les 50 poses <em>d'apprentissage</em> vaut
+        0,05&nbsp;mm. Sur 20 poses <em>de validation</em> non utilisées, elle vaut 0,9&nbsp;mm. Qu'en
+        concluez-vous ? Qu'auriez-vous mesuré si vous n'aviez validé que sur l'apprentissage ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          L'écart énorme entre apprentissage (0,05&nbsp;mm) et validation (0,9&nbsp;mm) est la signature
+          d'un <strong>sur-apprentissage</strong> : le modèle a « appris le bruit » des 50 poses au lieu
+          de la vraie géométrie. Typiquement, trop de paramètres (dont des non identifiables) ont pris des
+          valeurs absurdes qui minimisent le résidu d'apprentissage sans améliorer la physique.
+        </p>
+        <p>
+          Si l'on n'avait regardé <em>que</em> l'apprentissage, on aurait cru la calibration excellente
+          (0,05&nbsp;mm) et déployé un robot en réalité exact à seulement 0,9&nbsp;mm — pire, peut-être,
+          que certaines zones non couvertes. <strong>Seule la validation indépendante</strong> mesure la
+          capacité de <em>généralisation</em>, c'est-à-dire l'exactitude réelle sur des poses nouvelles.
+          Remèdes : réduire le nombre de paramètres (modèle minimal, Hayati sur axes parallèles),
+          régulariser (Levenberg-Marquardt), et améliorer la distribution des poses d'apprentissage
+          (observabilité).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Répétabilité vs exactitude, chiffré</h3>
+      <p>
+        On envoie dix fois le robot à la même consigne et on mesure les positions atteintes ; elles sont
+        toutes dans une sphère de rayon 0,03&nbsp;mm, centrée en un point P situé à 1,2&nbsp;mm de la cible
+        théorique. Donnez la répétabilité et l'exactitude absolue. Laquelle la calibration améliore-t-elle ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <strong>Répétabilité ≈ 0,03&nbsp;mm</strong> : c'est la dispersion des poses atteintes pour une
+          même consigne (le rayon de la sphère). Elle est excellente et <em>native</em> — la mécanique.
+        </p>
+        <p>
+          <strong>Exactitude absolue ≈ 1,2&nbsp;mm</strong> : c'est l'écart entre la position réellement
+          atteinte (le centre P du nuage) et la cible <em>commandée</em>. C'est un biais systématique dû à
+          l'écart entre paramètres nominaux et réels.
+        </p>
+        <p>
+          La <strong>calibration améliore l'exactitude</strong> (elle corrige le biais de 1,2&nbsp;mm en
+          ramenant P vers la cible), <strong>pas la répétabilité</strong> (les 0,03&nbsp;mm de dispersion
+          restent : ils viennent de la mécanique, pas du modèle). Après une bonne calibration cinématique,
+          on peut espérer une exactitude du même ordre que la répétabilité, soit &lt; 0,2&nbsp;mm ici.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>La <strong>répétabilité</strong> (native, 0,02–0,1&nbsp;mm) n'est pas l'<strong>exactitude absolue</strong> (0,5–2&nbsp;mm) ; la calibration corrige la seconde en identifiant les paramètres <strong>réels</strong> du robot.</li>
+        <li>Trois niveaux : <strong>1 articulaire</strong> (offsets de zéro Δθ), <strong>2 cinématique</strong> (tout le modèle Δa, Δα, Δd, Δθ — le cœur), <strong>3 non géométrique</strong> (raideurs, jeu, thermique, charge).</li>
+        <li>Modèle d'erreur linéarisé <span class="math-inline">δp = J<sub>id</sub> · δφ</span> ; on résout <span class="math-inline">δφ</span> par <strong>moindres carrés</strong> (équations normales) ou <strong>Levenberg-Marquardt</strong>, en itérant.</li>
+        <li><strong>Identifiabilité</strong> : modèle complet, minimal, continu (Hayati/β sur axes parallèles) ; le <strong>conditionnement</strong> guide l'<strong>observabilité</strong> et le choix des poses (O1–O5).</li>
+        <li>Méthodes de mesure : <strong>open-loop</strong> (précis, cher), <strong>closed-loop</strong> (bas coût, moins observable), <strong>screw axis</strong> (intuitif, axe par axe), <strong>vision</strong> (bas coût, précision variable).</li>
+        <li>Sur automate : identification <strong>hors ligne</strong> ; le PLC pilote la collecte, <strong>stocke</strong> les corrections en <code>VAR RETAIN</code>, et exécute la <strong>FK corrigée</strong> chaque cycle.</li>
+        <li>Pièges : sur-apprentissage, paramètres non identifiables, température, poses trop peu diverses, confondre répétabilité et exactitude. <strong>Toujours valider sur un jeu indépendant.</strong></li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Le Jacobien</a>
+    <a class="next disabled" href="#"><span class="lbl">Suivant →</span></a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) 🤖
+  </footer>
+</body>
+</html>

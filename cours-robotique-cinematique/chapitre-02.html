@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — Transformations rigides &amp; orientation</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). ST ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>Transformations rigides &amp; orientation</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Maîtriser la <strong>matrice de transformation homogène 4×4</strong> et la transformation d'un point.</li>
+        <li>Composer des repères par <strong>produit matriciel</strong> et comprendre la <strong>non-commutativité</strong>.</li>
+        <li>Calculer l'<strong>inverse d'une transformation rigide</strong> sans inversion générale coûteuse.</li>
+        <li>Écrire les <strong>rotations élémentaires</strong> <span class="math-inline">R<sub>x</sub>, R<sub>y</sub>, R<sub>z</sub></span> et distinguer pré- vs post-multiplication.</li>
+        <li>Comparer les <strong>représentations de l'orientation</strong> (matrice, RPY/Euler, axe-angle, quaternion) et leurs pièges.</li>
+        <li>Implémenter en <strong>Structured Text</strong> les conversions <strong>RPY ↔ matrice</strong> et la ré-orthonormalisation.</li>
+      </ul>
+    </div>
+
+    <h2>1. La matrice de transformation homogène 4×4</h2>
+    <p>
+      Une <strong>transformation rigide</strong> combine une rotation et une translation entre deux
+      repères. En <strong>coordonnées homogènes</strong>, un point
+      <span class="math-inline">p = (x, y, z)</span> devient
+      <span class="math-inline">(x, y, z, 1)<sup>T</sup></span>, et la transformation prend la forme
+      compacte d'une matrice 4×4 :
+    </p>
+    <div class="math">
+      <sup>i</sup>T<sub>j</sub> = [ R &nbsp; t ; &nbsp; 0<sup>T</sup> &nbsp; 1 ] =
+      [ r<sub>11</sub> r<sub>12</sub> r<sub>13</sub> t<sub>x</sub> ;
+        r<sub>21</sub> r<sub>22</sub> r<sub>23</sub> t<sub>y</sub> ;
+        r<sub>31</sub> r<sub>32</sub> r<sub>33</sub> t<sub>z</sub> ;
+        0 &nbsp; 0 &nbsp; 0 &nbsp; 1 ]
+    </div>
+    <p>
+      Le bloc <span class="math-inline">R ∈ SO(3)</span> (rotation 3×3, orthogonale,
+      <span class="math-inline">R<sup>T</sup>R = I</span>, <span class="math-inline">det R = +1</span>)
+      porte l'<strong>orientation</strong> ; le vecteur <span class="math-inline">t ∈ ℝ³</span> porte la
+      <strong>position</strong>. La dernière ligne <span class="math-inline">(0 0 0 1)</span> est
+      constante : elle rend le produit associatif et l'inverse propre. Transformer un point s'écrit
+      alors comme un simple produit matrice-vecteur :
+    </p>
+    <div class="math">
+      p'&#770; = <sup>i</sup>T<sub>j</sub> · p&#770;&nbsp;&nbsp;&nbsp;⇔&nbsp;&nbsp;&nbsp;
+      p'<sub>3×1</sub> = R · p<sub>3×1</sub> + t
+    </div>
+    <p>
+      La partie rotation <em>tourne</em> le vecteur ; la partie translation le <em>décale</em>. Le
+      <span class="math-inline">1</span> homogène « active » la translation — un vecteur direction
+      (dernière coordonnée <span class="math-inline">0</span>) subit la rotation mais <em>pas</em> la
+      translation, ce qui est exactement le comportement voulu pour un axe ou une vitesse.
+    </p>
+
+    <h3>1.1 Composition en chaîne</h3>
+    <p>
+      L'intérêt majeur des coordonnées homogènes : la <strong>composition de repères</strong> se fait
+      par produit matriciel. Si <span class="math-inline"><sup>0</sup>T<sub>1</sub></span> place le
+      repère 1 dans le repère 0 et <span class="math-inline"><sup>1</sup>T<sub>2</sub></span> le
+      repère 2 dans le repère 1, alors :
+    </p>
+    <div class="math">
+      <sup>0</sup>T<sub>2</sub> = <sup>0</sup>T<sub>1</sub> · <sup>1</sup>T<sub>2</sub>
+      &nbsp;&nbsp;&nbsp;et, en généralisant,&nbsp;&nbsp;&nbsp;
+      <sup>0</sup>T<sub>n</sub> = <sup>0</sup>T<sub>1</sub> · <sup>1</sup>T<sub>2</sub> · … · <sup>n-1</sup>T<sub>n</sub>
+    </div>
+    <p>
+      Les indices s'« annihilent » deux à deux (<span class="math-inline">…<sub>1</sub>·<sup>1</sup>…</span>) :
+      c'est un excellent garde-fou pour vérifier l'ordre d'une chaîne. Cette dernière équation
+      <em>est</em> la cinématique directe (chapitres 4-5), écrite de la base vers l'effecteur.
+    </p>
+
+    <h3>1.2 Non-commutativité</h3>
+    <p>
+      Le produit matriciel n'est <strong>pas commutatif</strong> :
+      <span class="math-inline">A · B ≠ B · A</span> en général. Géométriquement, « tourner puis
+      translater » ne donne pas la même pose que « translater puis tourner ». C'est la source de bugs
+      la plus fréquente en manipulation de repères — le code compile, les dimensions collent, mais le
+      robot va au mauvais endroit.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>L'ordre est porteur de sens.</strong> Une transformation, c'est d'abord une rotation
+        puis une translation exprimée dans <em>ce</em> repère : inverser l'ordre change le résultat.
+        La chaîne s'écrit toujours de gauche à droite, base → effecteur,
+        <span class="math-inline"><sup>0</sup>T<sub>n</sub> = <sup>0</sup>T<sub>1</sub> · … · <sup>n-1</sup>T<sub>n</sub></span>.
+        Dans <code>Mat4Mul(A, B, C)</code> (chapitre 1), <code>A</code> est le facteur de gauche :
+        écrire <code>Mat4Mul(B, A, C)</code> compose dans le mauvais sens et donne une pose fausse.
+      </p>
+    </div>
+
+    <h2>2. Inverse d'une transformation rigide</h2>
+    <p>
+      On a souvent besoin de <strong>renverser</strong> une transformation : si
+      <span class="math-inline"><sup>i</sup>T<sub>j</sub></span> place <em>j</em> dans <em>i</em>, alors
+      <span class="math-inline"><sup>j</sup>T<sub>i</sub> = (<sup>i</sup>T<sub>j</sub>)<sup>⁻¹</sup></span>
+      place <em>i</em> dans <em>j</em>. Inverser une matrice 4×4 quelconque coûte cher (élimination de
+      Gauss, ≈ 60-80 opérations, sans parler des risques numériques). Mais une transformation
+      <strong>rigide</strong> a une structure particulière : sa partie rotation est
+      <em>orthogonale</em>, donc son inverse est sa <strong>transposée</strong>
+      (<span class="math-inline">R<sup>⁻¹</sup> = R<sup>T</sup></span>). On en déduit la formule fermée :
+    </p>
+    <div class="math">
+      T<sup>⁻¹</sup> = [ R<sup>T</sup> &nbsp; −R<sup>T</sup>t ; &nbsp; 0<sup>T</sup> &nbsp; 1 ]
+    </div>
+    <p>
+      La vérification est immédiate : <span class="math-inline">T<sup>⁻¹</sup> · T</span> a pour bloc
+      rotation <span class="math-inline">R<sup>T</sup>R = I</span> et pour translation
+      <span class="math-inline">R<sup>T</sup>t − R<sup>T</sup>t = 0</span>. On ne calcule donc
+      <em>aucune</em> inversion : juste une transposition (recopie d'indices) et un produit
+      matrice-vecteur de 3 lignes.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Ne jamais inverser une transformation rigide « à la main » par Gauss.</strong> La
+        formule <span class="math-inline">T<sup>⁻¹</sup> = [R<sup>T</sup> &nbsp; −R<sup>T</sup>t]</span>
+        est exacte, ≈ <strong>10 fois moins coûteuse</strong>, et surtout <em>numériquement stable</em> :
+        une transposition ne peut pas diverger ni introduire de division par un pivot minuscule. Sur
+        automate, où chaque microseconde du cycle compte et où l'on veut du déterminisme, c'est la
+        seule bonne façon de faire.
+      </p>
+    </div>
+
+    <pre><code class="language-pascal">// Inverse d'une transformation RIGIDE : Tinv := T^-1 = [ R^T | -R^T t ].
+// Suppose que T a bien la structure [R t ; 0 0 0 1] (R orthogonale).
+// Tinv doit être DISTINCTE de T.
+FUNCTION Mat4InvRigid : BOOL
+VAR_IN_OUT
+    T    : T_MAT4;   // entrée : transformation rigide
+    Tinv : T_MAT4;   // sortie : son inverse
+END_VAR
+VAR
+    i, j : INT;
+    t    : ARRAY[0..2] OF LREAL;   // translation d'origine (colonne 3)
+END_VAR
+    // 1) Transposer le bloc rotation 3x3 : Rinv[i,j] := R[j,i].
+    FOR i := 0 TO 2 DO
+        FOR j := 0 TO 2 DO
+            Tinv[i, j] := T[j, i];
+        END_FOR
+    END_FOR
+
+    // 2) Nouvelle translation : t' := -R^T * t.
+    //    On lit d'abord t (colonne 3) puis on projette sur les lignes de R^T.
+    FOR i := 0 TO 2 DO
+        t[i] := T[i, 3];
+    END_FOR
+    FOR i := 0 TO 2 DO
+        Tinv[i, 3] := -( Tinv[i, 0] * t[0]
+                       + Tinv[i, 1] * t[1]
+                       + Tinv[i, 2] * t[2] );
+    END_FOR
+
+    // 3) Dernière ligne homogène.
+    Tinv[3, 0] := 0.0;  Tinv[3, 1] := 0.0;  Tinv[3, 2] := 0.0;  Tinv[3, 3] := 1.0;
+    Mat4InvRigid := TRUE;
+END_FUNCTION</code></pre>
+
+    <h2>3. Rotations élémentaires</h2>
+    <p>
+      Les rotations autour des trois axes principaux sont les briques de toute orientation. Avec la
+      <strong>convention main droite</strong> (angle <span class="math-inline">θ</span> positif = sens
+      trigonométrique vu depuis l'extrémité positive de l'axe), en notant
+      <span class="math-inline">c = cos θ</span>, <span class="math-inline">s = sin θ</span> :
+    </p>
+    <div class="math">
+      R<sub>z</sub>(θ) =
+      [ c &nbsp; −s &nbsp; 0 ;
+        s &nbsp; c &nbsp; 0 ;
+        0 &nbsp; 0 &nbsp; 1 ]
+    </div>
+    <div class="math">
+      R<sub>y</sub>(θ) =
+      [ c &nbsp; 0 &nbsp; s ;
+        0 &nbsp; 1 &nbsp; 0 ;
+        −s &nbsp; 0 &nbsp; c ]
+    </div>
+    <div class="math">
+      R<sub>x</sub>(θ) =
+      [ 1 &nbsp; 0 &nbsp; 0 ;
+        0 &nbsp; c &nbsp; −s ;
+        0 &nbsp; s &nbsp; c ]
+    </div>
+    <p>
+      Notez le <strong>signe inversé du <span class="math-inline">sin</span> dans
+      <span class="math-inline">R<sub>y</sub></span></strong> : le <span class="math-inline">−s</span>
+      est en bas à gauche et le <span class="math-inline">+s</span> en haut à droite, l'exact opposé
+      de <span class="math-inline">R<sub>x</sub></span> et <span class="math-inline">R<sub>z</sub></span>.
+      Ce n'est pas une coquille : c'est la conséquence de l'orientation cyclique des axes
+      (<span class="math-inline">x → y → z → x</span>). <span class="math-inline">R<sub>y</sub></span>
+      tourne dans le plan <span class="math-inline">(z, x)</span> — l'ordre est « à rebours » du couple
+      <span class="math-inline">(x, y)</span> —, d'où le renversement. C'est l'erreur la plus classique
+      quand on écrit ces matrices de mémoire.
+    </p>
+
+    <h2>4. Composition d'orientations : pré- vs post-multiplication</h2>
+    <p>
+      Quand on enchaîne deux rotations, le résultat dépend du <strong>repère par rapport auquel</strong>
+      chaque rotation est exprimée. Deux conventions coexistent :
+    </p>
+    <ul>
+      <li>
+        <strong>Post-multiplication</strong> (<span class="math-inline">R · R'</span>) : la seconde
+        rotation <span class="math-inline">R'</span> est exprimée dans le <strong>repère courant</strong>
+        (déjà tourné). On multiplie à <em>droite</em>. C'est la logique d'un enchaînement de liaisons :
+        chaque axe tourne dans le repère du segment précédent.
+      </li>
+      <li>
+        <strong>Pré-multiplication</strong> (<span class="math-inline">R' · R</span>) : la seconde
+        rotation est exprimée dans le <strong>repère fixe</strong> (le monde). On multiplie à
+        <em>gauche</em>.
+      </li>
+    </ul>
+    <p>
+      Autrement dit : une rotation exprimée dans le repère <em>courant</em> se post-multiplie, une
+      rotation exprimée dans le repère <em>fixe</em> se pré-multiplie. Les deux lectures d'une même
+      séquence sont valides mais donnent des matrices différentes — sauf cas particulier commutatif
+      (rotations autour du même axe).
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>« Repère courant » ou « repère fixe » ? Décidez, puis tenez-vous-y.</strong> La
+        séquence RPY <span class="math-inline">R = R<sub>z</sub>(ψ)·R<sub>y</sub>(θ)·R<sub>x</sub>(φ)</span>
+        se lit de deux façons équivalentes : soit comme trois rotations autour des <em>axes courants</em>
+        appliquées dans l'ordre <span class="math-inline">z, y, x</span>, soit comme trois rotations
+        autour des <em>axes fixes</em> appliquées dans l'ordre inverse <span class="math-inline">x, y, z</span>.
+        Mélanger les deux interprétations dans le même calcul produit une orientation fausse, difficile
+        à débusquer car « proche » de la bonne. Écrivez la convention en commentaire au-dessus de chaque
+        produit.
+      </p>
+    </div>
+
+    <h2>5. Représentations de l'orientation</h2>
+    <p>
+      Une orientation de <span class="math-inline">SO(3)</span> a <strong>3 degrés de liberté</strong>,
+      mais on peut la coder de plusieurs façons, chacune avec ses compromis. Aucune n'est parfaite —
+      le choix dépend de l'usage (calcul interne, interface humaine, interpolation).
+    </p>
+    <table>
+      <thead>
+        <tr><th>Représentation</th><th>Nb de nombres</th><th>Avantages</th><th>Inconvénients</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Matrice de rotation</strong></td>
+          <td>9 (6 contraintes)</td>
+          <td>robuste, pas de singularité, composition = produit direct</td>
+          <td>redondante ; <strong>dérive numérique</strong> au fil des produits → ré-orthonormaliser</td>
+        </tr>
+        <tr>
+          <td><strong>Angles RPY / Euler ZYX</strong></td>
+          <td>3</td>
+          <td>compacts, <strong>intuitifs</strong> à lire (roll/pitch/yaw)</td>
+          <td><strong>blocage de cardan</strong> (gimbal lock) à <span class="math-inline">θ = ±90°</span> ; convention ambiguë</td>
+        </tr>
+        <tr>
+          <td><strong>Axe-angle</strong></td>
+          <td>4 (axe unitaire + angle), ou 3 (vecteur rotation)</td>
+          <td>géométrique, minimal (vecteur rotation) ; lien direct avec la vitesse angulaire</td>
+          <td>singularité à <span class="math-inline">θ = 0</span> (axe indéfini) ; composition non triviale</td>
+        </tr>
+        <tr>
+          <td><strong>Quaternion unitaire</strong></td>
+          <td>4 (1 contrainte : norme = 1)</td>
+          <td><strong>pas de singularité</strong>, léger, interpolation propre (slerp), composition rapide</td>
+          <td>moins intuitif à lire ; signe double (<span class="math-inline">q</span> et <span class="math-inline">−q</span> = même rotation)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout plc">
+      <p>
+        <strong>Matrice en interne, RPY/quaternion aux interfaces.</strong> Sur automate, la
+        cinématique enchaîne des produits de matrices : garder l'orientation sous forme de
+        <strong>matrice</strong> évite des conversions à chaque étape et compose directement avec les
+        transformations homogènes. Aux <em>frontières</em> — affichage IHM, consigne opérateur, échange
+        avec un robot du commerce — on convertit vers du <strong>RPY</strong> (lisible par un humain)
+        ou du <strong>quaternion</strong> (échange numérique sûr, sans blocage de cardan). En clair :
+        on <em>calcule</em> en matrices, on <em>communique</em> en RPY ou quaternions.
+      </p>
+    </div>
+
+    <h2>6. Conversions RPY (Euler ZYX)</h2>
+    <p>
+      La convention <strong>RPY</strong> (<em>roll-pitch-yaw</em>) décrit l'orientation par trois angles :
+      <span class="math-inline">roll φ</span> autour de <span class="math-inline">x</span>,
+      <span class="math-inline">pitch θ</span> autour de <span class="math-inline">y</span>,
+      <span class="math-inline">yaw ψ</span> autour de <span class="math-inline">z</span>. La matrice
+      correspondante, en <strong>repère fixe</strong> (donc appliquée dans l'ordre
+      <span class="math-inline">x, y, z</span> et écrite en pré-multipliant), est :
+    </p>
+    <div class="math">
+      R(φ, θ, ψ) = R<sub>z</sub>(ψ) · R<sub>y</sub>(θ) · R<sub>x</sub>(φ)
+    </div>
+    <p>
+      En développant le produit (avec <span class="math-inline">c<sub>φ</sub> = cos φ</span>,
+      <span class="math-inline">s<sub>φ</sub> = sin φ</span>, etc.), on obtient explicitement :
+    </p>
+    <div class="math">
+      R =
+      [ c<sub>ψ</sub>c<sub>θ</sub> &nbsp; c<sub>ψ</sub>s<sub>θ</sub>s<sub>φ</sub>−s<sub>ψ</sub>c<sub>φ</sub> &nbsp; c<sub>ψ</sub>s<sub>θ</sub>c<sub>φ</sub>+s<sub>ψ</sub>s<sub>φ</sub> ;
+        s<sub>ψ</sub>c<sub>θ</sub> &nbsp; s<sub>ψ</sub>s<sub>θ</sub>s<sub>φ</sub>+c<sub>ψ</sub>c<sub>φ</sub> &nbsp; s<sub>ψ</sub>s<sub>θ</sub>c<sub>φ</sub>−c<sub>ψ</sub>s<sub>φ</sub> ;
+        −s<sub>θ</sub> &nbsp; c<sub>θ</sub>s<sub>φ</sub> &nbsp; c<sub>θ</sub>c<sub>φ</sub> ]
+    </div>
+    <p>
+      Pour l'<strong>extraction inverse</strong> (retrouver les angles depuis une matrice
+      <span class="math-inline">R</span> connue), on utilise <span class="math-inline">atan2</span>,
+      qui gère les quatre quadrants et le signe correctement — jamais <span class="math-inline">asin</span>
+      seul, qui perd de l'information. En lisant les bons coefficients :
+    </p>
+    <div class="math">
+      ψ = atan2(r<sub>21</sub>, r<sub>11</sub>)&nbsp;&nbsp;&nbsp;(yaw)
+    </div>
+    <div class="math">
+      θ = atan2( −r<sub>31</sub>, √(r<sub>11</sub>² + r<sub>21</sub>²) )&nbsp;&nbsp;&nbsp;(pitch)
+    </div>
+    <div class="math">
+      φ = atan2(r<sub>32</sub>, r<sub>33</sub>)&nbsp;&nbsp;&nbsp;(roll)
+    </div>
+    <p>
+      (indices à partir de 1 dans les formules ; en ST, où les tableaux commencent à 0,
+      <span class="math-inline">r<sub>21</sub></span> devient <code>R[1,0]</code>, etc.)
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Blocage de cardan (gimbal lock) à <span class="math-inline">θ = ±90°</span>.</strong>
+        Quand le pitch atteint <span class="math-inline">±90°</span>, on a
+        <span class="math-inline">c<sub>θ</sub> = 0</span> : <span class="math-inline">r<sub>11</sub></span>
+        et <span class="math-inline">r<sub>21</sub></span> s'annulent tous les deux, et
+        <span class="math-inline">atan2(0, 0)</span> est indéfini. Roll et yaw ne sont plus séparables
+        (deux axes s'alignent, un degré de liberté est perdu dans la paramétrisation). Il faut
+        <strong>détecter ce cas</strong> (<span class="math-inline">|r<sub>31</sub>| ≈ 1</span>) et
+        choisir une convention : par exemple fixer <span class="math-inline">ψ = 0</span> et reporter
+        toute la rotation restante sur <span class="math-inline">φ</span>. C'est précisément la
+        singularité que le quaternion évite.
+      </p>
+    </div>
+
+    <h2>7. Implémentation en Structured Text</h2>
+    <p>
+      On réutilise les types et briques du chapitre 1 (<code>T_MAT3</code>, <code>T_MAT4</code>,
+      <code>Mat4Identity</code>, <code>Mat4Mul</code>). Les rotations élémentaires renvoient une
+      <code>T_MAT4</code> (bloc rotation + identité ailleurs) pour se composer directement avec les
+      transformations homogènes. On passe le résultat en <code>VAR_IN_OUT</code> pour éviter toute copie.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Un seul <code>SIN</code> et un seul <code>COS</code> par matrice.</strong> Calculez
+        <code>c := COS(theta)</code> et <code>s := SIN(theta)</code> une fois dans une variable locale,
+        puis réutilisez-les : c'est plus rapide (les fonctions trigonométriques sont coûteuses) et
+        garantit que le même angle produit exactement les mêmes valeurs partout dans la matrice. Si
+        votre runtime fournit un <code>SINCOS</code> combiné, préférez-le. Et toujours en
+        <strong>LREAL</strong>, angles en <strong>radians</strong>.
+      </p>
+    </div>
+
+    <pre><code class="language-pascal">// ---- Rotations élémentaires en 4x4 (bloc rotation + identité homogène) ----
+
+// Rz(theta) : rotation autour de z. c en (0,0)(1,1), -s en (0,1), +s en (1,0).
+FUNCTION RotZ : BOOL
+VAR_IN_OUT
+    M : T_MAT4;
+END_VAR
+VAR_INPUT
+    theta : LREAL;   // rad
+END_VAR
+VAR
+    c, s : LREAL;
+END_VAR
+    c := COS(theta);
+    s := SIN(theta);
+    Mat4Identity(M := M);        // met tout à I, on écrase le bloc 3x3 utile
+    M[0,0] := c;   M[0,1] := -s;
+    M[1,0] := s;   M[1,1] :=  c;
+    RotZ := TRUE;
+END_FUNCTION
+
+// Ry(theta) : ATTENTION au signe inversé du sin (-s en (2,0), +s en (0,2)).
+FUNCTION RotY : BOOL
+VAR_IN_OUT
+    M : T_MAT4;
+END_VAR
+VAR_INPUT
+    theta : LREAL;
+END_VAR
+VAR
+    c, s : LREAL;
+END_VAR
+    c := COS(theta);
+    s := SIN(theta);
+    Mat4Identity(M := M);
+    M[0,0] :=  c;   M[0,2] := s;
+    M[2,0] := -s;   M[2,2] := c;
+    RotY := TRUE;
+END_FUNCTION
+
+// Rx(theta) : rotation autour de x. -s en (1,2), +s en (2,1).
+FUNCTION RotX : BOOL
+VAR_IN_OUT
+    M : T_MAT4;
+END_VAR
+VAR_INPUT
+    theta : LREAL;
+END_VAR
+VAR
+    c, s : LREAL;
+END_VAR
+    c := COS(theta);
+    s := SIN(theta);
+    Mat4Identity(M := M);
+    M[1,1] := c;   M[1,2] := -s;
+    M[2,1] := s;   M[2,2] :=  c;
+    RotX := TRUE;
+END_FUNCTION</code></pre>
+
+    <p>
+      La construction d'une matrice depuis les angles RPY se fait par la composition
+      <span class="math-inline">R<sub>z</sub>(ψ)·R<sub>y</sub>(θ)·R<sub>x</sub>(φ)</span>. On enchaîne
+      deux produits via <code>Mat4Mul</code>, en veillant à des matrices temporaires distinctes :
+    </p>
+    <pre><code class="language-pascal">// R := Rz(psi) * Ry(theta) * Rx(phi)   (RPY, repère fixe / Euler ZYX)
+// Écrit une transformation homogène 4x4 (translation nulle) dans M.
+FUNCTION RpyToMat : BOOL
+VAR_IN_OUT
+    M : T_MAT4;    // sortie
+END_VAR
+VAR_INPUT
+    phi   : LREAL;   // roll  (autour de x), rad
+    theta : LREAL;   // pitch (autour de y), rad
+    psi   : LREAL;   // yaw   (autour de z), rad
+END_VAR
+VAR
+    Rz, Ry, Rx, tmp : T_MAT4;
+END_VAR
+    RotZ(M := Rz, theta := psi);
+    RotY(M := Ry, theta := theta);
+    RotX(M := Rx, theta := phi);
+
+    Mat4Mul(A := Ry, B := Rx,  C := tmp);   // tmp := Ry * Rx
+    Mat4Mul(A := Rz, B := tmp, C := M);     // M   := Rz * (Ry * Rx)
+    RpyToMat := TRUE;
+END_FUNCTION</code></pre>
+
+    <p>
+      L'extraction inverse applique les trois <span class="math-inline">atan2</span>, avec détection du
+      cas dégénéré <span class="math-inline">θ = ±90°</span>. La fonction <code>ATAN2(y, x)</code> et
+      <code>SQRT</code> sont standard IEC 61131-3.
+    </p>
+    <pre><code class="language-pascal">// Extrait les angles RPY (phi, theta, psi) d'une matrice de rotation.
+// Convention Euler ZYX. Gère le blocage de cardan à theta = +/- 90°.
+FUNCTION MatToRpy : BOOL
+VAR_IN_OUT
+    M : T_MAT4;      // entrée : rotation (bloc 3x3 utilisé)
+END_VAR
+VAR_OUTPUT
+    phi   : LREAL;   // roll
+    theta : LREAL;   // pitch
+    psi   : LREAL;   // yaw
+END_VAR
+VAR
+    cy : LREAL;      // sqrt(r11^2 + r21^2) = |cos(theta)|
+END_VAR
+    // r11 = M[0,0], r21 = M[1,0], r31 = M[2,0], r32 = M[2,1], r33 = M[2,2].
+    cy := SQRT(M[0,0]*M[0,0] + M[1,0]*M[1,0]);
+
+    IF cy > 1E-9 THEN
+        // Cas régulier.
+        psi   := ATAN2(M[1,0], M[0,0]);   // atan2(r21, r11)
+        theta := ATAN2(-M[2,0], cy);      // atan2(-r31, cy)
+        phi   := ATAN2(M[2,1], M[2,2]);   // atan2(r32, r33)
+    ELSE
+        // Blocage de cardan : cos(theta) ≈ 0, theta = +/- 90°.
+        // Roll et yaw non séparables : on fixe psi = 0 par convention.
+        psi   := 0.0;
+        theta := ATAN2(-M[2,0], cy);      // +/- PI/2 selon le signe de r31
+        phi   := ATAN2(-M[1,2], M[1,1]);  // report de la rotation sur phi
+    END_IF
+    MatToRpy := TRUE;
+END_FUNCTION</code></pre>
+
+    <h2>8. Pièges à connaître</h2>
+    <ul>
+      <li>
+        <strong>Ordre des angles d'Euler.</strong> ZYX (RPY) est répandu, mais chaque constructeur a
+        sa convention : ZYZ, XYZ, angles fixes ou courants, degrés ou radians… Un jeu d'angles
+        <em>n'a de sens qu'avec sa convention</em>. Vérifiez la documentation du robot cible avant tout
+        échange, sous peine d'orientation fausse mais « plausible ».
+      </li>
+      <li>
+        <strong>Dérive de l'orthonormalité de <span class="math-inline">R</span>.</strong> À force de
+        multiplier des matrices en flottant, <span class="math-inline">R<sup>T</sup>R</span> s'éloigne
+        lentement de <span class="math-inline">I</span> : les colonnes cessent d'être exactement unitaires
+        et orthogonales. Sur une longue chaîne ou une intégration répétée, il faut
+        <strong>ré-orthonormaliser</strong> périodiquement (voir exercice 4).
+      </li>
+      <li>
+        <strong>Radians, toujours.</strong> <code>SIN</code>, <code>COS</code>, <code>ATAN2</code>
+        travaillent en radians. Convertissez aux frontières (<code>rad := deg * PI / 180.0</code>) et
+        raisonnez en SI au cœur du calcul, comme fixé au chapitre 1.
+      </li>
+    </ul>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — RotZ en 4×4 et vérification à π</h3>
+      <p>
+        En réutilisant <code>RotZ</code>, construisez <span class="math-inline">R<sub>z</sub>(π)</span>
+        et appliquez-la au point <span class="math-inline">(1, 0, 0)</span>. On doit obtenir
+        <span class="math-inline">(−1, 0, 0)</span> (aux erreurs d'arrondi près). Vérifiez-le en ST.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_TestRotZPi
+VAR
+    R          : T_MAT4;
+    px, py, pz : LREAL;
+    qx, qy, qz : LREAL;
+    ok         : BOOL := TRUE;
+    PI         : LREAL := 3.14159265358979;
+END_VAR
+
+// Point de départ (1, 0, 0).
+px := 1.0;  py := 0.0;  pz := 0.0;
+
+RotZ(M := R, theta := PI);
+
+// q := R * p  (partie 3x3 ; translation nulle ici).
+qx := R[0,0]*px + R[0,1]*py + R[0,2]*pz;
+qy := R[1,0]*px + R[1,1]*py + R[1,2]*pz;
+qz := R[2,0]*px + R[2,1]*py + R[2,2]*pz;
+
+IF ABS(qx + 1.0) > 1E-9 THEN ok := FALSE; END_IF   // attendu -1
+IF ABS(qy)       > 1E-9 THEN ok := FALSE; END_IF   // attendu  0
+IF ABS(qz)       > 1E-9 THEN ok := FALSE; END_IF   // attendu  0
+// ok = TRUE si Rz(PI) envoie (1,0,0) sur (-1,0,0)</code></pre>
+        <p>
+          À <span class="math-inline">θ = π</span> : <span class="math-inline">c = −1</span>,
+          <span class="math-inline">s ≈ 0</span>, donc <span class="math-inline">R<sub>z</sub></span>
+          vaut <span class="math-inline">diag(−1, −1, 1)</span> et retourne le point dans le plan
+          <span class="math-inline">xy</span>. On compare avec une <strong>tolérance</strong> car
+          <code>SIN(π)</code> ne vaut pas exactement 0 en flottant.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Composer deux rotations</h3>
+      <p>
+        Montrez numériquement que <span class="math-inline">R<sub>z</sub>(90°)·R<sub>x</sub>(90°)</span>
+        et <span class="math-inline">R<sub>x</sub>(90°)·R<sub>z</sub>(90°)</span> <strong>diffèrent</strong>
+        (non-commutativité). Construisez les deux produits et comparez-les coefficient par coefficient.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_TestNonCommute
+VAR
+    Rz, Rx, AB, BA : T_MAT4;
+    i, j           : INT;
+    identiques     : BOOL := TRUE;
+    HALFPI         : LREAL := 1.5707963267949;   // PI/2
+END_VAR
+
+RotZ(M := Rz, theta := HALFPI);
+RotX(M := Rx, theta := HALFPI);
+
+Mat4Mul(A := Rz, B := Rx, C := AB);   // AB := Rz * Rx
+Mat4Mul(A := Rx, B := Rz, C := BA);   // BA := Rx * Rz
+
+FOR i := 0 TO 3 DO
+    FOR j := 0 TO 3 DO
+        IF ABS(AB[i,j] - BA[i,j]) > 1E-9 THEN
+            identiques := FALSE;   // au moins un coefficient diffère
+        END_IF
+    END_FOR
+END_FOR
+// identiques = FALSE : les deux ordres donnent des rotations différentes</code></pre>
+        <p>
+          Le produit matriciel n'étant pas commutatif, <code>identiques</code> ressort
+          <strong>FALSE</strong>. Concrètement, tourner d'abord autour de <span class="math-inline">z</span>
+          puis de <span class="math-inline">x</span> ne place pas le repère au même endroit que l'ordre
+          inverse : c'est exactement le piège de la section 1.2, ici rendu tangible.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Extraire les RPY d'une matrice connue</h3>
+      <p>
+        Construisez <span class="math-inline">R</span> avec <code>RpyToMat</code> pour
+        <span class="math-inline">φ = 0,1</span>, <span class="math-inline">θ = 0,2</span>,
+        <span class="math-inline">ψ = 0,3</span> rad, puis ré-extrayez les angles avec
+        <code>MatToRpy</code>. Vérifiez qu'on retombe sur les angles de départ (aller-retour).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_TestRpyAllerRetour
+VAR
+    R                : T_MAT4;
+    phi0, the0, psi0 : LREAL;
+    phi1, the1, psi1 : LREAL;
+    ok               : BOOL := TRUE;
+END_VAR
+
+phi0 := 0.1;  the0 := 0.2;  psi0 := 0.3;
+
+RpyToMat(M := R, phi := phi0, theta := the0, psi := psi0);
+MatToRpy(M := R, phi => phi1, theta => the1, psi => psi1);
+
+IF ABS(phi1 - phi0) > 1E-9 THEN ok := FALSE; END_IF
+IF ABS(the1 - the0) > 1E-9 THEN ok := FALSE; END_IF
+IF ABS(psi1 - psi0) > 1E-9 THEN ok := FALSE; END_IF
+// ok = TRUE : la conversion RPY -> R -> RPY est l'identité (hors singularité)</code></pre>
+        <p>
+          L'aller-retour est exact <em>tant qu'on reste loin du blocage de cardan</em>
+          (<span class="math-inline">|θ| ≠ 90°</span>). Testez ensuite
+          <span class="math-inline">θ = π/2</span> : <code>MatToRpy</code> bascule dans la branche
+          dégénérée, fixe <span class="math-inline">ψ = 0</span> et reporte la rotation sur
+          <span class="math-inline">φ</span> — les angles rendus diffèrent alors des angles d'entrée,
+          bien que la <em>matrice</em> soit la même. C'est attendu : plusieurs triplets RPY décrivent
+          la même orientation au point singulier.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Ré-orthonormaliser une matrice de rotation dérivée</h3>
+      <p>
+        Après de nombreux produits, <span class="math-inline">R</span> n'est plus tout à fait
+        orthonormale. Écrivez une fonction <code>ReOrthoNorm</code> qui la corrige par
+        <strong>Gram-Schmidt</strong> sur les colonnes : normaliser la 1<sup>re</sup> colonne, rendre
+        la 2<sup>e</sup> orthogonale à la 1<sup>re</sup> puis la normaliser, et reconstruire la 3<sup>e</sup>
+        par produit vectoriel des deux premières.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">// Ré-orthonormalise le bloc rotation 3x3 de M par Gram-Schmidt sur colonnes.
+// Corrige la dérive numérique accumulée au fil des produits de matrices.
+FUNCTION ReOrthoNorm : BOOL
+VAR_IN_OUT
+    M : T_MAT4;
+END_VAR
+VAR
+    cx, cy, cz : T_VEC3;   // colonnes 0, 1, 2 de R
+    dot, n     : LREAL;
+    i          : INT;
+END_VAR
+    // Lecture des colonnes.
+    FOR i := 0 TO 2 DO
+        cx[i] := M[i,0];  cy[i] := M[i,1];  cz[i] := M[i,2];
+    END_FOR
+
+    // 1) Normaliser cx.
+    n := SQRT(cx[0]*cx[0] + cx[1]*cx[1] + cx[2]*cx[2]);
+    FOR i := 0 TO 2 DO cx[i] := cx[i] / n; END_FOR
+
+    // 2) Rendre cy orthogonale à cx (cy := cy - (cy·cx) cx), puis normaliser.
+    dot := cy[0]*cx[0] + cy[1]*cx[1] + cy[2]*cx[2];
+    FOR i := 0 TO 2 DO cy[i] := cy[i] - dot * cx[i]; END_FOR
+    n := SQRT(cy[0]*cy[0] + cy[1]*cy[1] + cy[2]*cy[2]);
+    FOR i := 0 TO 2 DO cy[i] := cy[i] / n; END_FOR
+
+    // 3) cz := cx × cy  (produit vectoriel -> repère direct garanti).
+    cz[0] := cx[1]*cy[2] - cx[2]*cy[1];
+    cz[1] := cx[2]*cy[0] - cx[0]*cy[2];
+    cz[2] := cx[0]*cy[1] - cx[1]*cy[0];
+
+    // Réécriture des colonnes dans M.
+    FOR i := 0 TO 2 DO
+        M[i,0] := cx[i];  M[i,1] := cy[i];  M[i,2] := cz[i];
+    END_FOR
+    ReOrthoNorm := TRUE;
+END_FUNCTION</code></pre>
+        <p>
+          Reconstruire la 3<sup>e</sup> colonne par <strong>produit vectoriel</strong>
+          <span class="math-inline">c<sub>x</sub> × c<sub>y</sub></span> garantit à la fois
+          l'orthogonalité et le caractère <em>direct</em> (<span class="math-inline">det R = +1</span>) —
+          on ne peut pas retomber sur une réflexion. À appeler périodiquement (par exemple tous les N
+          cycles) sur les matrices intégrées longtemps, jamais dans la boucle chaude sans nécessité :
+          les <code>SQRT</code> ont un coût.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Une transformation rigide s'écrit <span class="math-inline"><sup>i</sup>T<sub>j</sub> = [R t ; 0 1]</span> ; transformer un point : <span class="math-inline">p' = R·p + t</span> ; composer : <span class="math-inline"><sup>0</sup>T<sub>n</sub> = <sup>0</sup>T<sub>1</sub> · … · <sup>n-1</sup>T<sub>n</sub></span> — <strong>non commutatif</strong>.</li>
+        <li>Inverse d'une transformation rigide : <span class="math-inline">T<sup>⁻¹</sup> = [R<sup>T</sup> −R<sup>T</sup>t ; 0 1]</span> — pas d'inversion générale, <strong>rapide et stable</strong> (<code>Mat4InvRigid</code>).</li>
+        <li>Rotations élémentaires <span class="math-inline">R<sub>x</sub>, R<sub>y</sub>, R<sub>z</sub></span> : attention au <strong>signe inversé du sin dans <span class="math-inline">R<sub>y</sub></span></strong>.</li>
+        <li>Composition : <strong>post-multiplier</strong> pour une rotation dans le repère courant, <strong>pré-multiplier</strong> pour le repère fixe.</li>
+        <li>Représentations : <strong>matrice</strong> (robuste, dérive → ré-orthonormaliser), <strong>RPY</strong> (intuitif, gimbal lock à <span class="math-inline">θ=±90°</span>), <strong>axe-angle</strong>, <strong>quaternion</strong> (sans singularité). Sur PLC : matrice en interne, RPY/quaternion aux interfaces.</li>
+        <li>Conversions : <span class="math-inline">R = R<sub>z</sub>(ψ)·R<sub>y</sub>(θ)·R<sub>x</sub>(φ)</span> ; extraction par <strong>atan2</strong> (<code>RpyToMat</code> / <code>MatToRpy</code>), avec traitement du cas dégénéré.</li>
+        <li>Pièges : convention d'Euler dépendante du constructeur, dérive de l'orthonormalité, radians partout.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Introduction &amp; contexte automate</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>Paramétrisation Denavit-Hartenberg</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) 🤖
+  </footer>
+</body>
+</html>

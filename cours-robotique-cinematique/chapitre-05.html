@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Cinématique directe sur PLC</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). ST ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Cinématique directe sur PLC</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre la <strong>cinématique directe</strong> comme <strong>chaînage</strong> des transformations de liaison, de la base vers l'effecteur.</li>
+        <li>Gérer proprement les liaisons <strong>rotoïdes</strong> et <strong>prismatiques</strong> via le champ <code>isPrismatic</code>.</li>
+        <li>Écrire un <code>FUNCTION_BLOCK FB_ForwardKinematics</code> complet, générique sur <em>n</em> axes, en Structured Text.</li>
+        <li>Stocker les repères cumulés <span class="math-inline"><sup>0</sup>T<sub>i</sub></span> — ils serviront au <strong>Jacobien</strong> (chapitre 6).</li>
+        <li>Extraire la <strong>pose</strong> (position + orientation) et insérer les repères <strong>base</strong> et <strong>outil (TCP)</strong>.</li>
+        <li><strong>Valider</strong> par un oracle en formule fermée (bras 2R) et respecter les contraintes <strong>temps réel</strong>.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le principe : la FK est un chaînage</h2>
+    <p>
+      La <strong>cinématique directe</strong> (<em>forward kinematics</em>, FK) répond à la question :
+      pour un jeu de variables articulaires <span class="math-inline">q = (q<sub>1</sub>, …, q<sub>n</sub>)</span>,
+      quelle est la pose de l'effecteur ? La réponse est un simple <strong>produit de matrices
+      homogènes</strong> : chaque liaison <em>i</em> fournit sa transformation
+      <span class="math-inline"><sup>i-1</sup>T<sub>i</sub></span> (matrice DH du chapitre 3, ou MDH du
+      chapitre 4), et on les compose de la base vers l'outil.
+    </p>
+    <div class="math">
+      <sup>0</sup>T<sub>n</sub>(q) = <sup>0</sup>T<sub>1</sub> · <sup>1</sup>T<sub>2</sub> · … · <sup>n-1</sup>T<sub>n</sub>
+    </div>
+    <p>
+      Cette équation <em>est</em> la cinématique directe. Contrairement à la cinématique inverse, elle
+      est <strong>déterministe et unique</strong> : à un <span class="math-inline">q</span> correspond
+      exactement une pose, sans ambiguïté ni singularité de résolution. C'est un pur calcul de
+      composition géométrique — idéal pour une tâche cyclique d'automate.
+    </p>
+    <p>
+      Deux propriétés doivent rester présentes à l'esprit. D'abord, le produit matriciel n'est
+      <strong>pas commutatif</strong> : <span class="math-inline"><sup>0</sup>T<sub>1</sub> · <sup>1</sup>T<sub>2</sub></span>
+      ≠ <span class="math-inline"><sup>1</sup>T<sub>2</sub> · <sup>0</sup>T<sub>1</sub></span>.
+      Une transformation, c'est d'abord une rotation puis une translation <em>dans ce repère</em> ;
+      inverser l'ordre change le résultat. Ensuite, on parcourt la chaîne en
+      <strong>post-multipliant</strong> : on part de l'identité et, à chaque liaison, on multiplie
+      <em>à droite</em> la transformation accumulée par la matrice de la liaison courante :
+    </p>
+    <div class="math">
+      T ← I,&nbsp;&nbsp;&nbsp; puis pour i = 1..n :&nbsp;&nbsp; T ← T · <sup>i-1</sup>T<sub>i</sub>
+    </div>
+    <p>
+      À la fin de la boucle, <span class="math-inline">T = <sup>0</sup>T<sub>n</sub></span>. Écrire
+      <span class="math-inline">T ← <sup>i-1</sup>T<sub>i</sub> · T</span> (pré-multiplication)
+      composerait dans le mauvais sens et donnerait une pose fausse.
+    </p>
+
+    <h2>2. Liaison rotoïde vs prismatique</h2>
+    <p>
+      Dans la table DH, les paramètres <span class="math-inline">θ, d, a, α</span> stockés sont les
+      <strong>offsets constants</strong> de la géométrie. La <strong>variable articulaire</strong>
+      <span class="math-inline">q<sub>i</sub></span> vient s'y ajouter — mais <em>sur quel paramètre</em>
+      dépend de la nature de la liaison :
+    </p>
+    <ul>
+      <li>
+        <strong>Liaison rotoïde</strong> (<code>isPrismatic = FALSE</code>) : la variable est un
+        <em>angle</em>, elle s'ajoute à l'offset <span class="math-inline">θ</span> :
+        <span class="math-inline">θ<sub>eff</sub> = θ<sub>offset</sub> + q<sub>i</sub></span>,
+        tandis que <span class="math-inline">d</span> reste constant.
+      </li>
+      <li>
+        <strong>Liaison prismatique</strong> (<code>isPrismatic = TRUE</code>) : la variable est une
+        <em>longueur</em>, elle s'ajoute à l'offset <span class="math-inline">d</span> :
+        <span class="math-inline">d<sub>eff</sub> = d<sub>offset</sub> + q<sub>i</sub></span>,
+        tandis que <span class="math-inline">θ</span> reste constant.
+      </li>
+    </ul>
+    <p>
+      Les deux autres paramètres <span class="math-inline">a</span> (longueur de bras) et
+      <span class="math-inline">α</span> (torsion) sont <strong>toujours constants</strong> :
+      ils décrivent la structure mécanique, jamais le mouvement. Une petite fonction utilitaire
+      calcule les paramètres <em>effectifs</em> d'une liaison à partir de sa ligne DH et de sa variable :
+    </p>
+    <pre><code class="language-pascal">// Calcule la matrice de liaison i-1 -> i pour une ligne DH et sa variable q.
+// Aiguille q sur theta (rotoïde) ou sur d (prismatique).
+// S'appuie sur DhTransform (chapitre 3) : DhTransform(theta, d, a, alpha, T).
+FUNCTION LinkTransform : BOOL
+VAR_IN_OUT
+    dh : T_DH;      // ligne DH de la liaison (offsets constants)
+    T  : T_MAT4;    // sortie : i-1 T i
+END_VAR
+VAR_INPUT
+    q  : LREAL;     // variable articulaire de la liaison (rad ou m)
+END_VAR
+VAR
+    thetaEff : LREAL;
+    dEff     : LREAL;
+END_VAR
+    IF dh.isPrismatic THEN
+        thetaEff := dh.theta;        // theta figé
+        dEff     := dh.d + q;        // q s'ajoute à d
+    ELSE
+        thetaEff := dh.theta + q;    // q s'ajoute à theta
+        dEff     := dh.d;            // d figé
+    END_IF
+    // a et alpha sont TOUJOURS constants.
+    LinkTransform := DhTransform(thetaEff, dEff, dh.a, dh.alpha, T);
+END_FUNCTION</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Ne jamais oublier <span class="math-inline">q</span> sur une prismatique.</strong>
+        L'erreur classique est de coder <code>theta := offset + q</code> pour <em>tous</em> les axes.
+        Sur une liaison prismatique, <span class="math-inline">θ</span> est fixe et c'est
+        <span class="math-inline">d</span> qui bouge : appliquer <span class="math-inline">q</span> au
+        mauvais paramètre fait <em>tourner</em> l'axe au lieu de le faire <em>coulisser</em>. Le champ
+        <code>isPrismatic</code> existe précisément pour aiguiller le calcul — utilisez-le à un seul
+        endroit (ici <code>LinkTransform</code>) pour ne pas dupliquer la logique.
+      </p>
+    </div>
+
+    <h2>3. Algorithme général sur n liaisons</h2>
+    <p>
+      L'algorithme est le même quel que soit le nombre d'axes. On part de l'identité et l'on
+      post-multiplie liaison après liaison. Le point <strong>crucial</strong> pour la suite du cours :
+      on ne calcule pas seulement <span class="math-inline"><sup>0</sup>T<sub>n</sub></span>, on
+      <strong>mémorise au passage chaque transformation cumulée</strong>
+      <span class="math-inline"><sup>0</sup>T<sub>i</sub></span> dans un tableau
+      <code>ARRAY[0..N] OF T_MAT4</code>.
+    </p>
+    <div class="math">
+      T0i[0] = I,&nbsp;&nbsp; T0i[1] = <sup>0</sup>T<sub>1</sub>,&nbsp;&nbsp;
+      T0i[2] = <sup>0</sup>T<sub>1</sub>·<sup>1</sup>T<sub>2</sub>,&nbsp;&nbsp; …,&nbsp;&nbsp;
+      T0i[n] = <sup>0</sup>T<sub>n</sub>
+    </div>
+    <p>
+      Ces repères intermédiaires ne sont pas un luxe : le <strong>Jacobien géométrique</strong>
+      (chapitre 6) a besoin, pour chaque axe <em>i</em>, de l'axe de rotation
+      <span class="math-inline">z<sub>i-1</sub></span> (3ᵉ colonne de la rotation de
+      <span class="math-inline"><sup>0</sup>T<sub>i-1</sub></span>) et de la position d'origine
+      <span class="math-inline">p<sub>i-1</sub></span> (colonne de translation). Les recalculer serait
+      du gaspillage : on les produit <em>gratuitement</em> pendant la FK, on les range, et le Jacobien
+      n'aura plus qu'à les lire. <strong>Retenez ce tableau <code>T0i</code></strong>, c'est le lien
+      direct avec le chapitre suivant.
+    </p>
+    <p>
+      En pseudo-code, en tenant compte de la contrainte que <code>Mat4Mul</code> exige un résultat
+      distinct de ses entrées :
+    </p>
+    <div class="math">
+      T0i[0] ← I<br>
+      pour i = 1..n :<br>
+      &nbsp;&nbsp; L ← <sup>i-1</sup>T<sub>i</sub>&nbsp; (via LinkTransform)<br>
+      &nbsp;&nbsp; T0i[i] ← T0i[i-1] · L&nbsp; (Mat4Mul, résultat dans une case neuve)<br>
+      renvoyer T0i[n]
+    </div>
+    <p>
+      Comme <code>T0i[i]</code> et <code>T0i[i-1]</code> sont deux cases <em>différentes</em> du
+      tableau, aucun aliasing n'est possible : on écrit dans une matrice qui n'est pas une entrée du
+      produit. Le tableau nous rend service deux fois — il porte les repères pour le Jacobien
+      <em>et</em> il fournit les buffers distincts que <code>Mat4Mul</code> réclame.
+    </p>
+
+    <h2>4. Implémentation : FB_ForwardKinematics</h2>
+    <p>
+      On encapsule la FK dans un <strong>FUNCTION_BLOCK</strong> (et non une simple FONCTION) car il
+      porte des sorties structurées — la matrice, la pose, et surtout le tableau des repères cumulés
+      qu'on veut conserver d'un cycle à l'autre. Les tableaux sont dimensionnés à une taille maximale
+      <code>N</code> (constante globale, p. ex. 6) ; l'entrée <code>n</code> indique combien d'axes
+      sont réellement utilisés.
+    </p>
+    <pre><code class="language-pascal">// Constante globale (GVL) : nombre MAXIMAL d'axes supportés.
+VAR_GLOBAL CONSTANT
+    N : INT := 6;
+END_VAR
+
+// -------------------------------------------------------------------
+// FB_ForwardKinematics : cinématique directe d'un bras série n axes.
+// Chaîne 0 T n = 0 T 1 * 1 T 2 * ... * (n-1) T n, en post-multipliant,
+// et MÉMORISE chaque repère cumulé 0 T i (utile au Jacobien, ch. 6).
+// -------------------------------------------------------------------
+FUNCTION_BLOCK FB_ForwardKinematics
+VAR_IN_OUT
+    dh : ARRAY[0..N-1] OF T_DH;    // table DH (offsets constants)
+    q  : ARRAY[0..N-1] OF LREAL;   // variables articulaires (rad ou m)
+END_VAR
+VAR_INPUT
+    n  : INT;                      // nombre d'axes réellement utilisés (1..N)
+END_VAR
+VAR_OUTPUT
+    T0n  : T_MAT4;                 // 0 T n : base -> effecteur
+    pose : T_POSE;                 // même info, décomposée (x,y,z,R)
+    T0i  : ARRAY[0..N] OF T_MAT4;  // repères cumulés : T0i[i] = 0 T i
+END_VAR
+VAR
+    i   : INT;
+    L   : T_MAT4;                  // i-1 T i (transformation de la liaison)
+END_VAR
+
+    // 1) Repère de base : T0i[0] = identité.
+    Mat4Identity(M := T0i[0]);
+
+    // 2) Chaînage : à chaque liaison, post-multiplication.
+    FOR i := 1 TO n DO
+        // Matrice de la liaison i (aiguille q sur theta ou d selon le type).
+        LinkTransform(dh := dh[i-1], q := q[i-1], T := L);
+
+        // T0i[i] := T0i[i-1] * L.  Résultat (T0i[i]) DISTINCT des entrées :
+        // pas d'aliasing, Mat4Mul est utilisée en toute sécurité.
+        Mat4Mul(A := T0i[i-1], B := L, C := T0i[i]);
+    END_FOR
+
+    // 3) Sorties : 0 T n et sa pose décomposée.
+    Mat4Copy(src := T0i[n], dst := T0n);
+    Mat4GetPose(T := T0n, p := pose);
+END_FUNCTION_BLOCK</code></pre>
+    <p>
+      Deux remarques d'implémentation. D'abord, <code>Mat4Mul</code> écrit dans <code>T0i[i]</code>,
+      une case du tableau qui n'est ni <code>A</code> (<code>T0i[i-1]</code>) ni <code>B</code>
+      (<code>L</code>) : la règle « résultat distinct des entrées » (chapitre 1) est respectée sans
+      buffer supplémentaire. Ensuite, si l'on ne voulait <em>pas</em> conserver les repères
+      intermédiaires, il faudrait deux buffers <code>ping/pong</code> et une recopie à chaque tour —
+      ici le tableau <code>T0i</code> joue naturellement ce rôle. La petite fonction de recopie :
+    </p>
+    <pre><code class="language-pascal">// Recopie une matrice 4x4 (dst := src). Passage par VAR_IN_OUT : zéro copie superflue.
+FUNCTION Mat4Copy : BOOL
+VAR_IN_OUT
+    src : T_MAT4;
+    dst : T_MAT4;
+END_VAR
+VAR
+    i, j : INT;
+END_VAR
+    FOR i := 0 TO 3 DO
+        FOR j := 0 TO 3 DO
+            dst[i, j] := src[i, j];
+        END_FOR
+    END_FOR
+    Mat4Copy := TRUE;
+END_FUNCTION</code></pre>
+
+    <div class="callout plc">
+      <p>
+        <strong>Pourquoi un FB et pas une FUNCTION ?</strong> En IEC&nbsp;61131-3, une
+        <code>FUNCTION</code> n'a pas de mémoire persistante entre appels : ses sorties disparaissent
+        au retour. Un <code>FUNCTION_BLOCK</code> possède une <strong>instance</strong> avec état ;
+        ses <code>VAR_OUTPUT</code> (dont le tableau <code>T0i</code>) restent lisibles après l'appel,
+        tout le cycle durant. On déclare une instance unique <code>fbFK : FB_ForwardKinematics;</code>
+        dans le programme, et on la rappelle chaque cycle — sans jamais rien allouer.
+      </p>
+    </div>
+
+    <h2>5. Extraction de la pose</h2>
+    <p>
+      La matrice <span class="math-inline"><sup>0</sup>T<sub>n</sub></span> contient tout, mais on veut
+      souvent en extraire séparément la <strong>position</strong> et l'<strong>orientation</strong>.
+      La position est la <strong>colonne de translation</strong> (indices <code>[i,3]</code>) ;
+      l'orientation est le <strong>bloc 3×3 supérieur gauche</strong> :
+    </p>
+    <div class="math">
+      t = ( T[0,3], T[1,3], T[2,3] )&nbsp;&nbsp;&nbsp;
+      R = [ T[0,0] T[0,1] T[0,2] ; T[1,0] T[1,1] T[1,2] ; T[2,0] T[2,1] T[2,2] ]
+    </div>
+    <pre><code class="language-pascal">// Extrait la pose (position + rotation 3x3) d'une transformation homogène.
+FUNCTION Mat4GetPose : BOOL
+VAR_IN_OUT
+    T : T_MAT4;
+    p : T_POSE;
+END_VAR
+VAR
+    i, j : INT;
+END_VAR
+    // Position = colonne de translation.
+    p.x := T[0, 3];
+    p.y := T[1, 3];
+    p.z := T[2, 3];
+    // Orientation = bloc rotation 3x3.
+    FOR i := 0 TO 2 DO
+        FOR j := 0 TO 2 DO
+            p.R[i, j] := T[i, j];
+        END_FOR
+    END_FOR
+    Mat4GetPose := TRUE;
+END_FUNCTION</code></pre>
+    <p>
+      Pour une IHM ou un point de consigne, on veut fréquemment l'orientation sous forme de trois
+      <strong>angles RPY</strong> (roulis, tangage, lacet) plutôt qu'une matrice 3×3. La conversion
+      <span class="math-inline">R → (roll, pitch, yaw)</span> — et le piège du blocage de cardan à
+      <span class="math-inline">pitch = ±90°</span> — a été traitée au <strong>chapitre 2</strong> ;
+      il suffit d'appeler cette fonction sur <code>pose.R</code> aux frontières du système
+      (juste avant l'écriture vers l'IHM).
+    </p>
+
+    <h2>6. Repère base et repère outil (TCP)</h2>
+    <p>
+      <span class="math-inline"><sup>0</sup>T<sub>n</sub></span> place l'extrémité de la
+      <strong>bride mécanique</strong> (repère <em>n</em>) dans le repère <strong>0 du robot</strong>.
+      En pratique, ce n'est presque jamais ce que l'on veut piloter :
+    </p>
+    <ul>
+      <li>
+        Le robot est <strong>monté</strong> quelque part dans la cellule (au sol, incliné, au plafond).
+        La matrice <span class="math-inline">T<sub>base</sub></span> place le repère 0 du robot dans le
+        repère <strong>monde</strong> de la cellule (mesuré au montage / à la calibration, chapitre 7).
+      </li>
+      <li>
+        Un <strong>outil</strong> (pince, torche, ventouse) est fixé sur la bride. Le point réellement
+        piloté est le <strong>TCP</strong> (<em>Tool Center Point</em>). La matrice
+        <span class="math-inline">T<sub>tool</sub></span> place le TCP dans le repère de la bride
+        (repère <em>n</em>) — c'est une donnée de l'outil, souvent mesurée par une procédure de
+        « calibration outil ».
+      </li>
+    </ul>
+    <p>
+      La pose complète pilotable est alors l'<strong>encadrement</strong> de
+      <span class="math-inline"><sup>0</sup>T<sub>n</sub></span> par ces deux matrices :
+    </p>
+    <div class="math">
+      <sup>base</sup>T<sub>tcp</sub> = T<sub>base</sub> · <sup>0</sup>T<sub>n</sub> · T<sub>tool</sub>
+    </div>
+    <p>
+      L'ordre reflète la géométrie : on part du monde, on descend au repère 0 du robot
+      (<span class="math-inline">T<sub>base</sub></span>), on traverse la chaîne jusqu'à la bride
+      (<span class="math-inline"><sup>0</sup>T<sub>n</sub></span>), puis on va jusqu'au bout de l'outil
+      (<span class="math-inline">T<sub>tool</sub></span>). En Structured Text, deux produits successifs
+      (avec des temporaires distinctes) :
+    </p>
+    <pre><code class="language-pascal">// base T tcp := Tbase * (0 T n) * Ttool.
+// tmp est distincte des entrées à chaque Mat4Mul (pas d'aliasing).
+FUNCTION ApplyBaseTool : BOOL
+VAR_IN_OUT
+    Tbase : T_MAT4;   // repère 0 du robot dans le monde (montage)
+    T0n   : T_MAT4;   // base robot -> bride
+    Ttool : T_MAT4;   // bride -> TCP (outil)
+    Tbtcp : T_MAT4;   // sortie : monde -> TCP
+END_VAR
+VAR
+    tmp : T_MAT4;
+END_VAR
+    Mat4Mul(A := Tbase, B := T0n,  C := tmp);    // tmp := Tbase * 0Tn
+    Mat4Mul(A := tmp,   B := Ttool, C := Tbtcp);  // Tbtcp := tmp * Ttool
+    ApplyBaseTool := TRUE;
+END_FUNCTION</code></pre>
+    <div class="callout note">
+      <p>
+        Si le robot est monté « à l'origine » et sans outil, <span class="math-inline">T<sub>base</sub></span>
+        et <span class="math-inline">T<sub>tool</sub></span> valent l'identité et
+        <span class="math-inline"><sup>base</sup>T<sub>tcp</sub> = <sup>0</sup>T<sub>n</sub></span>.
+        C'est un bon cas de test : intercaler des identités ne doit rien changer. Séparer proprement
+        <em>base</em>, <em>robot</em> et <em>outil</em> est ce qui permet, plus tard, de recalibrer
+        l'un sans toucher aux autres.
+      </p>
+    </div>
+
+    <h2>7. Exemple travaillé : un bras anthropomorphe 6 axes</h2>
+    <p>
+      Prenons une table DH plausible d'un bras 6 axes de type industriel (poignet sphérique), toutes
+      les liaisons rotoïdes. Les valeurs sont en mètres et radians ; les
+      <span class="math-inline">α</span> valent <span class="math-inline">±π/2</span> ou
+      <span class="math-inline">0</span>, ce qui est typique de cette architecture.
+    </p>
+    <table>
+      <thead>
+        <tr><th>i</th><th>θ<sub>i</sub> (offset)</th><th>d<sub>i</sub> (m)</th><th>a<sub>i</sub> (m)</th><th>α<sub>i</sub> (rad)</th><th>type</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>0</td><td>0,340</td><td>0,040</td><td>−π/2</td><td>rotoïde</td></tr>
+        <tr><td>2</td><td>−π/2</td><td>0</td><td>0,300</td><td>0</td><td>rotoïde</td></tr>
+        <tr><td>3</td><td>0</td><td>0</td><td>0,040</td><td>−π/2</td><td>rotoïde</td></tr>
+        <tr><td>4</td><td>0</td><td>0,310</td><td>0</td><td>+π/2</td><td>rotoïde</td></tr>
+        <tr><td>5</td><td>0</td><td>0</td><td>0</td><td>−π/2</td><td>rotoïde</td></tr>
+        <tr><td>6</td><td>0</td><td>0,080</td><td>0</td><td>0</td><td>rotoïde</td></tr>
+      </tbody>
+    </table>
+    <p>
+      On remplit la table une fois (données <em>constantes</em>), on charge la configuration
+      articulaire <span class="math-inline">q</span> voulue, on appelle le FB, on lit la pose :
+    </p>
+    <pre><code class="language-pascal">PROGRAM P_ExempleFK6
+VAR
+    fbFK  : FB_ForwardKinematics;      // instance (état persistant)
+    robot : ARRAY[0..N-1] OF T_DH;     // table DH du bras
+    qcmd  : ARRAY[0..N-1] OF LREAL;    // configuration articulaire (rad)
+    x, y, z : LREAL;
+    initDone : BOOL := FALSE;
+    PI : LREAL := 3.14159265358979;
+END_VAR
+
+// ---- Initialisation de la géométrie : UNE seule fois (constante) ----
+IF NOT initDone THEN
+    // theta(offset), d, a, alpha, isPrismatic
+    robot[0].theta := 0.0;      robot[0].d := 0.340; robot[0].a := 0.040; robot[0].alpha := -PI/2.0; robot[0].isPrismatic := FALSE;
+    robot[1].theta := -PI/2.0;  robot[1].d := 0.0;   robot[1].a := 0.300; robot[1].alpha := 0.0;     robot[1].isPrismatic := FALSE;
+    robot[2].theta := 0.0;      robot[2].d := 0.0;   robot[2].a := 0.040; robot[2].alpha := -PI/2.0; robot[2].isPrismatic := FALSE;
+    robot[3].theta := 0.0;      robot[3].d := 0.310; robot[3].a := 0.0;   robot[3].alpha := PI/2.0;  robot[3].isPrismatic := FALSE;
+    robot[4].theta := 0.0;      robot[4].d := 0.0;   robot[4].a := 0.0;   robot[4].alpha := -PI/2.0; robot[4].isPrismatic := FALSE;
+    robot[5].theta := 0.0;      robot[5].d := 0.080; robot[5].a := 0.0;   robot[5].alpha := 0.0;     robot[5].isPrismatic := FALSE;
+    initDone := TRUE;
+END_IF
+
+// ---- Consigne articulaire (rad) ----
+qcmd[0] := 0.0;
+qcmd[1] := 0.3;
+qcmd[2] := -0.5;
+qcmd[3] := 0.0;
+qcmd[4] := 0.8;
+qcmd[5] := 0.0;
+
+// ---- Cinématique directe ----
+fbFK(dh := robot, q := qcmd, n := 6);
+
+// ---- Lecture de la position de la bride (m), dans le repère 0 du robot ----
+x := fbFK.pose.x;    // = fbFK.T0n[0,3]
+y := fbFK.pose.y;    // = fbFK.T0n[1,3]
+z := fbFK.pose.z;    // = fbFK.T0n[2,3]
+// fbFK.pose.R contient l'orientation 3x3 ; fbFK.T0i[..] les repères cumulés.</code></pre>
+    <p>
+      La position <span class="math-inline">(x, y, z)</span> se lit dans la colonne de translation de
+      <code>fbFK.T0n</code> (indices <code>[0..2, 3]</code>), reflétée par
+      <code>fbFK.pose.x/y/z</code>. L'orientation est dans <code>fbFK.pose.R</code> (à convertir en RPY
+      pour l'IHM, chapitre 2). Et — point clé — <code>fbFK.T0i[0..6]</code> est déjà rempli des six
+      repères cumulés, prêt pour le Jacobien.
+    </p>
+
+    <h2>8. Validation</h2>
+    <p>
+      Un modèle de FK doit <strong>toujours</strong> être validé contre un oracle indépendant. Deux
+      approches complémentaires, faciles à mettre en œuvre sur automate.
+    </p>
+    <h3>Oracle en formule fermée : le bras planaire 2R</h3>
+    <p>
+      Pour un bras planaire à deux liaisons rotoïdes (<span class="math-inline">d = α = 0</span>,
+      <span class="math-inline">a<sub>i</sub> = L<sub>i</sub></span>), la géométrie donne directement :
+    </p>
+    <div class="math">
+      x = L<sub>1</sub> c<sub>1</sub> + L<sub>2</sub> c<sub>12</sub>,&nbsp;&nbsp;&nbsp;
+      y = L<sub>1</sub> s<sub>1</sub> + L<sub>2</sub> s<sub>12</sub>
+    </div>
+    <p>
+      avec <span class="math-inline">c<sub>1</sub> = cos q<sub>1</sub></span>,
+      <span class="math-inline">c<sub>12</sub> = cos(q<sub>1</sub>+q<sub>2</sub>)</span>, etc. On
+      compare la sortie du FB à cette formule fermée, à une <strong>tolérance</strong> près :
+    </p>
+    <pre><code class="language-pascal">PROGRAM P_Valide2R
+VAR
+    fbFK  : FB_ForwardKinematics;
+    dh    : ARRAY[0..N-1] OF T_DH;
+    q     : ARRAY[0..N-1] OF LREAL;
+    L1, L2   : LREAL := 0.5;   // longueurs (m)
+    xRef, yRef : LREAL;        // oracle (formule fermée)
+    c1, s1, c12, s12 : LREAL;
+    ok    : BOOL := TRUE;
+    TOL   : LREAL := 1.0E-9;
+    init  : BOOL := FALSE;
+END_VAR
+
+IF NOT init THEN
+    // 2R planaire : theta variable, d=0, a=Li, alpha=0, rotoïde.
+    dh[0].theta := 0.0; dh[0].d := 0.0; dh[0].a := L1; dh[0].alpha := 0.0; dh[0].isPrismatic := FALSE;
+    dh[1].theta := 0.0; dh[1].d := 0.0; dh[1].a := L2; dh[1].alpha := 0.0; dh[1].isPrismatic := FALSE;
+    init := TRUE;
+END_IF
+
+// Configuration de test.
+q[0] := 0.6;   // rad
+q[1] := -0.4;  // rad
+
+// FK par produit de matrices.
+fbFK(dh := dh, q := q, n := 2);
+
+// Oracle : formule fermée.
+c1  := COS(q[0]);              s1  := SIN(q[0]);
+c12 := COS(q[0] + q[1]);       s12 := SIN(q[0] + q[1]);
+xRef := L1 * c1 + L2 * c12;
+yRef := L1 * s1 + L2 * s12;
+
+// Comparaison à tolérance (jamais d'égalité stricte sur des flottants).
+IF ABS(fbFK.pose.x - xRef) > TOL THEN ok := FALSE; END_IF
+IF ABS(fbFK.pose.y - yRef) > TOL THEN ok := FALSE; END_IF
+IF ABS(fbFK.pose.z)        > TOL THEN ok := FALSE; END_IF   // z doit rester nul
+// ok = TRUE si le modèle matriciel coïncide avec l'oracle.</code></pre>
+    <h3>Pose de « home » connue</h3>
+    <p>
+      Deuxième contrôle, quasi gratuit : la <strong>configuration de home</strong>
+      (<span class="math-inline">q = 0</span> partout) donne une pose <em>connue</em> par construction
+      de la table DH. Pour le 2R ci-dessus, <span class="math-inline">q = 0</span> tend le bras le long
+      de x : on attend <span class="math-inline">(x, y) = (L<sub>1</sub>+L<sub>2</sub>, 0)</span>.
+      Vérifier cette pose de référence au démarrage détecte immédiatement une table DH mal saisie ou
+      une convention inversée.
+    </p>
+    <div class="callout astuce">
+      <p>
+        <strong>Deux oracles valent mieux qu'un.</strong> La formule fermée valide la <em>mécanique</em>
+        du produit de matrices sur toute une plage de <span class="math-inline">q</span> ; la pose de
+        home valide la <em>saisie</em> de la table DH (offsets, signes). Gardez ces deux tests comme
+        « auto-test » exécuté une fois au démarrage (front de <code>bInit</code>) : s'il échoue, on
+        passe en défaut avant que le robot ne bouge. C'est peu de code pour beaucoup de sérénité.
+      </p>
+    </div>
+
+    <h2>9. Temps de cycle et déterminisme</h2>
+    <p>
+      La FK est <strong>bon marché</strong>. Chaque liaison, c'est un
+      <code>LinkTransform</code> (deux <code>SIN</code>/<code>COS</code> et une poignée de produits)
+      plus un produit 4×4 (64 multiplications, 48 additions). Six liaisons ≈ quelques µs sur un CPU
+      d'automate moderne — négligeable devant une période de tâche de 250&nbsp;µs à 1&nbsp;ms.
+    </p>
+    <p>
+      Le coût dominant est souvent le <code>SIN</code>/<code>COS</code>. Or, dans une table DH, les
+      <span class="math-inline">α</span> (et souvent une partie des <span class="math-inline">θ</span>
+      offsets) sont <strong>constants</strong> : leurs <span class="math-inline">cos α</span> et
+      <span class="math-inline">sin α</span> ne dépendent <em>pas</em> de <span class="math-inline">q</span>
+      et peuvent être <strong>précalculés une fois</strong> (au front d'init) puis stockés à côté de la
+      table DH. La boucle chaude n'évalue alors que les
+      <span class="math-inline">sin/cos</span> des variables articulaires — le strict minimum.
+    </p>
+    <div class="callout temps">
+      <p>
+        <strong>Recette temps réel.</strong> (1) <strong>Précalculez</strong> tout ce qui est constant :
+        <span class="math-inline">cos α</span>, <span class="math-inline">sin α</span>, offsets. (2)
+        <strong>Zéro allocation</strong> : tout est en <code>ARRAY</code> de taille fixe, sur la
+        mémoire statique du FB. (3) <strong>Boucle bornée</strong> : <code>FOR i := 1 TO n</code>, avec
+        <span class="math-inline">n ≤ N</span> connu — pas de <code>WHILE</code> de longueur inconnue,
+        pas d'appel bloquant. Résultat : un temps d'exécution <strong>constant et prévisible</strong>
+        à chaque cycle. Le vrai risque sur PLC n'est pas la lenteur mais le
+        <strong>non-déterminisme</strong> ; nos tableaux fixes et notre boucle bornée l'éliminent par
+        construction.
+      </p>
+    </div>
+
+    <h2>10. Pièges récapitulés</h2>
+    <div class="callout piege">
+      <p>
+        <strong>Ordre de multiplication.</strong> On <strong>post-multiplie</strong> :
+        <code>Mat4Mul(A := Taccu, B := L, C := ...)</code>, jamais l'inverse. Inverser
+        <span class="math-inline">A</span> et <span class="math-inline">B</span> compose dans le
+        mauvais sens et produit une pose fausse — bug d'autant plus vicieux que le code compile et
+        « ressemble » à un calcul matriciel correct.
+      </p>
+    </div>
+    <div class="callout piege">
+      <p>
+        <strong>Prismatique oubliée.</strong> Sur une liaison prismatique,
+        <span class="math-inline">q</span> s'ajoute à <span class="math-inline">d</span>, pas à
+        <span class="math-inline">θ</span>. Centraliser l'aiguillage dans
+        <code>LinkTransform</code> (via <code>isPrismatic</code>) évite de l'oublier axe par axe.
+      </p>
+    </div>
+    <div class="callout piege">
+      <p>
+        <strong>Offsets et signes.</strong> Un <span class="math-inline">θ</span> offset ou un
+        <span class="math-inline">α</span> de signe erroné passe souvent inaperçu à
+        <span class="math-inline">q = 0</span> mais fausse toute la plage. D'où l'importance de la
+        <strong>pose de home</strong> ET de la formule fermée sur une plage d'angles.
+      </p>
+    </div>
+    <div class="callout piege">
+      <p>
+        <strong>DH classique vs MDH.</strong> La matrice de liaison n'a <em>pas</em> la même forme en
+        convention DH distale (chapitre 3) et modifiée (MDH, chapitre 4). La FK doit
+        <strong>savoir quelle convention</strong> décrit la table : appeler <code>DhTransform</code> sur
+        une table MDH (ou l'inverse) mélange les repères et donne un résultat silencieusement faux.
+        Fixez la convention par robot et ne la mélangez jamais dans une même chaîne.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — La boucle de FK sur n axes</h3>
+      <p>
+        Sans regarder la section 4, réécrivez le corps de <code>FB_ForwardKinematics</code> : partez
+        de l'identité dans <code>T0i[0]</code>, bouclez de 1 à <code>n</code>, construisez la matrice
+        de liaison avec <code>LinkTransform</code>, et post-multipliez dans <code>T0i[i]</code>.
+        Expliquez pourquoi aucun buffer temporaire supplémentaire n'est nécessaire pour
+        <code>Mat4Mul</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">Mat4Identity(M := T0i[0]);
+FOR i := 1 TO n DO
+    LinkTransform(dh := dh[i-1], q := q[i-1], T := L);
+    Mat4Mul(A := T0i[i-1], B := L, C := T0i[i]);   // résultat distinct des entrées
+END_FOR
+Mat4Copy(src := T0i[n], dst := T0n);
+Mat4GetPose(T := T0n, p := pose);</code></pre>
+        <p>
+          <code>Mat4Mul</code> exige que <code>C</code> soit distinct de <code>A</code> et
+          <code>B</code>. Ici <code>C = T0i[i]</code>, tandis que les entrées sont
+          <code>T0i[i-1]</code> (case précédente) et <code>L</code> (variable locale) : trois zones
+          mémoire différentes, donc pas d'aliasing. Le tableau des repères cumulés fournit
+          « gratuitement » les buffers distincts <em>et</em> conserve les
+          <span class="math-inline"><sup>0</sup>T<sub>i</sub></span> pour le Jacobien.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Valider un 2R contre la formule fermée</h3>
+      <p>
+        Écrivez un programme qui, pour un bras 2R (<span class="math-inline">L<sub>1</sub>=0,4</span>,
+        <span class="math-inline">L<sub>2</sub>=0,3</span>) et
+        <span class="math-inline">q = (0,5 ; −0,7)</span> rad, calcule la position par le FB puis la
+        compare à <span class="math-inline">x = L<sub>1</sub>c<sub>1</sub> + L<sub>2</sub>c<sub>12</sub></span>,
+        <span class="math-inline">y = L<sub>1</sub>s<sub>1</sub> + L<sub>2</sub>s<sub>12</sub></span>
+        à <span class="math-inline">10<sup>−9</sup></span> près.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_Ex2
+VAR
+    fbFK : FB_ForwardKinematics;
+    dh   : ARRAY[0..N-1] OF T_DH;
+    q    : ARRAY[0..N-1] OF LREAL;
+    L1 : LREAL := 0.4;   L2 : LREAL := 0.3;
+    xRef, yRef, c1, s1, c12, s12 : LREAL;
+    ok   : BOOL := TRUE;
+    init : BOOL := FALSE;
+END_VAR
+
+IF NOT init THEN
+    dh[0].theta := 0.0; dh[0].d := 0.0; dh[0].a := L1; dh[0].alpha := 0.0; dh[0].isPrismatic := FALSE;
+    dh[1].theta := 0.0; dh[1].d := 0.0; dh[1].a := L2; dh[1].alpha := 0.0; dh[1].isPrismatic := FALSE;
+    init := TRUE;
+END_IF
+
+q[0] := 0.5;   q[1] := -0.7;
+fbFK(dh := dh, q := q, n := 2);
+
+c1  := COS(q[0]);           s1  := SIN(q[0]);
+c12 := COS(q[0] + q[1]);    s12 := SIN(q[0] + q[1]);
+xRef := L1 * c1 + L2 * c12;
+yRef := L1 * s1 + L2 * s12;
+
+IF ABS(fbFK.pose.x - xRef) > 1.0E-9 THEN ok := FALSE; END_IF
+IF ABS(fbFK.pose.y - yRef) > 1.0E-9 THEN ok := FALSE; END_IF
+// ok = TRUE si les deux modèles coïncident.</code></pre>
+        <p>
+          Toujours comparer à <strong>tolérance</strong> (<code>1E-9</code>), jamais avec <code>=</code>
+          strict. Si le test échoue, suspectez d'abord l'ordre de multiplication ou un offset de la
+          table DH.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Ajouter un repère outil (TCP)</h3>
+      <p>
+        Un outil est monté sur la bride : le TCP est décalé de 0,12&nbsp;m le long de l'axe
+        <span class="math-inline">z</span> de la bride (offset outil pur, sans rotation). Construisez
+        <span class="math-inline">T<sub>tool</sub></span> et calculez
+        <span class="math-inline"><sup>0</sup>T<sub>tcp</sub> = <sup>0</sup>T<sub>n</sub> · T<sub>tool</sub></span>
+        (ici <span class="math-inline">T<sub>base</sub> = I</span>). Où lit-on le nouveau
+        <span class="math-inline">z</span> du TCP ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">VAR
+    Ttool, T0tcp, Ibase : T_MAT4;
+    zTcp : LREAL;
+END_VAR
+
+// Toutefois d'abord la FK : fbFK(dh := ..., q := ..., n := 6);
+
+// Ttool : translation pure de +0.12 m le long de z de la bride.
+Mat4Identity(M := Ttool);
+Ttool[2, 3] := 0.12;    // décalage z_tool
+
+// Base à l'identité pour cet exemple.
+Mat4Identity(M := Ibase);
+
+// 0 T tcp := Ibase * (0 T n) * Ttool
+ApplyBaseTool(Tbase := Ibase, T0n := fbFK.T0n, Ttool := Ttool, Tbtcp := T0tcp);
+
+// La position du TCP est dans la colonne de translation.
+zTcp := T0tcp[2, 3];    // z du TCP dans le repère 0</code></pre>
+        <p>
+          Le décalage outil est appliqué <em>après</em> <span class="math-inline"><sup>0</sup>T<sub>n</sub></span>
+          (post-multiplication) car il est exprimé <strong>dans le repère de la bride</strong>. Le TCP
+          se lit dans la colonne <code>[0..2, 3]</code> de <code>T0tcp</code> ; l'orientation du TCP
+          est identique à celle de la bride ici (l'outil n'a pas de rotation propre).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Bras 3R : extraire (x, y) et l'orientation planaire φ</h3>
+      <p>
+        Pour un bras planaire 3R (<span class="math-inline">L = (0,4 ; 0,3 ; 0,2)</span>,
+        <span class="math-inline">q = (0,3 ; 0,4 ; −0,2)</span> rad), calculez la pose par le FB, puis
+        extrayez <span class="math-inline">(x, y)</span> et l'orientation planaire
+        <span class="math-inline">φ = θ<sub>1</sub>+θ<sub>2</sub>+θ<sub>3</sub></span>. Vérifiez que
+        <span class="math-inline">φ</span> se retrouve aussi via
+        <code>ATAN2(R[1,0], R[0,0])</code> sur le bloc rotation.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_Ex4
+VAR
+    fbFK : FB_ForwardKinematics;
+    dh   : ARRAY[0..N-1] OF T_DH;
+    q    : ARRAY[0..N-1] OF LREAL;
+    L    : ARRAY[0..2] OF LREAL := [0.4, 0.3, 0.2];
+    x, y, phiMat, phiSum, acc, xRef, yRef : LREAL;
+    i    : INT;
+    ok   : BOOL := TRUE;
+    init : BOOL := FALSE;
+END_VAR
+
+IF NOT init THEN
+    FOR i := 0 TO 2 DO
+        dh[i].theta := 0.0; dh[i].d := 0.0; dh[i].a := L[i];
+        dh[i].alpha := 0.0; dh[i].isPrismatic := FALSE;
+    END_FOR
+    init := TRUE;
+END_IF
+
+q[0] := 0.3;   q[1] := 0.4;   q[2] := -0.2;
+fbFK(dh := dh, q := q, n := 3);
+
+x := fbFK.pose.x;
+y := fbFK.pose.y;
+
+// Orientation planaire par le bloc rotation : atan2(r21, r11).
+phiMat := ATAN2(fbFK.pose.R[1, 0], fbFK.pose.R[0, 0]);
+
+// ... doit valoir la somme des angles (mécanisme planaire).
+phiSum := q[0] + q[1] + q[2];
+
+// Formule fermée nR : somme cumulative des angles.
+acc := 0.0;   xRef := 0.0;   yRef := 0.0;
+FOR i := 0 TO 2 DO
+    acc  := acc + q[i];
+    xRef := xRef + L[i] * COS(acc);
+    yRef := yRef + L[i] * SIN(acc);
+END_FOR
+
+IF ABS(x - xRef)          > 1.0E-9 THEN ok := FALSE; END_IF
+IF ABS(y - yRef)          > 1.0E-9 THEN ok := FALSE; END_IF
+IF ABS(phiMat - phiSum)   > 1.0E-9 THEN ok := FALSE; END_IF
+// ok = TRUE si position ET orientation coïncident.</code></pre>
+        <p>
+          Pour un mécanisme planaire, <code>ATAN2(R[1,0], R[0,0])</code> redonne exactement la somme
+          des angles articulaires : c'est l'angle de l'axe <span class="math-inline">x</span> de
+          l'effecteur dans le plan. La formule fermée <span class="math-inline">nR</span> se généralise
+          par la somme cumulative
+          <span class="math-inline">Σ<sub>i</sub> L<sub>i</sub> cos(q<sub>1</sub>+…+q<sub>i</sub>)</span>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>La <strong>cinématique directe</strong> est le chaînage <span class="math-inline"><sup>0</sup>T<sub>n</sub> = <sup>0</sup>T<sub>1</sub> · … · <sup>n-1</sup>T<sub>n</sub></span>, obtenu en partant de l'identité et en <strong>post-multipliant</strong> liaison après liaison.</li>
+        <li>La variable <span class="math-inline">q<sub>i</sub></span> s'ajoute à <span class="math-inline">θ</span> (rotoïde) ou à <span class="math-inline">d</span> (prismatique) selon <code>isPrismatic</code> ; <span class="math-inline">a</span> et <span class="math-inline">α</span> restent constants.</li>
+        <li><code>FB_ForwardKinematics</code> mémorise chaque repère cumulé <span class="math-inline"><sup>0</sup>T<sub>i</sub></span> dans <code>T0i[0..N]</code> — <strong>indispensable au Jacobien</strong> (chapitre 6).</li>
+        <li>La <strong>pose</strong> s'extrait de <span class="math-inline"><sup>0</sup>T<sub>n</sub></span> : position = colonne de translation, orientation = bloc 3×3 (→ RPY, chapitre 2).</li>
+        <li>Repères <strong>base</strong> et <strong>outil</strong> : <span class="math-inline"><sup>base</sup>T<sub>tcp</sub> = T<sub>base</sub> · <sup>0</sup>T<sub>n</sub> · T<sub>tool</sub></span>.</li>
+        <li><strong>Validation</strong> : formule fermée du 2R comme oracle + pose de home connue, à <strong>tolérance</strong>.</li>
+        <li>Sur PLC : coût de quelques µs, <strong>précalcul</strong> des <span class="math-inline">cos α</span>/<span class="math-inline">sin α</span> constants, tableaux fixes, boucle bornée → <strong>déterminisme</strong>.</li>
+        <li>Pièges : ordre de multiplication, <span class="math-inline">q</span> oublié sur prismatique, offsets/signes, mélange DH classique / MDH.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>MDH &amp; autres paramétrisations</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>Le Jacobien</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) 🤖
+  </footer>
+</body>
+</html>
