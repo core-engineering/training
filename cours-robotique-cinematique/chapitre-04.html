@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — MDH &amp; autres paramétrisations</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). ST ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>MDH &amp; autres paramétrisations</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre <strong>pourquoi</strong> la convention DH classique ne suffit pas toujours (non-unicité, axes parallèles).</li>
+        <li>Maîtriser la <strong>DH modifiée (MDH, convention de Craig)</strong> : placement du repère, indexation, matrice 4×4.</li>
+        <li>Découvrir le <strong>paramètre de Hayati</strong> et pourquoi il rend la calibration bien conditionnée.</li>
+        <li>Situer le <strong>produit d'exponentielles (POE)</strong> issu de la théorie des torseurs (<em>screw theory</em>).</li>
+        <li>Placer le format <strong>URDF / xyz-rpy</strong> de l'écosystème ROS dans le paysage.</li>
+        <li>Savoir <strong>choisir</strong> la bonne paramétrisation selon le contexte, et la <strong>réduire à des matrices 4×4</strong> pour le PLC.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi d'autres conventions ?</h2>
+    <p>
+      Au chapitre 3, nous avons paramétré la chaîne cinématique avec la convention de
+      <strong>Denavit-Hartenberg classique</strong> (dite <em>distale</em> : le repère <em>i</em> est
+      attaché à l'extrémité <strong>distale</strong> — côté effecteur — de la liaison <em>i</em>). Quatre
+      paramètres par liaison — <span class="math-inline">θ<sub>i</sub>, d<sub>i</sub>, a<sub>i</sub>, α<sub>i</sub></span> —
+      et la transformation <span class="math-inline"><sup>i-1</sup>T<sub>i</sub> = Rot<sub>z</sub>(θ<sub>i</sub>)·Trans<sub>z</sub>(d<sub>i</sub>)·Trans<sub>x</sub>(a<sub>i</sub>)·Rot<sub>x</sub>(α<sub>i</sub>)</span>.
+      C'est <strong>minimal</strong> (4 paramètres au lieu de 6) et universellement tabulé par les
+      constructeurs. Alors pourquoi aller plus loin ?
+    </p>
+    <p>
+      Deux limites structurelles apparaissent dès qu'on sort de l'enseignement :
+    </p>
+    <ul>
+      <li>
+        <strong>La convention DH n'est pas unique.</strong> Le placement des repères laisse des
+        <em>degrés de liberté</em> (sens de <span class="math-inline">z<sub>i</sub></span>, choix de
+        l'origine quand les axes se coupent…). Deux ingénieurs peuvent produire deux tables DH
+        différentes pour <em>le même</em> robot. Pour de la documentation, c'est gênant ; pour de la
+        <strong>calibration automatique</strong>, c'est un piège.
+      </li>
+      <li>
+        <strong>Elle se comporte mal sur des axes parallèles.</strong> Quand deux axes consécutifs
+        sont (nominalement) <strong>parallèles</strong>, la perpendiculaire commune qui définit
+        <span class="math-inline">a<sub>i</sub></span> n'est plus déterminée de façon unique : une
+        infime erreur d'orientation fait « sauter » le paramètre <span class="math-inline">d</span> de
+        façon <strong>discontinue</strong>. Le modèle devient <strong>mal conditionné</strong> — un
+        cauchemar pour l'identification numérique.
+      </li>
+    </ul>
+    <p>
+      Ces deux défauts ont motivé plusieurs paramétrisations alternatives : la <strong>DH modifiée</strong>
+      de Craig (autre placement des repères, très répandue en calibration), le <strong>paramètre de
+      Hayati</strong> (qui répare spécifiquement le cas des axes parallèles), le <strong>produit
+      d'exponentielles</strong> (géométrique, sans singularité), et le format <strong>URDF</strong> de
+      ROS (arborescent, issu de la CAO). Ce chapitre les présente et vous aide à choisir.
+    </p>
+
+    <div class="callout note">
+      <p>
+        <strong>Aucune de ces conventions ne change la physique.</strong> Un robot donné a une
+        cinématique directe unique ; les paramétrisations ne sont que des <em>langages</em> pour la
+        décrire. On peut toujours convertir de l'une à l'autre. Ce qui change, c'est la
+        <strong>commodité</strong> selon l'usage : lisibilité, minimalité, robustesse numérique,
+        outillage disponible.
+      </p>
+    </div>
+
+    <h2>2. La DH modifiée (MDH, convention de Craig)</h2>
+    <p>
+      La convention <strong>DH modifiée</strong> — popularisée par John J. Craig dans son
+      <em>Introduction to Robotics</em> — utilise les <strong>mêmes quatre paramètres</strong>
+      (<span class="math-inline">θ, d, a, α</span>) mais les place différemment. C'est la source
+      d'innombrables confusions : une table DH « brute » est <strong>inexploitable</strong> si l'on
+      ignore de quelle convention elle relève.
+    </p>
+
+    <h3>2.1 Placement du repère : proximal au lieu de distal</h3>
+    <p>
+      Différence fondamentale : en MDH, le repère <span class="math-inline">R<sub>i</sub></span> est
+      attaché à l'extrémité <strong>proximale</strong> de la liaison <em>i</em> (côté base), c'est-à-dire
+      <strong>sur l'axe de la liaison <em>i</em></strong> elle-même. En DH classique, il était sur l'axe
+      de la liaison <em>i+1</em> (extrémité distale). Conséquence directe sur l'<strong>indexation</strong> :
+      les paramètres géométriques du segment portent désormais l'indice <span class="math-inline">i-1</span>.
+    </p>
+    <ul>
+      <li><span class="math-inline">α<sub>i-1</sub></span> : angle entre <span class="math-inline">z<sub>i-1</sub></span> et <span class="math-inline">z<sub>i</sub></span>, mesuré autour de <span class="math-inline">x<sub>i-1</sub></span> ;</li>
+      <li><span class="math-inline">a<sub>i-1</sub></span> : distance entre <span class="math-inline">z<sub>i-1</sub></span> et <span class="math-inline">z<sub>i</sub></span>, le long de <span class="math-inline">x<sub>i-1</sub></span> ;</li>
+      <li><span class="math-inline">θ<sub>i</sub></span> : angle entre <span class="math-inline">x<sub>i-1</sub></span> et <span class="math-inline">x<sub>i</sub></span>, autour de <span class="math-inline">z<sub>i</sub></span> (variable si liaison rotoïde) ;</li>
+      <li><span class="math-inline">d<sub>i</sub></span> : distance le long de <span class="math-inline">z<sub>i</sub></span> (variable si liaison prismatique).</li>
+    </ul>
+
+    <h3>2.2 Ordre du produit</h3>
+    <p>
+      Parce que le repère est placé « en amont », l'ordre des quatre transformations élémentaires est
+      <strong>inversé et regroupé différemment</strong> de la DH classique. On commence par la partie
+      indexée <span class="math-inline">i-1</span> (rotation puis translation en <em>x</em>), puis la
+      partie indexée <span class="math-inline">i</span> (rotation puis translation en <em>z</em>) :
+    </p>
+    <div class="math">
+      <sup>i-1</sup>T<sub>i</sub> = Rot<sub>x</sub>(α<sub>i-1</sub>) · Trans<sub>x</sub>(a<sub>i-1</sub>) · Rot<sub>z</sub>(θ<sub>i</sub>) · Trans<sub>z</sub>(d<sub>i</sub>)
+    </div>
+    <p>
+      À comparer avec la DH classique&nbsp;:
+      <span class="math-inline"><sup>i-1</sup>T<sub>i</sub> = Rot<sub>z</sub>(θ<sub>i</sub>)·Trans<sub>z</sub>(d<sub>i</sub>)·Trans<sub>x</sub>(a<sub>i</sub>)·Rot<sub>x</sub>(α<sub>i</sub>)</span>.
+      Les briques sont les mêmes ; leur ordre et l'indice de <span class="math-inline">a, α</span>
+      diffèrent — d'où une matrice finale de forme distincte.
+    </p>
+
+    <h3>2.3 La matrice 4×4 MDH explicite</h3>
+    <p>
+      En développant le produit ci-dessus (avec <span class="math-inline">cθ = cos θ<sub>i</sub></span>,
+      <span class="math-inline">sθ = sin θ<sub>i</sub></span>,
+      <span class="math-inline">cα = cos α<sub>i-1</sub></span>,
+      <span class="math-inline">sα = sin α<sub>i-1</sub></span>), on obtient :
+    </p>
+    <div class="math">
+      <sup>i-1</sup>T<sub>i</sub> =
+      [&nbsp; cθ&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;−sθ&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;a<sub>i-1</sub>&nbsp; ;<br>
+      &nbsp;&nbsp;sθ·cα&nbsp;&nbsp;&nbsp;cθ·cα&nbsp;&nbsp;&nbsp;−sα&nbsp;&nbsp;&nbsp;−d<sub>i</sub>·sα&nbsp; ;<br>
+      &nbsp;&nbsp;sθ·sα&nbsp;&nbsp;&nbsp;cθ·sα&nbsp;&nbsp;&nbsp;&nbsp;cα&nbsp;&nbsp;&nbsp;&nbsp;d<sub>i</sub>·cα&nbsp; ;<br>
+      &nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1&nbsp; ]
+    </div>
+    <p>
+      Notez la <strong>colonne de translation</strong> : <span class="math-inline">a<sub>i-1</sub></span>
+      apparaît « en haut » (sur <em>x</em>), tandis que <span class="math-inline">d<sub>i</sub></span> se
+      projette sur <em>y</em> et <em>z</em> via <span class="math-inline">sα, cα</span>. C'est
+      exactement l'inverse de l'agencement classique — d'où l'importance de <strong>ne jamais mélanger
+      les deux formes</strong>.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>DH ≠ MDH : la même table donne un robot différent.</strong> Si vous saisissez une
+        table établie en MDH dans une fonction écrite pour la DH classique (ou l'inverse), vous
+        obtenez une géométrie <em>fausse</em> — souvent avec un décalage d'un cran des paramètres
+        <span class="math-inline">a, α</span>. Vérifiez toujours la convention de la <strong>source</strong>
+        (constructeur, article, fichier de calibration) avant de coder. Une bonne discipline :
+        nommer explicitement vos fonctions <code>DhTransform</code> (distale) et <code>MdhTransform</code>
+        (proximale), jamais un vague <code>Dh</code>.
+      </p>
+    </div>
+
+    <h3>2.4 Tableau comparatif DH classique vs MDH</h3>
+    <table>
+      <thead>
+        <tr><th>Aspect</th><th>DH classique (distale)</th><th>DH modifiée (MDH, Craig)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Placement du repère <span class="math-inline">R<sub>i</sub></span></td><td>extrémité <strong>distale</strong> de la liaison <em>i</em> (sur l'axe <em>i+1</em>)</td><td>extrémité <strong>proximale</strong> de la liaison <em>i</em> (sur l'axe <em>i</em>)</td></tr>
+        <tr><td>Indice de <span class="math-inline">a, α</span></td><td><span class="math-inline">a<sub>i</sub>, α<sub>i</sub></span></td><td><span class="math-inline">a<sub>i-1</sub>, α<sub>i-1</sub></span></td></tr>
+        <tr><td>Ordre du produit</td><td>Rot<sub>z</sub>·Trans<sub>z</sub>·Trans<sub>x</sub>·Rot<sub>x</sub></td><td>Rot<sub>x</sub>·Trans<sub>x</sub>·Rot<sub>z</sub>·Trans<sub>z</sub></td></tr>
+        <tr><td>Position de <span class="math-inline">a</span> dans la matrice</td><td>projeté par <span class="math-inline">cθ, sθ</span> (ligne 1-2)</td><td><strong>directement</strong> sur <em>x</em> (élément [0][3])</td></tr>
+        <tr><td>Contexte d'usage typique</td><td>enseignement, tables constructeur, code « legacy »</td><td><strong>calibration</strong>, beaucoup d'outils académiques et industriels (Craig)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>2.5 La fonction ST</h3>
+    <p>
+      On la construit sur le même modèle que <code>DhTransform</code> du chapitre 3 (mêmes types
+      <code>T_MAT4</code>, passage par <code>VAR_IN_OUT</code>). Ici on passe explicitement les
+      paramètres, la variable articulaire étant supposée déjà ajoutée à <code>theta</code> (rotoïde) ou
+      à <code>d</code> (prismatique) par l'appelant.
+    </p>
+    <pre><code class="language-pascal">// Transformation homogène i-1 -> i selon la convention DH MODIFIÉE (Craig).
+//   T := Rot_x(alpha_prev) * Trans_x(a_prev) * Rot_z(theta) * Trans_z(d)
+// alpha_prev, a_prev : paramètres géométriques indexés i-1
+// theta, d           : incluent déjà l'éventuelle variable articulaire.
+FUNCTION MdhTransform : BOOL
+VAR_INPUT
+    alpha_prev : LREAL;   // rad — alpha_{i-1}
+    a_prev     : LREAL;   // m   — a_{i-1}
+    theta      : LREAL;   // rad — theta_i (offset + q si rotoïde)
+    d          : LREAL;   // m   — d_i    (offset + q si prismatique)
+END_VAR
+VAR_IN_OUT
+    T : T_MAT4;           // résultat
+END_VAR
+VAR
+    ct, st, ca, sa : LREAL;
+END_VAR
+    ct := COS(theta);
+    st := SIN(theta);
+    ca := COS(alpha_prev);
+    sa := SIN(alpha_prev);
+
+    // Ligne 0
+    T[0,0] := ct;        T[0,1] := -st;       T[0,2] := 0.0;   T[0,3] := a_prev;
+    // Ligne 1
+    T[1,0] := st * ca;   T[1,1] := ct * ca;   T[1,2] := -sa;   T[1,3] := -d * sa;
+    // Ligne 2
+    T[2,0] := st * sa;   T[2,1] := ct * sa;   T[2,2] := ca;    T[2,3] := d * ca;
+    // Ligne 3 (homogène)
+    T[3,0] := 0.0;       T[3,1] := 0.0;       T[3,2] := 0.0;   T[3,3] := 1.0;
+
+    MdhTransform := TRUE;
+END_FUNCTION</code></pre>
+    <p>
+      La cinématique directe complète s'obtient ensuite comme au chapitre 3, en chaînant les
+      <span class="math-inline"><sup>i-1</sup>T<sub>i</sub></span> par <code>Mat4Mul</code> :
+      <span class="math-inline"><sup>0</sup>T<sub>n</sub> = <sup>0</sup>T<sub>1</sub>·<sup>1</sup>T<sub>2</sub>·…·<sup>n-1</sup>T<sub>n</sub></span>.
+      Seul le <em>bloc élémentaire</em> change entre DH et MDH ; l'ossature de chaînage est identique.
+    </p>
+
+    <h2>3. Le paramètre de Hayati (axes parallèles)</h2>
+    <p>
+      La MDH règle l'ambiguïté de placement, mais <strong>pas</strong> le problème des axes
+      parallèles : c'est un défaut de la <em>famille</em> DH tout entière, quelle que soit sa variante.
+      Le modèle <strong>Hayati-Roberson</strong> (1983) le corrige en <strong>remplaçant le paramètre
+      <span class="math-inline">d</span></strong>, pour les liaisons concernées, par un petit angle de
+      rotation <span class="math-inline">β</span> autour de l'axe <em>y</em>.
+    </p>
+    <div class="math">
+      liaison « normale » :&nbsp; (θ, d, a, α)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;⟶&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; liaison « parallèle » (Hayati) :&nbsp; (θ, β, a, α)
+    </div>
+    <p>
+      Autrement dit, on ajoute un facteur <span class="math-inline">Rot<sub>y</sub>(β)</span> et on
+      supprime <span class="math-inline">Trans<sub>z</sub>(d)</span> uniquement là où deux axes sont
+      nominalement parallèles.
+    </p>
+
+    <h3>3.1 Pourquoi ça marche</h3>
+    <p>
+      L'intuition tient en une phrase : <strong>on paramètre l'erreur qui peut réellement se produire.</strong>
+      Quand deux axes sont parallèles :
+    </p>
+    <ul>
+      <li>
+        le paramètre <span class="math-inline">d</span> (translation le long de <span class="math-inline">z</span>)
+        <strong>n'est pas identifiable</strong> : glisser le repère le long de deux axes parallèles ne
+        change <em>rien</em> d'observable sur la pose de l'effecteur. Numériquement, la colonne
+        correspondante du Jacobien d'identification est quasi nulle → matrice mal conditionnée, solution
+        instable.
+      </li>
+      <li>
+        en revanche, un petit <strong>défaut d'orientation</strong> (les axes ne sont jamais
+        <em>exactement</em> parallèles en réalité) <strong>est</strong> parfaitement observable : il fait
+        diverger les axes et se voit sur la pose. C'est précisément ce que capture
+        <span class="math-inline">β</span>, la petite rotation autour de <em>y</em>.
+      </li>
+    </ul>
+    <p>
+      En troquant un paramètre <em>non identifiable</em> (<span class="math-inline">d</span>) contre un
+      paramètre <em>identifiable</em> (<span class="math-inline">β</span>), le modèle redevient
+      <strong>continu</strong> et <strong>bien conditionné</strong> : petit défaut réel ⟶ petite
+      variation de paramètre. C'est le standard de fait pour la calibration de bras à poignet ou à
+      épaule dont les axes sont coplanaires/parallèles.
+    </p>
+
+    <div class="callout note">
+      <p>
+        <strong>Règle mnémotechnique.</strong> Axes <strong>non</strong> parallèles ⟶ garder
+        <span class="math-inline">d</span>. Axes (nominalement) <strong>parallèles</strong> ⟶ remplacer
+        <span class="math-inline">d</span> par <span class="math-inline">β</span> (Hayati). On ne mélange
+        pas : chaque liaison est soit « normale » soit « Hayati », selon la géométrie du robot réel. Le
+        nombre total de paramètres reste <strong>4 par liaison</strong> — la paramétrisation demeure
+        minimale, elle change juste de <em>nature</em> localement.
+      </p>
+    </div>
+
+    <h2>4. Le produit d'exponentielles (POE, screw theory)</h2>
+    <p>
+      Le <strong>produit d'exponentielles</strong> (POE) adopte un point de vue radicalement
+      différent, issu de la <strong>théorie des torseurs</strong> (<em>screw theory</em>, Brockett,
+      Murray-Li-Sastry). Au lieu de placer des repères intermédiaires liaison par liaison, on décrit
+      le mouvement de <strong>chaque axe</strong> comme un <strong>vissage</strong> (rotation +
+      translation combinées autour d'une ligne de l'espace), exprimé une fois pour toutes dans la base.
+    </p>
+
+    <h3>4.1 La formule</h3>
+    <div class="math">
+      <sup>0</sup>T<sub>n</sub>(q) = e<sup>[S<sub>1</sub>]q<sub>1</sub></sup> · e<sup>[S<sub>2</sub>]q<sub>2</sub></sup> · … · e<sup>[S<sub>n</sub>]q<sub>n</sub></sup> · M
+    </div>
+    <p>
+      où :
+    </p>
+    <ul>
+      <li>
+        <span class="math-inline">S<sub>i</sub></span> est le <strong>torseur</strong> (<em>screw axis</em>)
+        de la liaison <em>i</em>, exprimé dans la base <strong>à la pose de référence</strong> (robot au
+        « repos ») ;
+      </li>
+      <li>
+        <span class="math-inline">q<sub>i</sub></span> est la variable articulaire (angle si rotoïde,
+        déplacement si prismatique) ;
+      </li>
+      <li>
+        <span class="math-inline">M = <sup>0</sup>T<sub>n</sub>(0)</span> est la <strong>pose de l'effecteur
+        au repos</strong> (une simple matrice 4×4 constante).
+      </li>
+    </ul>
+    <p>
+      Un <strong>torseur</strong> est un couple <span class="math-inline">S = (ω ∈ ℝ³, v ∈ ℝ³)</span> :
+      <span class="math-inline">ω</span> est la <strong>direction de l'axe</strong> (unitaire pour une
+      liaison rotoïde, nul pour une prismatique) et <span class="math-inline">v</span> le
+      <strong>moment</strong> (<span class="math-inline">v = −ω × p</span>, où <span class="math-inline">p</span>
+      est un point de l'axe). Six nombres au total. On lui associe la matrice
+      <span class="math-inline">[S] ∈ se(3)</span> de l'algèbre de Lie (4×4) :
+    </p>
+    <div class="math">
+      [S] =
+      [&nbsp; [ω]&nbsp;&nbsp;&nbsp;&nbsp;v&nbsp; ;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp; ]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; avec&nbsp; [ω] =
+      [&nbsp; 0&nbsp;&nbsp;&nbsp;−ω<sub>z</sub>&nbsp;&nbsp;&nbsp;ω<sub>y</sub>&nbsp; ;&nbsp;&nbsp; ω<sub>z</sub>&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;−ω<sub>x</sub>&nbsp; ;&nbsp;&nbsp; −ω<sub>y</sub>&nbsp;&nbsp;&nbsp;ω<sub>x</sub>&nbsp;&nbsp;&nbsp;0&nbsp; ]
+    </div>
+    <p>
+      et <span class="math-inline">e<sup>[S]q</sup></span> est l'<strong>exponentielle matricielle</strong>
+      de <span class="math-inline">[S]q</span> — une transformation homogène 4×4. Sa partie rotation se
+      calcule par la <strong>formule de Rodrigues</strong> (pour <span class="math-inline">ω</span>
+      unitaire) :
+    </p>
+    <div class="math">
+      e<sup>[ω]θ</sup> = I + sin θ · [ω] + (1 − cos θ) · [ω]²
+    </div>
+    <p>
+      La partie translation fait intervenir un terme intégral analogue ; on retient surtout que
+      <strong>tout se ramène à une matrice 4×4</strong> une fois <span class="math-inline">q</span>
+      connu.
+    </p>
+
+    <h3>4.2 Avantages et inconvénients</h3>
+    <table>
+      <thead>
+        <tr><th>Avantages</th><th>Inconvénients</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Aucun <strong>placement de repères</strong> intermédiaire imposé : on décrit directement les axes réels.</td>
+          <td><strong>6 paramètres par liaison</strong> (le torseur) : paramétrisation <strong>non minimale</strong>.</td>
+        </tr>
+        <tr>
+          <td>Paramétrisation <strong>sans singularité</strong> : résout nativement le problème des axes parallèles.</td>
+          <td>Requiert l'<strong>exponentielle matricielle</strong> : plus lourd qu'une matrice DH.</td>
+        </tr>
+        <tr>
+          <td>Très adaptée à la <strong>calibration robuste</strong> (travaux de Chen, Okamura, He…).</td>
+          <td>Formule moins « scolaire » ; sur PLC on précalcule ou on convertit en matrices.</td>
+        </tr>
+        <tr>
+          <td>Formulation <strong>géométrique et globale</strong> élégante (une seule vue dans la base).</td>
+          <td>Les tables constructeur sont rarement fournies sous cette forme.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout astuce">
+      <p>
+        Le POE et la DH décrivent le <strong>même</strong> robot. En pratique, on développe et on
+        calibre en POE (robuste), puis on <strong>convertit</strong> le résultat en une suite de
+        matrices constantes ou en une table DH/MDH équivalente pour l'exécution embarquée. On profite
+        ainsi du meilleur des deux mondes : robustesse hors-ligne, légèreté en ligne.
+      </p>
+    </div>
+
+    <h2>5. URDF / format xyz-rpy (écosystème ROS)</h2>
+    <p>
+      Dans l'écosystème <strong>ROS</strong> (Robot Operating System), les robots sont décrits en
+      <strong>URDF</strong> (<em>Unified Robot Description Format</em>), un XML arborescent. Chaque
+      <em>joint</em> relie un repère <strong>parent</strong> à un repère <strong>enfant</strong> par :
+    </p>
+    <ul>
+      <li>un <strong>offset fixe</strong> (l'élément <code>&lt;origin&gt;</code>) : une translation
+        <span class="math-inline">xyz</span> (3 nombres) et une rotation <span class="math-inline">rpy</span>
+        — <em>roll-pitch-yaw</em>, angles de Cardan (3 nombres) ;</li>
+      <li>un <strong>axe</strong> de mouvement (l'élément <code>&lt;axis&gt;</code>) : la direction de
+        rotation (rotoïde) ou de translation (prismatique).</li>
+    </ul>
+    <p>
+      La transformation parent→enfant vaut donc
+      <span class="math-inline">Trans(xyz)·Rot(rpy)·Mouvement(q)</span>, où
+      <span class="math-inline">Rot(rpy) = Rot<sub>z</sub>(yaw)·Rot<sub>y</sub>(pitch)·Rot<sub>x</sub>(roll)</span>
+      (convention ROS). C'est <strong>très proche d'une matrice 4×4</strong> : facile à convertir.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Avantages</th><th>Inconvénients</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Format <strong>lisible</strong> et <strong>arborescent</strong> (gère les arbres, pas seulement les chaînes).</td><td><strong>Non minimal</strong> : 6 paramètres fixes par joint.</td></tr>
+        <tr><td>Outillage <strong>ROS</strong> massif (RViz, MoveIt, TF, simulateurs).</td><td>Moins standard pour la <strong>calibration analytique</strong> que MDH/POE.</td></tr>
+        <tr><td>Génération <strong>directe depuis la CAO</strong> (SolidWorks, Fusion…).</td><td>Le <em>rpy</em> peut souffrir de <strong>blocage de cardan</strong> près des pôles.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      On peut <strong>convertir une ligne DH en offset xyz-rpy</strong> (et réciproquement) : il suffit
+      de développer le produit DH en une matrice 4×4, d'en extraire la translation (xyz) et d'en
+      déduire les angles de Cardan (rpy) par les formules d'extraction usuelles.
+    </p>
+
+    <h2>6. Tableau comparatif de toutes les paramétrisations</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Paramétrisation</th>
+          <th>Param. / liaison</th>
+          <th>Axes parallèles</th>
+          <th>Calibration</th>
+          <th>Outillage / écosystème</th>
+          <th>Coût de calcul</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>DH classique</strong></td>
+          <td>4 (minimal)</td>
+          <td>❌ discontinu / mal conditionné</td>
+          <td>correcte hors axes parallèles</td>
+          <td>universel (tables constructeur, cours)</td>
+          <td>faible (1 matrice 4×4)</td>
+        </tr>
+        <tr>
+          <td><strong>MDH (Craig)</strong></td>
+          <td>4 (minimal)</td>
+          <td>❌ même limite que DH</td>
+          <td>✅ référence académique/industrielle</td>
+          <td>très répandu en calibration</td>
+          <td>faible (1 matrice 4×4)</td>
+        </tr>
+        <tr>
+          <td><strong>Hayati</strong> (DH/MDH + β)</td>
+          <td>4 (minimal, local)</td>
+          <td>✅ continu &amp; bien conditionné</td>
+          <td>✅✅ pensée pour ça</td>
+          <td>outils de calibration</td>
+          <td>faible (1 matrice 4×4)</td>
+        </tr>
+        <tr>
+          <td><strong>POE</strong> (torseurs)</td>
+          <td>6 (non minimal)</td>
+          <td>✅ sans singularité</td>
+          <td>✅✅ robuste (recherche)</td>
+          <td>bibliothèques screw theory</td>
+          <td>plus élevé (exp. matricielle)</td>
+        </tr>
+        <tr>
+          <td><strong>URDF</strong> (xyz-rpy)</td>
+          <td>6 (non minimal)</td>
+          <td>✅ pas de perpendiculaire commune</td>
+          <td>moins standard analytiquement</td>
+          <td>ROS (RViz, MoveIt, CAO)</td>
+          <td>faible (1 matrice 4×4)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>7. Recommandation pratique</h2>
+    <p>
+      Il n'y a pas de « meilleure » convention dans l'absolu — seulement une convention adaptée à
+      <em>votre</em> contexte. Une grille de décision simple :
+    </p>
+    <ul>
+      <li><strong>Enseignement, code legacy, tables constructeur</strong> ⟶ <strong>DH classique</strong>. C'est ce que tout le monde connaît et ce que fournissent les fabricants.</li>
+      <li><strong>Calibration géométrique</strong> ⟶ <strong>MDH</strong> comme ossature, <strong>+ Hayati</strong> partout où des axes sont parallèles. C'est le duo de référence de l'identification.</li>
+      <li><strong>Robustesse maximale, recherche, robots atypiques</strong> ⟶ <strong>POE</strong>, sans singularité mais plus lourd.</li>
+      <li><strong>Vous travaillez déjà dans ROS</strong> ⟶ <strong>URDF</strong>, pour bénéficier de tout l'outillage (RViz, MoveIt) et de l'export CAO.</li>
+    </ul>
+
+    <div class="callout plc">
+      <p>
+        <strong>Sur automate, tout finit en matrices 4×4.</strong> Quelle que soit la convention en
+        amont (DH, MDH, Hayati, POE, URDF), le calcul cyclique du PLC ne manipule que des
+        <strong>matrices homogènes <span class="math-inline"><sup>i-1</sup>T<sub>i</sub></span></strong>
+        chaînées par <code>Mat4Mul</code>. On <strong>réduit</strong> donc la paramétrisation amont à
+        une suite de blocs 4×4 <em>hors ligne</em> (à la mise en service), puis on n'exécute en ligne
+        que des produits de matrices — bornés et déterministes. Pour le POE, on précalcule
+        l'exponentielle matricielle ou on convertit carrément en table DH/MDH équivalente : jamais
+        d'exponentielle matricielle dans la tâche temps réel.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Coder et vérifier MdhTransform</h3>
+      <p>
+        Écrivez <code>MdhTransform</code> (si ce n'est pas déjà fait) et vérifiez-la sur une liaison
+        simple : <span class="math-inline">α<sub>i-1</sub> = 0</span>,
+        <span class="math-inline">a<sub>i-1</sub> = 0,5</span>,
+        <span class="math-inline">θ = π/2</span>, <span class="math-inline">d = 0,2</span>. Prédisez la
+        matrice attendue à la main, puis comparez au résultat de la fonction.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Avec <span class="math-inline">α = 0</span> : <span class="math-inline">cα = 1, sα = 0</span>.
+          Avec <span class="math-inline">θ = π/2</span> : <span class="math-inline">cθ = 0, sθ = 1</span>.
+          La matrice MDH se simplifie en :
+        </p>
+        <div class="math">
+          [&nbsp; 0&nbsp;&nbsp;−1&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;0,5&nbsp; ;&nbsp;&nbsp; 1&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;0&nbsp; ;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;0,2&nbsp; ;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;1&nbsp; ]
+        </div>
+        <pre><code class="language-pascal">PROGRAM P_TestMdh
+VAR
+    T       : T_MAT4;
+    ok      : BOOL := TRUE;
+    PI      : LREAL := 3.14159265358979;
+END_VAR
+
+MdhTransform(alpha_prev := 0.0, a_prev := 0.5,
+             theta := PI / 2.0, d := 0.2, T := T);
+
+// Contrôles clés (tolérance sur flottants)
+IF ABS(T[0,0] - 0.0)  &gt; 1E-9 THEN ok := FALSE; END_IF
+IF ABS(T[0,1] + 1.0)  &gt; 1E-9 THEN ok := FALSE; END_IF   // -sin = -1
+IF ABS(T[0,3] - 0.5)  &gt; 1E-9 THEN ok := FALSE; END_IF   // a_prev
+IF ABS(T[1,0] - 1.0)  &gt; 1E-9 THEN ok := FALSE; END_IF   // sin = 1
+IF ABS(T[2,3] - 0.2)  &gt; 1E-9 THEN ok := FALSE; END_IF   // d * cos(alpha)
+// ok = TRUE si la matrice correspond à la prédiction</code></pre>
+        <p>
+          En comparant à <code>DhTransform</code> (chapitre 3) sur les <em>mêmes</em> valeurs
+          numériques, on obtient une matrice <strong>différente</strong> : la translation
+          <span class="math-inline">a</span> n'est pas placée au même endroit. C'est la démonstration
+          concrète que les deux conventions ne sont pas interchangeables sans reconversion de la table.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Pourquoi <span class="math-inline">d</span> n'est pas identifiable sur axes parallèles</h3>
+      <p>
+        Expliquez, sans calcul lourd, pourquoi le paramètre <span class="math-inline">d</span> devient
+        non identifiable lorsque deux axes consécutifs sont exactement parallèles, et pourquoi le
+        paramètre de Hayati <span class="math-inline">β</span> résout le problème.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <strong>Non-identifiabilité de <span class="math-inline">d</span>.</strong> Le paramètre
+          <span class="math-inline">d</span> fait glisser le repère <em>le long de l'axe</em>
+          <span class="math-inline">z</span>. Si les axes <span class="math-inline">z<sub>i-1</sub></span>
+          et <span class="math-inline">z<sub>i</sub></span> sont <em>exactement parallèles</em>, la
+          position de l'origine du repère le long de <span class="math-inline">z</span> n'est plus
+          contrainte par la géométrie : on peut la déplacer sans que la pose de l'effecteur change. Deux
+          valeurs de <span class="math-inline">d</span> différentes donnent donc <strong>exactement la
+          même</strong> cinématique observable ⟶ l'identification ne peut pas trancher, la colonne
+          correspondante du Jacobien d'identification est nulle, la matrice normale est singulière.
+        </p>
+        <p>
+          <strong>Pourquoi <span class="math-inline">β</span> marche.</strong> Dans la réalité, les axes
+          ne sont jamais <em>parfaitement</em> parallèles : il subsiste un petit défaut d'orientation.
+          Ce défaut, lui, <strong>est</strong> observable — il fait diverger les axes et modifie la pose
+          de l'effecteur de façon mesurable. Le paramètre de Hayati
+          <span class="math-inline">β</span> (petite rotation autour de <em>y</em>) capture précisément
+          ce défaut. En remplaçant un paramètre non identifiable (<span class="math-inline">d</span>) par
+          un paramètre identifiable (<span class="math-inline">β</span>), on rétablit le bon
+          conditionnement : petit défaut réel ⟶ petite variation de paramètre, de façon continue.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Compter les paramètres POE d'un bras 6 axes</h3>
+      <p>
+        Combien de paramètres géométriques comporte le modèle POE complet d'un robot à 6 liaisons
+        rotoïdes ? Comparez au décompte DH/MDH. Que représente le « surplus » ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <strong>POE.</strong> Chaque torseur <span class="math-inline">S<sub>i</sub></span> compte
+          <strong>6 nombres</strong> (<span class="math-inline">ω ∈ ℝ³</span> et
+          <span class="math-inline">v ∈ ℝ³</span>). Pour 6 liaisons :
+          <span class="math-inline">6 × 6 = 36</span> paramètres, plus la pose de référence
+          <span class="math-inline">M ∈ SE(3)</span> qui en compte <strong>6</strong>. Soit
+          <strong>42</strong> nombres au total (avec des contraintes : <span class="math-inline">ω</span>
+          unitaire pour les axes rotoïdes, <span class="math-inline">v = −ω × p</span>).
+        </p>
+        <p>
+          <strong>DH/MDH.</strong> <span class="math-inline">4 × 6 = 24</span> paramètres (minimal).
+        </p>
+        <p>
+          Le <strong>surplus</strong> du POE (36 vs 24, avant contraintes) tient à sa non-minimalité :
+          les 6 nombres d'un torseur ne sont pas tous indépendants (contrainte
+          <span class="math-inline">||ω|| = 1</span>, moment orthogonal…). Cette redondance est le prix
+          de la robustesse : c'est justement de ne <em>pas</em> forcer une paramétrisation minimale qui
+          évite les singularités de la famille DH.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Convertir une ligne DH en offset xyz-rpy</h3>
+      <p>
+        On donne une liaison DH classique <span class="math-inline">(θ = 0, d = 0,3, a = 0, α = π/2)</span>
+        (variable articulaire nulle, cas « au repos »). Donnez l'offset <span class="math-inline">xyz</span>
+        et les angles <span class="math-inline">rpy</span> (roll-pitch-yaw) URDF équivalents.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          On développe la matrice DH classique
+          <span class="math-inline">Rot<sub>z</sub>(0)·Trans<sub>z</sub>(0,3)·Trans<sub>x</sub>(0)·Rot<sub>x</sub>(π/2)</span>.
+          Avec <span class="math-inline">θ = 0</span> : pas de rotation en <em>z</em>. Avec
+          <span class="math-inline">a = 0</span> : pas de translation en <em>x</em>. Il reste une
+          translation de <span class="math-inline">0,3</span> le long de <em>z</em> et une rotation de
+          <span class="math-inline">π/2</span> autour de <em>x</em>. La matrice vaut :
+        </p>
+        <div class="math">
+          [&nbsp; 1&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;0&nbsp; ;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;−1&nbsp;&nbsp;&nbsp;0&nbsp; ;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;0,3&nbsp; ;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;1&nbsp; ]
+        </div>
+        <p>
+          <strong>Offset xyz</strong> = colonne de translation = <span class="math-inline">(0, 0, 0,3)</span>.
+        </p>
+        <p>
+          <strong>rpy</strong> : la rotation est <span class="math-inline">Rot<sub>x</sub>(π/2)</span>,
+          donc <strong>roll = π/2</strong>, <strong>pitch = 0</strong>, <strong>yaw = 0</strong>. En
+          URDF : <code>&lt;origin xyz="0 0 0.3" rpy="1.5708 0 0"/&gt;</code>. Le cas général se traite en
+          extrayant les angles de Cardan de la sous-matrice de rotation 3×3 (formules
+          <code>atan2</code> usuelles), en prenant garde au blocage de cardan quand
+          <span class="math-inline">pitch = ±π/2</span>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>La <strong>DH classique</strong> n'est <strong>pas unique</strong> et se comporte <strong>mal sur les axes parallèles</strong> ; d'où d'autres conventions.</li>
+        <li>La <strong>MDH (Craig)</strong> attache le repère à l'extrémité <strong>proximale</strong> ; <span class="math-inline">a, α</span> portent l'indice <span class="math-inline">i-1</span> ; ordre <span class="math-inline">Rot<sub>x</sub>·Trans<sub>x</sub>·Rot<sub>z</sub>·Trans<sub>z</sub></span>. Ne jamais mélanger DH et MDH.</li>
+        <li>Le <strong>paramètre de Hayati</strong> remplace <span class="math-inline">d</span> par <span class="math-inline">β</span> sur les axes parallèles ⟶ modèle <strong>continu et bien conditionné</strong> pour la calibration.</li>
+        <li>Le <strong>POE</strong> (torseurs) : <span class="math-inline"><sup>0</sup>T<sub>n</sub> = ∏ e<sup>[S<sub>i</sub>]q<sub>i</sub></sup>·M</span>, <strong>sans singularité</strong> mais <strong>non minimal</strong> (6/liaison) et plus lourd.</li>
+        <li>L'<strong>URDF</strong> (xyz-rpy) : lisible, arborescent, outillé ROS, mais non minimal ; convertible en/depuis DH.</li>
+        <li>Choix : <strong>DH</strong> (legacy/cours), <strong>MDH+Hayati</strong> (calibration), <strong>POE</strong> (robustesse), <strong>URDF</strong> (ROS). Sur PLC : <strong>tout se réduit à des matrices 4×4</strong> pour le cycle temps réel.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>Paramétrisation Denavit-Hartenberg</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Cinématique directe sur PLC</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) 🤖
+  </footer>
+</body>
+</html>
