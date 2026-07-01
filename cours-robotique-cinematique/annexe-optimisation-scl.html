@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Annexe — Optimiser les matrices 4×4 en SCL (Siemens)</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). SCL ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Annexe</span><br>Optimiser les matrices 4×4 en SCL (Siemens)</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs de l'annexe</h2>
+      <ul>
+        <li>Écrire une <strong>multiplication de matrices 4×4</strong> en SCL, de la version naïve à la version optimisée.</li>
+        <li>Comprendre pourquoi l'<strong>inversion d'une matrice homogène</strong> (cinématique directe) ne nécessite <em>ni Gauss ni division</em>.</li>
+        <li>Savoir <strong>inverser un Jacobien</strong> proprement : résoudre plutôt qu'inverser, et amortir près des singularités.</li>
+        <li>Connaître les leviers propres à Siemens (LREAL, passage par référence, accès optimisé) et <strong>mesurer</strong> avant d'optimiser.</li>
+      </ul>
+    </div>
+
+    <div class="callout note">
+      Cette annexe suppose acquis les chapitres <a href="chapitre-05.html">05 (cinématique directe)</a>
+      et <a href="chapitre-06.html">06 (le Jacobien)</a>. On note <span class="math-inline">T = [R | p ; 0 0 0 1]</span>
+      une matrice homogène 4×4 (rotation <span class="math-inline">R</span> 3×3 orthonormée, translation <span class="math-inline">p</span>).
+      Le code est du <strong>SCL</strong> (Structured Control Language), l'implémentation Siemens du ST (IEC&nbsp;61131-3),
+      pour TIA Portal / S7-1200 &amp; S7-1500.
+    </div>
+
+    <h2>0. Règle d'or : mesurer d'abord</h2>
+    <p>Sur automate, la contrainte n'est pas « aller vite » mais « <strong>tenir le temps de cycle</strong> » de façon
+    déterministe. Avant d'optimiser une fonction, mesurez-la : sur une matrice 4×4, une multiplication naïve
+    coûte quelques microsecondes sur un S7-1500 — souvent déjà négligeable. On optimise ce qui pèse réellement.</p>
+
+    <pre><code class="language-pascal">// Mesure du temps d'exécution avec l'instruction RUNTIME (renvoie des secondes, LREAL)
+#t0    := RUNTIME(#memRuntime);        // amorce le chronomètre
+"MatMul4x4"(A := #A, B := #B, C := #C); // le code à mesurer
+#duree := RUNTIME(#memRuntime);        // durée écoulée, en secondes (ex : 3.1E-6 = 3,1 µs)</code></pre>
+
+    <div class="callout astuce">
+      Optimisez un algorithme <em>avant</em> de micro-optimiser le code : un Jacobien qu'on <strong>résout</strong>
+      (au lieu de l'inverser) économise plus qu'un déroulage de boucle. Hiérarchie : <strong>bon algorithme →
+      bonne structure de données → micro-optimisation</strong>.
+    </div>
+
+    <h2>1. Représenter les matrices en SCL</h2>
+    <p>On utilise des tableaux à deux dimensions. Deux choix structurent toute la suite :</p>
+    <ul>
+      <li><strong>Type flottant.</strong> <code>LREAL</code> (64 bits) pour la cinématique : le chaînage de
+      rotations accumule les erreurs d'arrondi, et le S7-1500 traite le <code>LREAL</code> efficacement.
+      <code>REAL</code> (32 bits) est plus léger/rapide (utile sur S7-1200) mais moins précis.</li>
+      <li><strong>Passage des paramètres.</strong> Une matrice 4×4 de <code>LREAL</code> pèse 128 octets. En
+      <code>VAR_INPUT</code>/<code>VAR_OUTPUT</code>, un tableau est <em>copié</em> à l'appel. En
+      <code>VAR_IN_OUT</code>, il est passé <em>par référence</em> (pointeur) : aucune copie. Pour des
+      matrices, préférez donc <code>VAR_IN_OUT</code>.</li>
+    </ul>
+
+    <div class="callout plc">
+      Activez l'<strong>« accès optimisé au bloc »</strong> (<em>Optimized block access</em>) sur vos FC/FB et DB :
+      l'adressage symbolique du S7-1500 est plus rapide et laisse le compilateur ranger les données au mieux.
+      Gardez les résultats intermédiaires dans des variables <code>TEMP</code> (pile locale, accès rapide)
+      plutôt que dans des DB globales.
+    </div>
+
+    <h2>2. Multiplication 4×4 : du naïf à l'optimisé</h2>
+
+    <h3>2.1 Version naïve (triple boucle)</h3>
+    <p>Correcte et lisible — le point de départ. Notez le passage par référence et l'accumulateur en <code>TEMP</code>.</p>
+    <pre><code class="language-pascal">FUNCTION "MatMul4x4" : Void
+VAR_IN_OUT
+    A : ARRAY[0..3, 0..3] OF LREAL;   // par référence : pas de copie
+    B : ARRAY[0..3, 0..3] OF LREAL;
+    C : ARRAY[0..3, 0..3] OF LREAL;   // résultat (⚠ doit être distinct de A et B)
+END_VAR
+VAR_TEMP
+    i, j, k : INT;
+    s : LREAL;
+END_VAR
+BEGIN
+    FOR i := 0 TO 3 DO
+        FOR j := 0 TO 3 DO
+            s := 0.0;                          // accumulateur en pile locale
+            FOR k := 0 TO 3 DO
+                s := s + A[i, k] * B[k, j];
+            END_FOR;
+            C[i, j] := s;                      // une seule écriture dans C par case
+        END_FOR;
+    END_FOR;
+END_FUNCTION</code></pre>
+
+    <div class="callout piege">
+      <strong>Aliasing.</strong> Si <code>C</code> pointe sur <code>A</code> ou <code>B</code> (ex :
+      <code>MatMul4x4(A:=#T, B:=#T, C:=#T)</code>), le résultat est faux : on écrit dans <code>C[i,j]</code>
+      des cases encore nécessaires au calcul. Une multiplication de matrices <strong>ne peut pas se faire en
+      place</strong> : le résultat doit être une matrice tierce.
+    </div>
+
+    <h3>2.2 Optimisation : cacher la ligne et dérouler la boucle interne</h3>
+    <p>Deux idées, à effort minime : (1) copier la ligne <span class="math-inline">i</span> de <code>A</code>
+    dans quatre scalaires <code>TEMP</code> pour éviter de recalculer l'adresse <code>A[i,k]</code> à chaque
+    itération ; (2) dérouler la boucle sur <code>k</code> (taille fixe = 4) pour supprimer le compteur, le test
+    de fin et le contrôle de bornes.</p>
+    <pre><code class="language-pascal">VAR_TEMP
+    i, j : INT;
+    a0, a1, a2, a3 : LREAL;
+END_VAR
+BEGIN
+    FOR i := 0 TO 3 DO
+        a0 := A[i, 0];  a1 := A[i, 1];  a2 := A[i, 2];  a3 := A[i, 3];   // ligne cachée
+        FOR j := 0 TO 3 DO
+            C[i, j] := a0 * B[0, j] + a1 * B[1, j]
+                     + a2 * B[2, j] + a3 * B[3, j];                      // boucle k déroulée
+        END_FOR;
+    END_FOR;
+END_FUNCTION</code></pre>
+    <p>On peut aller jusqu'au <strong>déroulage total</strong> (16 lignes <code>C[0,0] := A[0,0]*B[0,0] + …</code>) :
+    gain maximal mais code verbeux et difficile à maintenir. La version ci-dessus est le bon compromis
+    <em>lisibilité / performance</em> pour du 4×4.</p>
+
+    <table>
+      <tr><th>Technique</th><th>Gain</th><th>Effort / risque</th></tr>
+      <tr><td><code>VAR_IN_OUT</code> au lieu de <code>VAR_INPUT</code></td><td>Élevé (supprime 3 copies de 128 o)</td><td>Minime</td></tr>
+      <tr><td>Accumulateur + résultat dans une matrice tierce</td><td>Correction &amp; clarté</td><td>Minime</td></tr>
+      <tr><td>Cache de ligne (4 scalaires <code>TEMP</code>)</td><td>Moyen</td><td>Minime</td></tr>
+      <tr><td>Déroulage de la boucle interne</td><td>Moyen</td><td>Faible</td></tr>
+      <tr><td>Déroulage total (16 lignes)</td><td>Élevé</td><td>Fort (maintenabilité)</td></tr>
+    </table>
+
+    <h2>3. Inverser une matrice 4×4 : exploiter la structure</h2>
+
+    <h3>3.1 Le piège : ne pas dégainer Gauss par réflexe</h3>
+    <p>Inverser une 4×4 <em>quelconque</em> par élimination de Gauss-Jordan demande des dizaines d'opérations,
+    des <strong>divisions</strong>, une recherche de pivot et des branchements — coûteux et sensible au bruit
+    numérique. Or, en cinématique directe, <strong>on n'inverse jamais une matrice quelconque</strong> : toutes
+    les transformations de repère sont <strong>homogènes</strong>.</p>
+
+    <h3>3.2 Inverse d'une matrice homogène : formule analytique</h3>
+    <p>Pour <span class="math-inline">T = [R | p ; 0\,0\,0\,1]</span> avec <span class="math-inline">R</span>
+    orthonormée, l'inverse est exact et immédiat :</p>
+    <div class="math">
+      T<sup>-1</sup> = [ R<sup>T</sup> | −R<sup>T</sup>·p ; &nbsp;0&nbsp;&nbsp;0&nbsp;&nbsp;0&nbsp;&nbsp;1 ]
+    </div>
+    <p>La rotation s'inverse par simple <strong>transposition</strong>, la translation par un petit produit.
+    Aucune division, aucun pivot, aucun branchement.</p>
+    <pre><code class="language-pascal">FUNCTION "InvHomogene" : Void
+VAR_IN_OUT
+    T    : ARRAY[0..3, 0..3] OF LREAL;   // entrée : [R | p ; 0 0 0 1]
+    Tinv : ARRAY[0..3, 0..3] OF LREAL;   // sortie
+END_VAR
+VAR_TEMP
+    i, j : INT;
+END_VAR
+BEGIN
+    // 1) Rotation : R_inv = R^T  (transposition du bloc 3×3)
+    FOR i := 0 TO 2 DO
+        FOR j := 0 TO 2 DO
+            Tinv[i, j] := T[j, i];
+        END_FOR;
+    END_FOR;
+
+    // 2) Translation : p_inv = -R^T * p   (R^T[i,:] = colonne i de R = T[.,i])
+    FOR i := 0 TO 2 DO
+        Tinv[i, 3] := -( T[0, i] * T[0, 3]
+                       + T[1, i] * T[1, 3]
+                       + T[2, i] * T[2, 3] );
+    END_FOR;
+
+    // 3) Dernière ligne (0 0 0 1)
+    Tinv[3, 0] := 0.0;  Tinv[3, 1] := 0.0;  Tinv[3, 2] := 0.0;  Tinv[3, 3] := 1.0;
+END_FUNCTION</code></pre>
+    <p>Bilan : ≈ 9 multiplications et 6 additions, <strong>zéro division</strong>, temps d'exécution constant
+    (déterministe). À comparer aux dizaines d'opérations et divisions d'un Gauss général.</p>
+
+    <div class="callout temps">
+      Cette formule est déterministe (pas de branchement de pivot) : son temps d'exécution ne dépend pas des
+      données. C'est exactement ce qu'on veut dans une tâche cyclique. Utilisez-la systématiquement pour inverser
+      une pose, une transformation outil, un changement de repère base↔monde.
+    </div>
+
+    <div class="callout piege">
+      La formule n'est valable que si <span class="math-inline">R</span> est bien une rotation
+      <strong>orthonormée</strong>. Après beaucoup de calculs en <code>REAL</code>, <span class="math-inline">R</span>
+      peut « dériver » (déterminant ≠ 1). Si besoin, ré-orthonormalisez <span class="math-inline">R</span>
+      (Gram-Schmidt) — ou travaillez en <code>LREAL</code> pour limiter la dérive.
+    </div>
+
+    <h2>4. Inverser un Jacobien : résoudre, ne pas inverser</h2>
+    <p>Le Jacobien <span class="math-inline">J</span> relie vitesses articulaires et vitesse de l'effecteur :
+    <span class="math-inline">v = J·q̇</span>. Pour la commande en vitesse (cinématique inverse instantanée) on
+    veut <span class="math-inline">q̇ = J<sup>-1</sup>·v</span>. Deux réflexes d'automaticien :</p>
+
+    <h3>4.1 Résoudre le système au lieu de former l'inverse</h3>
+    <p>Calculer explicitement <span class="math-inline">J<sup>-1</sup></span> puis multiplier est plus coûteux
+    et moins stable que <strong>résoudre</strong> directement <span class="math-inline">J·q̇ = v</span> par
+    élimination de Gauss avec <strong>pivot partiel</strong>. La fonction ci-dessous résout un système
+    <span class="math-inline">A·x = b</span> (ici <span class="math-inline">A = J</span>,
+    <span class="math-inline">b = v</span>, <span class="math-inline">x = q̇</span>) et renvoie
+    <code>FALSE</code> si la matrice est (quasi) singulière.</p>
+    <pre><code class="language-pascal">FUNCTION "ResoudreLin4" : BOOL   // renvoie FALSE si (quasi-)singulier
+VAR_IN_OUT
+    A : ARRAY[0..3, 0..3] OF LREAL;   // ⚠ modifiée : passez-en une COPIE de travail
+    b : ARRAY[0..3] OF LREAL;         // ⚠ modifié également
+    x : ARRAY[0..3] OF LREAL;         // solution
+END_VAR
+VAR_TEMP
+    i, j, k, p : INT;
+    maxv, coef, s, tmp : LREAL;
+END_VAR
+CONSTANT
+    EPS : LREAL := 1.0E-9;            // seuil de singularité
+END_CONSTANT
+BEGIN
+    FOR k := 0 TO 3 DO
+        // --- recherche du pivot (plus grand |A[i,k]|) pour la stabilité ---
+        p := k;  maxv := ABS(A[k, k]);
+        FOR i := k + 1 TO 3 DO
+            IF ABS(A[i, k]) > maxv THEN  maxv := ABS(A[i, k]);  p := i;  END_IF;
+        END_FOR;
+        IF maxv < EPS THEN
+            "ResoudreLin4" := FALSE;     // singulier → on renonce proprement
+            RETURN;
+        END_IF;
+        // --- échange des lignes k et p ---
+        IF p <> k THEN
+            FOR j := 0 TO 3 DO  tmp := A[k, j];  A[k, j] := A[p, j];  A[p, j] := tmp;  END_FOR;
+            tmp := b[k];  b[k] := b[p];  b[p] := tmp;
+        END_IF;
+        // --- élimination sous le pivot ---
+        FOR i := k + 1 TO 3 DO
+            coef := A[i, k] / A[k, k];
+            FOR j := k TO 3 DO  A[i, j] := A[i, j] - coef * A[k, j];  END_FOR;
+            b[i] := b[i] - coef * b[k];
+        END_FOR;
+    END_FOR;
+    // --- remontée (substitution arrière) ---
+    FOR i := 3 TO 0 BY -1 DO
+        s := b[i];
+        FOR j := i + 1 TO 3 DO  s := s - A[i, j] * x[j];  END_FOR;
+        x[i] := s / A[i, i];
+    END_FOR;
+    "ResoudreLin4" := TRUE;
+END_FUNCTION</code></pre>
+    <div class="callout note">
+      L'exemple est en 4×4 pour rester lisible. Un Jacobien spatial complet est <strong>6×6</strong> (ou non carré
+      pour un robot redondant) : la même routine se généralise en remplaçant <code>3</code> par <code>n-1</code>.
+      Le pivot partiel est indispensable : sans lui, une case pivot proche de zéro ruine la précision.
+    </div>
+
+    <h3>4.2 Près d'une singularité : amortir (Damped Least Squares)</h3>
+    <p>Au voisinage d'une singularité, <span class="math-inline">J</span> devient mal conditionné :
+    <span class="math-inline">J<sup>-1</sup></span> « explose » et commande des vitesses articulaires énormes.
+    La parade classique est l'inverse amorti (<em>Damped Least Squares</em>, Levenberg-Marquardt) :</p>
+    <div class="math">
+      q̇ = J<sup>T</sup> · ( J·J<sup>T</sup> + λ²·I )<sup>-1</sup> · v
+    </div>
+    <p>Le terme <span class="math-inline">λ²·I</span> borne la solution : on troque un peu de précision de suivi
+    contre des vitesses lisses et sûres. En pratique sur PLC : surveiller la <strong>manipulabilité</strong>
+    <span class="math-inline">w = √(det(J·J<sup>T</sup>))</span>, augmenter <span class="math-inline">λ</span>
+    quand <span class="math-inline">w</span> chute, et toujours <strong>saturer</strong> la sortie
+    <span class="math-inline">q̇</span> avant de l'envoyer aux axes.</p>
+
+    <div class="callout temps">
+      La résolution par Gauss contient des branchements (pivot, singularité) : son temps varie légèrement selon
+      les données. Bornez tout : nombre d'axes fixe, sortie saturée, et prévoyez le <em>pire cas</em> dans votre
+      budget de temps de cycle. En cas de retour <code>FALSE</code> (singulier), tenez la dernière consigne valide
+      plutôt que d'envoyer <code>NaN</code>/<code>Inf</code> aux variateurs.
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Cache de ligne</h3>
+      <p>À partir de la multiplication naïve, réécris uniquement la double boucle en cachant la ligne
+      <span class="math-inline">i</span> de <code>A</code> dans des scalaires, sans dérouler la boucle sur
+      <span class="math-inline">j</span>. Combien de lectures de <code>A</code> économises-tu par ligne ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">FOR i := 0 TO 3 DO
+    a0 := A[i,0]; a1 := A[i,1]; a2 := A[i,2]; a3 := A[i,3];   // 4 lectures
+    FOR j := 0 TO 3 DO
+        C[i,j] := a0*B[0,j] + a1*B[1,j] + a2*B[2,j] + a3*B[3,j];
+    END_FOR;
+END_FOR;</code></pre>
+        <p>Sans cache, chaque case <code>C[i,j]</code> relit 4 fois la ligne de <code>A</code> → 16 lectures de
+        <code>A</code> par ligne <span class="math-inline">i</span>. Avec le cache : <strong>4 lectures</strong>
+        par ligne. On divise les accès à <code>A</code> par 4.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Compter les opérations de l'inverse homogène</h3>
+      <p>Sans regarder, dénombre les multiplications et les divisions de <code>InvHomogene</code>, puis compare
+      qualitativement à un Gauss-Jordan 4×4 général.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>La transposition ne coûte que des copies (0 multiplication). La translation
+        <span class="math-inline">−R<sup>T</sup>p</span> fait 3 lignes × 3 produits = <strong>9 multiplications</strong>
+        et 6 additions, <strong>0 division</strong>, sans aucun branchement.</p>
+        <p>Un Gauss-Jordan 4×4 général demande de l'ordre de plusieurs dizaines de multiplications <em>et</em>
+        divisions, plus la recherche de pivot (comparaisons + échanges de lignes). Exploiter la structure
+        homogène est donc à la fois <strong>plus rapide, plus stable et déterministe</strong>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Pourquoi amortir ?</h3>
+      <p>Explique en une phrase pourquoi <span class="math-inline">q̇ = J<sup>-1</sup>v</span> devient dangereux
+      près d'une singularité, et ce que change le terme <span class="math-inline">λ²I</span>.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Près d'une singularité, <span class="math-inline">det(J) → 0</span> : de petites vitesses cartésiennes
+        <span class="math-inline">v</span> exigent des vitesses articulaires <span class="math-inline">q̇</span>
+        arbitrairement grandes (l'inverse « explose »). Le terme <span class="math-inline">λ²I</span> rend la
+        matrice <span class="math-inline">(J·J<sup>T</sup> + λ²I)</span> toujours inversible et <strong>borne</strong>
+        <span class="math-inline">q̇</span> : le robot suit la consigne un peu moins fidèlement, mais avec des
+        vitesses finies et lisses.</p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Mesurer avant d'optimiser</strong> (instruction <code>RUNTIME</code>) ; viser le temps de cycle, pas la vitesse absolue.</li>
+        <li><strong>LREAL</strong> pour la précision, <strong><code>VAR_IN_OUT</code></strong> pour éviter les copies, <strong>accès optimisé</strong> au bloc, résultats en <strong><code>TEMP</code></strong>.</li>
+        <li><strong>Multiplication 4×4</strong> : résultat dans une matrice tierce (pas d'aliasing), cache de ligne + déroulage de la boucle interne.</li>
+        <li><strong>Inverse homogène</strong> (cinématique directe) : <span class="math-inline">R<sup>T</sup></span> et <span class="math-inline">−R<sup>T</sup>p</span> — pas de Gauss, pas de division, déterministe.</li>
+        <li><strong>Jacobien</strong> : <em>résoudre</em> <span class="math-inline">J·q̇ = v</span> (Gauss + pivot partiel) plutôt qu'inverser ; <strong>amortir</strong> (DLS) et <strong>saturer</strong> près des singularités.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Le Jacobien</a>
+    <a class="next" href="index.html"><span class="lbl">Suivant →</span>Retour au sommaire</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) · Annexe optimisation SCL 🤖
+  </footer>
+</body>
+</html>
