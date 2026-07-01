@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — Ownership, emprunts &amp; lifetimes</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>Ownership, emprunts &amp; lifetimes</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre quel problème l'<em>ownership</em> résout par rapport à la gestion mémoire manuelle du C/C++.</li>
+        <li>Maîtriser les trois règles de l'ownership et faire le lien avec le RAII du C++.</li>
+        <li>Distinguer <em>move</em>, <em>copy</em> et <code>clone()</code>, et savoir lequel a un coût.</li>
+        <li>Utiliser les emprunts <code>&amp;T</code> et <code>&amp;mut T</code> en respectant le <em>borrow checker</em>.</li>
+        <li>Lire une annotation de <em>lifetime</em> et comprendre quand le compilateur l'infère.</li>
+        <li>Écrire une boucle de contrôle qui partage l'état sans le copier — zéro coût, zéro danger.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le problème que Rust résout</h2>
+    <p>
+      En C et en C++, la mémoire dynamique est <strong>votre</strong> responsabilité. Vous appelez
+      <code>malloc</code>/<code>free</code>, <code>new</code>/<code>delete</code>, et vous devez le faire au bon moment,
+      exactement une fois, dans tous les chemins d'exécution — y compris ceux qui lèvent une exception ou sortent
+      d'une boucle par un <code>return</code> anticipé. Toute erreur produit un des classiques du domaine :
+    </p>
+    <ul>
+      <li><strong>Fuite mémoire</strong> : on oublie le <code>free</code>, la mémoire n'est jamais rendue.</li>
+      <li><strong>Double-free</strong> : on libère deux fois le même bloc, corruption du tas.</li>
+      <li><strong>Dangling pointer</strong> : on garde un pointeur vers une zone déjà libérée.</li>
+      <li><strong>Use-after-free</strong> : on lit ou écrit à travers ce pointeur — comportement indéfini.</li>
+    </ul>
+    <p>
+      Ces bugs sont particulièrement redoutables en robotique : ils sont non déterministes, se manifestent parfois
+      après des heures de fonctionnement, et peuvent immobiliser un bras robotisé au pire moment. Le C++ moderne
+      les atténue avec les <em>smart pointers</em> et le RAII, mais rien n'empêche à la compilation d'écrire un
+      <em>dangling reference</em>.
+    </p>
+    <p>
+      Rust prend le problème à la racine : la sécurité mémoire est <strong>garantie à la compilation</strong>,
+      <strong>sans ramasse-miettes</strong> (pas de <em>garbage collector</em>, donc pas de pauses imprévisibles —
+      point crucial en temps réel). Le mécanisme central s'appelle l'<em>ownership</em> (la « possession »).
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Piège C/C++ nº 1 — le pointeur nul.</strong> En C, une référence peut toujours être
+        <code>NULL</code>, et le déréférencer plante le programme. En Rust, une référence <code>&amp;T</code> est
+        <em>garantie</em> valide et non nulle. L'absence de valeur se modélise explicitement avec
+        <code>Option&lt;T&gt;</code> (chapitre ultérieur), jamais avec un pointeur nul silencieux.
+      </p>
+    </div>
+
+    <h2>2. Les trois règles de l'ownership</h2>
+    <p>
+      Tout le modèle tient en trois règles, vérifiées par le compilateur :
+    </p>
+    <ol>
+      <li>Chaque valeur a un <strong>propriétaire</strong> (une variable).</li>
+      <li>Il ne peut y avoir qu'<strong>un seul propriétaire à la fois</strong>.</li>
+      <li>Quand le propriétaire <strong>sort du scope</strong>, la valeur est libérée automatiquement (<code>drop</code>).</li>
+    </ol>
+
+    <pre><code class="language-rust">fn main() {
+    {
+        let etat = String::from("robot en marche"); // `etat` devient propriétaire
+        println!("{etat}");
+    } // <- fin du scope : `drop` est appelé, la mémoire est rendue ici
+
+    // `etat` n'existe plus, impossible de l'utiliser : erreur de compilation
+}</code></pre>
+
+    <div class="callout note">
+      <p>
+        <strong>Analogie C++ : c'est le RAII généralisé.</strong> Le <code>drop</code> automatique en fin de scope,
+        c'est exactement le destructeur appelé par le C++ quand un objet local disparaît. La différence : en Rust
+        c'est le comportement <em>par défaut</em> pour toute valeur, et le compilateur vérifie qu'aucune référence
+        ne survit à l'objet — ce que le C++ ne garantit pas.
+      </p>
+    </div>
+
+    <h2>3. Le déplacement (move) par défaut</h2>
+    <p>
+      Considérons ce code, qui paraîtrait anodin en C :
+    </p>
+
+    <pre><code class="language-rust">let a = String::from("capteur");
+let b = a;          // move : la propriété de la chaîne passe de `a` à `b`
+// println!("{a}"); // ERREUR : `a` a été déplacé, il n'est plus valide</code></pre>
+
+    <p>
+      En C++, <code>b = a</code> aurait fait une copie profonde (ou un <em>move</em> explicite avec
+      <code>std::move</code>). En Rust, l'affectation d'une valeur possédée est un <strong>déplacement</strong> :
+      la ressource n'est pas copiée, mais <em>transférée</em>. L'ancien propriétaire <code>a</code> est invalidé
+      à la compilation. Résultat : impossible d'avoir deux variables qui croient posséder la même mémoire — donc
+      pas de double-free.
+    </p>
+
+    <h3>Types <code>Copy</code> : les scalaires font exception</h3>
+    <p>
+      Les types simples stockés entièrement sur la pile (entiers, flottants, <code>bool</code>, <code>char</code>,
+      et les tuples de ces types) implémentent le trait <code>Copy</code>. Pour eux, l'affectation duplique la valeur
+      au lieu de la déplacer, car la copie est triviale et sans ressource à libérer.
+    </p>
+
+    <pre><code class="language-rust">let x: i32 = 42;
+let y = x;      // copie : `x` reste utilisable
+println!("{x} et {y}"); // OK : 42 et 42
+
+let v = vec![1.0_f64, 2.0, 3.0];
+let w = v;      // move : `v` n'est plus valide (Vec possède de la mémoire sur le tas)
+// println!("{v:?}"); // ERREUR</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Règle mnémotechnique.</strong> Si le type possède une ressource sur le tas (<code>String</code>,
+        <code>Vec</code>, <code>Box</code>…), l'affectation <em>déplace</em>. Si tout tient sur la pile et est
+        trivialement copiable (<code>i32</code>, <code>f64</code>…), l'affectation <em>copie</em>.
+      </p>
+    </div>
+
+    <h2>4. <code>clone()</code> : la copie explicite (et son coût)</h2>
+    <p>
+      Quand vous voulez réellement une copie indépendante d'une valeur possédée, vous l'écrivez explicitement
+      avec <code>clone()</code>. Le mot est volontairement visible dans le code : une copie profonde a un coût, et
+      Rust veut que ce coût soit lisible.
+    </p>
+
+    <pre><code class="language-rust">let a = String::from("trajectoire");
+let b = a.clone();  // copie profonde : deux chaînes indépendantes existent
+println!("{a} / {b}"); // OK, les deux sont valides</code></pre>
+
+    <div class="callout temps-reel">
+      <p>
+        <strong>⏱ Temps réel.</strong> Un <code>clone()</code> d'un gros vecteur d'état, c'est une allocation
+        tas + une recopie, à chaque appel. Dans une boucle de contrôle qui tourne à 1&nbsp;kHz, c'est
+        exactement le genre de coût caché qui fait exploser votre budget temps et fragmente le tas. Règle d'or :
+        <strong>dans la boucle de contrôle, on emprunte, on ne clone pas.</strong>
+      </p>
+    </div>
+
+    <h2>5. Les emprunts (borrowing)</h2>
+    <p>
+      Déplacer la propriété à chaque fois qu'on veut lire une valeur serait ingérable. La solution est
+      l'<strong>emprunt</strong> : on prête une référence sans céder la propriété. Deux formes :
+    </p>
+    <ul>
+      <li><code>&amp;T</code> — emprunt <strong>partagé</strong> (lecture seule). On peut en avoir plusieurs simultanément.</li>
+      <li><code>&amp;mut T</code> — emprunt <strong>mutable exclusif</strong> (lecture/écriture). Un seul à la fois.</li>
+    </ul>
+
+    <p>
+      La règle fondamentale du <em>borrow checker</em>, à tout instant, pour une valeur donnée :
+    </p>
+    <blockquote>
+      <strong>Soit N lecteurs (<code>&amp;T</code>), soit 1 écrivain (<code>&amp;mut T</code>), jamais les deux en même temps.</strong>
+    </blockquote>
+
+    <pre><code class="language-rust">fn afficher(v: &amp;Vec&lt;f64&gt;) {          // emprunt partagé : on lit seulement
+    println!("longueur = {}", v.len());
+}
+
+fn doubler(v: &amp;mut Vec&lt;f64&gt;) {        // emprunt exclusif : on modifie
+    for x in v.iter_mut() {
+        *x *= 2.0;
+    }
+}
+
+fn main() {
+    let mut etat = vec![1.0, 2.0, 3.0];
+
+    afficher(&amp;etat);        // prêt en lecture, `etat` reste propriétaire
+    doubler(&amp;mut etat);     // prêt en écriture (exclusif)
+    afficher(&amp;etat);        // le vecteur vaut maintenant [2.0, 4.0, 6.0]
+}</code></pre>
+
+    <p>
+      Cette règle « N lecteurs XOR 1 écrivain » est ce qui élimine à la compilation les
+      <em>data races</em> et les invalidations d'itérateur (le fameux bug C++ où l'on modifie un
+      <code>std::vector</code> pendant qu'on le parcourt).
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Piège C/C++ nº 2 — l'aliasing mutable.</strong> En C, rien n'empêche deux pointeurs d'écrire
+        dans la même zone au même moment. En Rust, tant qu'un <code>&amp;mut</code> existe, aucun autre emprunt
+        (mutable ou partagé) n'est autorisé. Le compilateur refuse le code plutôt que de produire un
+        comportement indéfini.
+      </p>
+    </div>
+
+    <h2>6. Pourquoi c'est décisif pour la robotique</h2>
+    <p>
+      Imaginez une boucle de contrôle qui, à chaque itération, lit un vecteur d'état de plusieurs centaines de
+      composantes (positions articulaires, vitesses, forces). En le passant par emprunt <code>&amp;Vec&lt;f64&gt;</code>
+      ou, mieux, par tranche <code>&amp;[f64]</code>, vous transmettez juste un pointeur + une longueur :
+    </p>
+    <ul>
+      <li><strong>Zéro copie</strong> — pas d'allocation, pas de recopie, coût constant et prévisible.</li>
+      <li><strong>Zéro dangling</strong> — le compilateur garantit que la référence ne survit pas à l'état.</li>
+      <li><strong>Zéro data race</strong> — le partage lecture/écriture est contrôlé statiquement.</li>
+    </ul>
+
+    <pre><code class="language-rust">/// Norme euclidienne d'un vecteur d'état, sans le copier.
+fn norme(v: &amp;[f64]) -> f64 {
+    v.iter().map(|x| x * x).sum::&lt;f64&gt;().sqrt()
+}
+
+fn boucle_controle(etat: &amp;[f64]) {
+    // À 1 kHz, cet appel ne coûte rien de plus qu'un passage de pointeur.
+    let e = norme(etat);
+    println!("erreur = {e:.3}");
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Préférez <code>&amp;[T]</code> à <code>&amp;Vec&lt;T&gt;</code> en paramètre.</strong> La tranche
+        <code>&amp;[f64]</code> accepte aussi bien un <code>Vec</code> qu'un tableau fixe <code>[f64; N]</code> —
+        elle est plus générale et tout aussi gratuite. Utile quand une partie de votre code embarqué évite les
+        allocations dynamiques.
+      </p>
+    </div>
+
+    <h2>7. Notions de lifetimes</h2>
+    <p>
+      Une <em>lifetime</em> (durée de vie) est la portée pendant laquelle une référence reste valide. Le
+      compilateur les suit toujours en interne ; la plupart du temps il les <strong>infère</strong> pour vous
+      (on parle d'<em>élision</em>), et vous n'écrivez rien. Les annotations explicites, notées <code>'a</code>,
+      n'apparaissent que lorsque le compilateur ne peut pas deviner seul la relation entre les durées de vie —
+      typiquement quand une fonction renvoie une référence.
+    </p>
+
+    <pre><code class="language-rust">/// Renvoie une référence vers le plus grand des deux flottants.
+/// `'a` dit : « le résultat vit aussi longtemps que le PLUS COURT
+/// des deux emprunts d'entrée ». C'est une promesse vérifiée à la compilation.
+fn plus_grand&lt;'a&gt;(a: &amp;'a f64, b: &amp;'a f64) -> &amp;'a f64 {
+    if a > b { a } else { b }
+}
+
+fn main() {
+    let x = 3.0;
+    let y = 7.0;
+    let m = plus_grand(&amp;x, &amp;y); // `m` emprunte `x` ou `y`
+    println!("max = {m}");         // OK tant que x et y sont vivants
+}</code></pre>
+
+    <p>
+      Les lifetimes ne changent <em>rien</em> à l'exécution : elles ne coûtent rien et ne modifient pas le code
+      généré. Ce sont uniquement des annotations qui permettent au <em>borrow checker</em> de prouver qu'aucune
+      référence ne pointe vers de la mémoire libérée. C'est la garantie « pas de dangling reference »
+      rendue explicite.
+    </p>
+
+    <pre><code class="language-rust">// Ce que Rust REFUSE de compiler — et heureusement :
+fn dangling() -> &amp;f64 {
+    let local = 42.0;
+    &amp;local            // ERREUR : `local` est libéré à la fin de la fonction
+}                     // on retournerait un pointeur pendouillant, comme en C</code></pre>
+
+    <div class="callout note">
+      <p>
+        En C++, retourner l'adresse d'une variable locale compile sans broncher et produit un
+        <em>use-after-return</em> silencieux. En Rust, c'est une erreur de compilation nette. Les lifetimes sont
+        le mécanisme qui rend cette vérification possible.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Corriger une violation du borrow checker</h3>
+      <p>Le code suivant est refusé par le compilateur. Trouvez pourquoi et corrigez-le.</p>
+      <pre><code class="language-rust">fn main() {
+    let mut v = vec![10.0, 20.0, 30.0];
+    let premier = &amp;v[0];      // emprunt partagé
+    v.push(40.0);             // emprunt mutable pendant que `premier` vit
+    println!("{premier}");
+}</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Problème : <code>premier</code> est un emprunt partagé <code>&amp;T</code>, mais <code>v.push()</code>
+          exige un emprunt mutable <code>&amp;mut T</code>. Les deux ne peuvent coexister. De plus <code>push</code>
+          pourrait réallouer le vecteur et invalider <code>premier</code> (exactement le bug C++ d'itérateur
+          invalidé). Il faut soit finir d'utiliser <code>premier</code> avant le <code>push</code>, soit lire une
+          copie de la valeur (elle est <code>Copy</code>) :
+        </p>
+        <pre><code class="language-rust">fn main() {
+    let mut v = vec![10.0, 20.0, 30.0];
+    let premier = v[0];       // f64 est Copy : on copie la valeur, pas d'emprunt persistant
+    v.push(40.0);             // plus aucun emprunt partagé en vie : OK
+    println!("{premier}");    // affiche 10
+}</code></pre>
+        <p>
+          Variante : mettre <code>println!("{}", &amp;v[0]);</code> avant le <code>push</code>. L'emprunt se termine
+          alors avant la modification.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Écrire une fonction qui emprunte</h3>
+      <p>
+        Écrivez <code>norme(v: &amp;[f64]) -> f64</code> qui calcule la norme euclidienne d'un vecteur d'état
+        <strong>sans le déplacer ni le copier</strong>. Testez-la dans un <code>main</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn norme(v: &amp;[f64]) -> f64 {
+    v.iter()
+     .map(|x| x * x)   // chaque composante au carré
+     .sum::&lt;f64&gt;()      // somme des carrés
+     .sqrt()           // racine
+}
+
+fn main() {
+    let etat = vec![3.0, 4.0];
+    println!("{}", norme(&amp;etat)); // 5.0
+    println!("{}", norme(&amp;etat)); // OK : `etat` n'a jamais été déplacé, on peut ré-emprunter
+}</code></pre>
+        <p>
+          Le paramètre <code>&amp;[f64]</code> est une tranche empruntée : aucune allocation, et
+          <code>etat</code> reste disponible après l'appel puisqu'il n'a pas cédé sa propriété.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Modifier un vecteur d'état via <code>&amp;mut</code></h3>
+      <p>
+        Écrivez <code>saturer(v: &amp;mut [f64], limite: f64)</code> qui borne chaque composante dans
+        l'intervalle <code>[-limite, +limite]</code> (utile pour saturer des commandes moteur). La fonction ne
+        renvoie rien : elle modifie le vecteur en place.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn saturer(v: &amp;mut [f64], limite: f64) {
+    for x in v.iter_mut() {           // itération mutable : `x` est un &amp;mut f64
+        *x = x.clamp(-limite, limite); // clamp borne la valeur
+    }
+}
+
+fn main() {
+    let mut commandes = vec![0.5, -3.0, 2.2, -0.1];
+    saturer(&amp;mut commandes, 1.0);
+    println!("{commandes:?}"); // [0.5, -1.0, 1.0, -0.1]
+}</code></pre>
+        <p>
+          <code>&amp;mut [f64]</code> est un emprunt exclusif : tant que <code>saturer</code> s'exécute, personne
+          d'autre ne peut lire ni écrire <code>commandes</code>. La modification se fait en place, sans allocation.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Pourquoi ça ne compile pas ?</h3>
+      <p>Expliquez précisément l'erreur produite par ce code.</p>
+      <pre><code class="language-rust">fn main() {
+    let trajectoire = String::from("A -> B -> C");
+    let copie = trajectoire;                 // (1)
+    println!("origine : {trajectoire}");     // (2)
+    println!("copie   : {copie}");
+}</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Ligne (1) : <code>String</code> n'est pas <code>Copy</code> (elle possède de la mémoire sur le tas).
+          L'affectation est donc un <strong>move</strong> : la propriété passe de <code>trajectoire</code> à
+          <code>copie</code>, et <code>trajectoire</code> devient invalide.
+        </p>
+        <p>
+          Ligne (2) : on tente d'utiliser <code>trajectoire</code> <em>après</em> son déplacement. Le compilateur
+          répond <code>error[E0382]: borrow of moved value: `trajectoire`</code>. C'est le <em>borrow checker</em>
+          qui empêche un use-after-move (l'équivalent conceptuel d'un use-after-free).
+        </p>
+        <p>Deux corrections possibles selon l'intention :</p>
+        <pre><code class="language-rust">// (a) On veut deux chaînes indépendantes : copie explicite
+let copie = trajectoire.clone();
+println!("origine : {trajectoire}"); // OK, trajectoire est toujours propriétaire
+
+// (b) On veut juste lire les deux fois la même donnée : emprunt
+let copie = &amp;trajectoire;            // emprunt partagé, pas de move
+println!("origine : {trajectoire}");
+println!("copie   : {copie}");</code></pre>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>3 règles d'ownership</strong> : une valeur a un unique propriétaire ; un seul à la fois ; libération automatique (<code>drop</code>) en fin de scope — le RAII généralisé et vérifié.</li>
+        <li><strong>Move par défaut</strong> pour les types possédant une ressource (<code>String</code>, <code>Vec</code>…) : l'ancienne variable devient invalide. <strong>Copy</strong> pour les scalaires.</li>
+        <li><strong><code>clone()</code></strong> = copie profonde explicite et <em>coûteuse</em> — visible dans le code, à bannir des boucles de contrôle.</li>
+        <li><strong>Emprunts</strong> : <code>&amp;T</code> partagé (N lecteurs) ou <code>&amp;mut T</code> exclusif (1 écrivain), jamais les deux à la fois.</li>
+        <li><strong>Robotique</strong> : passer l'état par <code>&amp;[f64]</code> = zéro copie, zéro dangling, zéro data race, coût prévisible.</li>
+        <li><strong>Lifetimes</strong> : annotations <code>'a</code> souvent inférées (élision) ; garantissent statiquement qu'aucune référence ne survit à sa donnée. Aucun coût à l'exécution.</li>
+        <li><strong>Zéro pointeur nul, zéro use-after-free</strong> : garanti à la compilation, sans garbage collector.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>Fonctions &amp; contrôle de flux</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Structs, enums &amp; méthodes</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

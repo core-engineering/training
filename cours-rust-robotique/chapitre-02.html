@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — Variables, types &amp; mutabilité</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>Variables, types &amp; mutabilité</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre l'immutabilité par défaut de <code>let</code> et savoir quand utiliser <code>mut</code></li>
+        <li>Distinguer <code>const</code>, <code>static</code> et le shadowing</li>
+        <li>Connaître les types scalaires de Rust et choisir entre <code>f32</code> et <code>f64</code> pour du calcul robotique</li>
+        <li>Maîtriser les conversions explicites avec <code>as</code> et les méthodes sûres de gestion de débordement</li>
+        <li>Manipuler des tuples pour représenter une pose robot <code>(x, y, theta)</code></li>
+      </ul>
+    </div>
+
+    <h2>1. <code>let</code> : immutable par défaut</h2>
+    <p>
+      Première surprise pour qui vient du C/C++ : en Rust, une variable déclarée avec <code>let</code>
+      est <strong>immuable par défaut</strong>. C'est l'inverse de l'habitude C/C++, où il faut ajouter
+      <code>const</code> explicitement pour interdire la réaffectation.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let vitesse_max = 2.5; // m/s — immuable
+    println!("Vitesse max : {vitesse_max}");
+
+    // vitesse_max = 3.0; // ERREUR de compilation : cannot assign twice
+    //                    // to immutable variable `vitesse_max`
+}</code></pre>
+
+    <p>
+      Pour autoriser la réaffectation, il faut le déclarer explicitement avec <code>mut</code> :
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let mut vitesse = 0.0_f64; // m/s
+    println!("Vitesse initiale : {vitesse}");
+
+    vitesse += 0.5; // accélération, autorisé grâce à `mut`
+    println!("Vitesse après accélération : {vitesse}");
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Piège C/C++ → Rust :</strong> en C/C++, tout est mutable sauf mention contraire
+        (<code>const</code>). En Rust, c'est l'inverse : tout est <em>const</em> par défaut, et il faut
+        <code>mut</code> pour ouvrir la porte à la mutation. Ce choix n'est pas cosmétique : le compilateur
+        s'en sert pour prouver qu'aucune donnée n'est modifiée par erreur pendant qu'un autre bout de code
+        s'attend à ce qu'elle reste stable — un vrai atout en boucle de contrôle temps réel, où une variable
+        d'état modifiée « par accident » peut faire diverger un asservissement.
+      </p>
+    </div>
+
+    <h2>2. <code>const</code> et <code>static</code></h2>
+    <p>
+      <code>let</code> (même immuable) est une liaison locale, évaluée à l'exécution. Pour des valeurs
+      vraiment constantes, connues à la compilation, Rust propose <code>const</code> et <code>static</code> :
+    </p>
+
+    <pre><code class="language-rust">// `const` : inlinée partout où elle est utilisée, pas d'adresse mémoire fixe.
+// Le type est TOUJOURS obligatoire.
+const PERIODE_BOUCLE_MS: u32 = 10; // boucle de contrôle à 100 Hz
+
+// `static` : une seule instance en mémoire, à une adresse fixe, durée de vie 'static.
+static NOM_ROBOT: &str = "R2-Atelier";
+
+fn main() {
+    println!("{NOM_ROBOT} tourne à {PERIODE_BOUCLE_MS} ms par cycle");
+}</code></pre>
+
+    <div class="callout note">
+      <p>
+        En pratique, en robotique embarquée : <code>const</code> pour les constantes numériques
+        (périodes, limites physiques, gains par défaut), <code>static</code> surtout pour des données
+        partagées globalement (rare et à éviter si possible — préférez passer l'état explicitement).
+        Une <code>static mut</code> existe mais son accès est <code>unsafe</code> ; on la reverra au
+        chapitre sur le temps réel.
+      </p>
+    </div>
+
+    <h2>3. Le shadowing</h2>
+    <p>
+      Le <em>shadowing</em> consiste à redéclarer une nouvelle variable avec le même nom via <code>let</code>.
+      Ce n'est <strong>pas</strong> de la mutation : chaque <code>let x = ...</code> crée une variable
+      distincte qui masque la précédente. On peut même changer de type au passage.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let angle = "45"; // &str, lu depuis une config par exemple
+    let angle: f64 = angle.parse().expect("angle invalide");
+    let angle = angle.to_radians(); // même nom, nouvelle variable, type inchangé ici
+
+    println!("Angle en radians : {angle}");
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Shadowing vs <code>mut</code> :</strong> avec <code>mut</code>, c'est la même variable,
+        même type, dont la valeur change en place. Avec le shadowing, ce sont des variables différentes
+        (potentiellement de types différents), et l'ancienne reste immuable — elle est juste devenue
+        inaccessible par ce nom. Le shadowing est idéal pour des transformations successives
+        (parsing → conversion → validation) sans polluer l'espace de noms avec <code>angle_str</code>,
+        <code>angle_deg</code>, <code>angle_rad</code>.
+      </p>
+    </div>
+
+    <h2>4. Types scalaires</h2>
+    <p>Rust a un système de types statique et explicite. Les scalaires de base :</p>
+    <ul>
+      <li><strong>Entiers signés</strong> : <code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>isize</code></li>
+      <li><strong>Entiers non signés</strong> : <code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code>, <code>usize</code></li>
+      <li><strong>Flottants</strong> : <code>f32</code>, <code>f64</code></li>
+      <li><strong>Booléen</strong> : <code>bool</code> (<code>true</code> / <code>false</code>, jamais <code>0</code>/<code>1</code> implicite)</li>
+      <li><strong>Caractère</strong> : <code>char</code>, un scalaire Unicode sur 4 octets (pas juste ASCII comme le <code>char</code> C)</li>
+    </ul>
+    <p>
+      <code>isize</code> et <code>usize</code> ont la taille d'un pointeur sur la plateforme cible
+      (souvent 64 bits) — l'équivalent de <code>ssize_t</code>/<code>size_t</code> en C. On les utilise
+      surtout pour indexer des collections, pas pour du calcul physique.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let compteur_cycles: u64 = 0;
+    let erreur_position: i32 = -3; // en pas moteur, peut être négatif
+    let asservissement_actif: bool = true;
+    let unite: char = 'm'; // mètres
+
+    println!("{compteur_cycles} {erreur_position} {asservissement_actif} {unite}");
+}</code></pre>
+
+    <h2>5. <code>f32</code> vs <code>f64</code> pour le calcul robotique</h2>
+    <p>
+      Rust infère <code>f64</code> par défaut pour un littéral flottant sans annotation — contrairement
+      au C où un littéral comme <code>1.0</code> est un <code>double</code> aussi, mais où l'on bascule
+      souvent vers <code>float</code> pour la performance sans trop y penser. En Rust, ce choix doit être
+      délibéré :
+    </p>
+    <table>
+      <thead><tr><th>Critère</th><th><code>f32</code></th><th><code>f64</code></th></tr></thead>
+      <tbody>
+        <tr><td>Précision</td><td>~7 chiffres significatifs</td><td>~15-17 chiffres significatifs</td></tr>
+        <tr><td>Mémoire</td><td>4 octets</td><td>8 octets</td></tr>
+        <tr><td>Débit SIMD / cache</td><td>2× plus de valeurs par registre</td><td>moitié moins</td></tr>
+        <tr><td>Usage typique</td><td>GPU, gros volumes (nuages de points, images), microcontrôleurs sans FPU double</td><td>calculs numériques accumulés (intégration, filtre de Kalman, cinématique)</td></tr>
+      </tbody>
+    </table>
+    <div class="callout note">
+      <p>
+        <strong>Recommandation pour ce cours :</strong> on utilisera <code>f64</code> par défaut pour
+        toute la partie « algèbre / cinématique / filtrage », car les erreurs d'arrondi s'accumulent vite
+        dans une boucle de contrôle qui tourne à 100 Hz ou 1 kHz pendant des minutes. On ne descend en
+        <code>f32</code> que si le profilage montre un vrai goulot mémoire/CPU (typiquement sur cible
+        embarquée sans FPU 64 bits, ou traitement massif de nuages de points 3D).
+      </p>
+    </div>
+
+    <h2>6. Inférence et annotations explicites</h2>
+    <p>
+      Rust infère le type dans la grande majorité des cas, mais accepte (et recommande parfois) une
+      annotation explicite pour la lisibilité ou quand l'inférence est ambiguë :
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let pas = 0.01; // inféré : f64
+    let angle_cible: f64 = 1.57; // annotation explicite, utile pour la doc du code
+    let nb_articulations = 6u8; // suffixe de type directement sur le littéral
+
+    println!("{pas} {angle_cible} {nb_articulations}");
+}</code></pre>
+
+    <h2>7. Débordement d'entiers</h2>
+    <p>
+      En C, un débordement d'entier signé est un comportement indéfini, et un débordement d'entier non
+      signé « boucle » silencieusement (<em>wrapping</em>). Rust est plus strict et plus prévisible :
+    </p>
+    <ul>
+      <li>En profil <strong>debug</strong>, un débordement déclenche un <code>panic!</code> à l'exécution — l'erreur est détectée immédiatement.</li>
+      <li>En profil <strong>release</strong> (optimisé), par défaut, le débordement fait un <em>wrapping</em> silencieux (comportement identique au C pour les non signés), pour ne pas payer le coût de la vérification en production.</li>
+    </ul>
+
+    <pre><code class="language-rust">fn main() {
+    let compteur_pas: u8 = 250;
+    // let depassement = compteur_pas + 10; // panic en debug ! (u8 max = 255)
+
+    // Méthodes explicites et sûres, indépendantes du profil de compilation :
+    let a = compteur_pas.wrapping_add(10);   // boucle silencieusement : 4
+    let b = compteur_pas.checked_add(10);    // None si débordement, Some(x) sinon
+    let c = compteur_pas.saturating_add(10); // bloque à la valeur max : 255
+
+    println!("wrapping={a} checked={b:?} saturating={c}");
+}</code></pre>
+
+    <div class="callout temps">
+      <p>
+        <strong>Boucle temps réel :</strong> ne comptez jamais sur le comportement « debug panique,
+        release enroule » pour la logique métier — c'est fragile et dépend du profil de build. Dans du
+        code embarqué, préférez systématiquement les méthodes explicites : <code>checked_*</code> quand
+        une erreur doit être remontée proprement (avec <code>Option</code>/<code>Result</code>, sans
+        branche imprévisible ni panic en vol), <code>saturating_*</code> pour des compteurs ou limites
+        physiques qui doivent simplement plafonner (ex. une commande PWM qui ne doit jamais dépasser sa
+        valeur max), et <code>wrapping_*</code> seulement quand le rebouclage est le comportement voulu
+        (ex. un compteur de cycles circulaire).
+      </p>
+    </div>
+
+    <h2>8. Conversions avec <code>as</code></h2>
+    <p>
+      Rust n'effectue <strong>aucune conversion implicite</strong> entre types numériques, même entre
+      <code>i32</code> et <code>i64</code>, ou <code>f32</code> et <code>f64</code>. Il faut convertir
+      explicitement avec <code>as</code> (ou des méthodes comme <code>TryFrom</code> pour des conversions
+      pouvant échouer).
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let pas_moteur: i32 = 4096;
+    let pas_moteur_f: f64 = pas_moteur as f64; // conversion explicite, sans perte ici
+
+    let angle_rad: f64 = 3.14159265358979;
+    let angle_f32: f32 = angle_rad as f32; // perte de précision assumée et visible
+
+    let grand: i64 = 1_000_000_000_000;
+    let tronque: i32 = grand as i32; // troncature silencieuse : le résultat n'est PAS 1e12 !
+
+    println!("{pas_moteur_f} {angle_f32} {tronque}");
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Piège C/C++ → Rust :</strong> en C, écrire <code>double d = mon_int;</code> ou
+        <code>float f = mon_double;</code> compile sans broncher, avec parfois une perte de précision
+        silencieuse (voire un avertissement ignoré). En Rust, l'absence de conversion implicite force à
+        écrire <code>as f64</code> ou <code>as f32</code> à chaque endroit où une perte de précision ou
+        une troncature peut se produire : c'est plus verbeux, mais chaque conversion est un point visible
+        et grep-able dans le code, ce qui aide énormément à traquer les bugs numériques dans un pipeline
+        de calcul (odométrie, filtrage, commande).
+      </p>
+    </div>
+
+    <h2>9. Tuples et déstructuration</h2>
+    <p>
+      Un tuple regroupe plusieurs valeurs de types potentiellement différents, sans avoir besoin de
+      définir une structure nommée. Pratique pour retourner plusieurs valeurs d'une fonction, ou pour
+      une donnée légère et locale comme une pose 2D.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    // Une pose robot 2D : position (x, y) en mètres, orientation theta en radians
+    let pose: (f64, f64, f64) = (1.20, 0.35, 0.78);
+
+    // Accès par index
+    println!("x = {}", pose.0);
+
+    // Déstructuration : la manière idiomatique de lire un tuple
+    let (x, y, theta) = pose;
+    println!("x={x} y={y} theta={theta}");
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        On peut ignorer certains champs avec <code>_</code> : <code>let (x, y, _) = pose;</code> si
+        l'orientation ne nous intéresse pas ici. Utile pour garder le code expressif sans variables
+        inutilisées (le compilateur avertirait sinon).
+      </p>
+    </div>
+
+    <h2>10. Fil rouge : angles en radians</h2>
+    <p>
+      Dans ce cours, tous les calculs d'angle internes se font en <strong>radians</strong>, en
+      <code>f64</code>, conformément à la convention de la plupart des bibliothèques scientifiques
+      (et des fonctions trigonométriques de <code>std</code>). On ne convertit en degrés qu'à l'affichage
+      ou à la saisie utilisateur.
+    </p>
+
+    <pre><code class="language-rust">use std::f64::consts::PI;
+
+fn deg_vers_rad(deg: f64) -> f64 {
+    deg * PI / 180.0
+}
+
+fn rad_vers_deg(rad: f64) -> f64 {
+    rad * 180.0 / PI
+}
+
+fn main() {
+    let angle_articulation_deg = 90.0;
+    let angle_rad = deg_vers_rad(angle_articulation_deg);
+
+    println!("{angle_articulation_deg}° = {angle_rad} rad");
+    println!("retour : {} °", rad_vers_deg(angle_rad));
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        Rust fournit aussi les méthodes <code>f64::to_radians()</code> et <code>f64::to_degrees()</code>
+        directement sur les flottants — pas besoin de réécrire ces fonctions dans du vrai code :
+        <code>90.0_f64.to_radians()</code>. On les a réécrites ici pour illustrer une fonction simple ;
+        dans la suite du cours on utilisera les méthodes natives.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Convertir des degrés en radians</h3>
+      <p>
+        Écris un programme qui déclare un angle en degrés (<code>f64</code>), le convertit en radians
+        avec <code>to_radians()</code>, puis affiche les deux valeurs avec 4 décimales
+        (indice : <code>{valeur:.4}</code> dans une macro <code>println!</code>).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn main() {
+    let angle_deg: f64 = 135.0;
+    let angle_rad = angle_deg.to_radians();
+
+    println!("{angle_deg:.4}° = {angle_rad:.4} rad");
+}</code></pre>
+        <p>
+          <code>to_radians()</code> est une méthode fournie par <code>f64</code> (et <code>f32</code>),
+          équivalente à <code>angle_deg * PI / 180.0</code>. Le format <code>{valeur:.4}</code> dans
+          <code>println!</code> arrondit l'affichage à 4 décimales sans changer la valeur réelle stockée.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Expérimenter le shadowing</h3>
+      <p>
+        Pars d'une chaîne <code>"3.14"</code>, transforme-la successivement en <code>f64</code>, puis
+        arrondis-la à l'entier le plus proche (<code>f64::round()</code>) en réutilisant à chaque fois le
+        même nom de variable <code>valeur</code> grâce au shadowing. Affiche le résultat final et son type
+        réel en commentaire.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn main() {
+    let valeur = "3.14";                       // &str
+    let valeur: f64 = valeur.parse().unwrap();  // f64
+    let valeur = valeur.round();                // toujours f64, mais arrondi : 3.0
+
+    println!("{valeur}");
+}</code></pre>
+        <p>
+          Trois variables <code>valeur</code> distinctes coexistent dans la portée, chacune masquant la
+          précédente. C'est différent de <code>let mut valeur = ...; valeur = ...;</code>, qui aurait
+          exigé que le type reste identique (<code>f64</code> ne peut pas être réaffecté à partir d'un
+          <code>&amp;str</code>).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Tester un débordement</h3>
+      <p>
+        Déclare un <code>u8</code> à sa valeur maximale (<code>u8::MAX</code>). Calcule
+        <code>valeur.checked_add(1)</code>, <code>valeur.wrapping_add(1)</code> et
+        <code>valeur.saturating_add(1)</code>, et affiche les trois résultats. Explique en commentaire
+        pourquoi les trois diffèrent.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn main() {
+    let valeur: u8 = u8::MAX; // 255
+
+    let a = valeur.checked_add(1);   // None : 256 ne rentre pas dans un u8
+    let b = valeur.wrapping_add(1);  // 0 : rebouclage silencieux (255 + 1 mod 256)
+    let c = valeur.saturating_add(1); // 255 : plafonné à la valeur max du type
+
+    println!("checked={a:?} wrapping={b} saturating={c}");
+}</code></pre>
+        <p>
+          <code>checked_add</code> retourne un <code>Option&lt;u8&gt;</code> : <code>None</code> signale
+          explicitement l'échec, à traiter par l'appelant. <code>wrapping_add</code> reproduit le
+          comportement arithmétique modulaire du C pour les entiers non signés. <code>saturating_add</code>
+          bloque à la borne du type — souvent le comportement le plus sûr pour une commande physique
+          (ex. un rapport cyclique PWM qui ne doit jamais « déborder » vers une valeur aberrante).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Déstructurer une pose robot</h3>
+      <p>
+        Déclare un tuple <code>pose: (f64, f64, f64)</code> représentant <code>(x, y, theta)</code> d'un
+        robot mobile, avec <code>theta</code> en degrés (par exemple 45.0). Déstructure-le en trois
+        variables nommées, convertis <code>theta</code> en radians dans la foulée (par shadowing), puis
+        affiche une phrase récapitulative avec les trois valeurs.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn main() {
+    let pose: (f64, f64, f64) = (2.0, -0.5, 45.0); // x (m), y (m), theta (deg)
+    let (x, y, theta) = pose;
+    let theta = theta.to_radians(); // shadowing : theta devient l'angle en radians
+
+    println!("Robot en ({x}, {y}) avec un cap de {theta:.4} rad");
+}</code></pre>
+        <p>
+          La déstructuration <code>let (x, y, theta) = pose;</code> extrait les trois champs en une seule
+          ligne, plus lisible que trois accès <code>pose.0</code>, <code>pose.1</code>, <code>pose.2</code>.
+          Le shadowing sur <code>theta</code> permet de passer de « degrés lus quelque part » à « radians
+          utilisés en interne » sans introduire de nouveau nom.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><code>let</code> est immuable par défaut ; <code>let mut</code> autorise la mutation en place.</li>
+        <li><code>const</code> (typée, inlinée) et <code>static</code> (une instance, adresse fixe) servent pour des valeurs connues à la compilation.</li>
+        <li>Le <em>shadowing</em> crée une nouvelle variable (type libre) ; ce n'est pas une mutation de la variable existante.</li>
+        <li>Types scalaires : entiers dimensionnés (<code>i8</code>…<code>i128</code>, <code>u8</code>…<code>u128</code>, <code>isize</code>/<code>usize</code>), <code>f32</code>/<code>f64</code>, <code>bool</code>, <code>char</code>.</li>
+        <li>Pour du calcul robotique accumulé (cinématique, filtrage), préférer <code>f64</code> ; réserver <code>f32</code> aux cas où mémoire/débit priment sur la précision.</li>
+        <li>Le débordement panique en debug, s'enroule en release par défaut : en code temps réel, préférer explicitement <code>checked_*</code>, <code>saturating_*</code> ou <code>wrapping_*</code>.</li>
+        <li>Aucune conversion numérique implicite : toute conversion passe par <code>as</code> (ou <code>TryFrom</code>), ce qui rend les pertes de précision visibles dans le code.</li>
+        <li>Les tuples et leur déstructuration <code>let (x, y, theta) = pose;</code> sont pratiques pour des données groupées légères comme une pose robot.</li>
+        <li>Fil rouge : angles internes toujours en radians, <code>f64</code>, conversions via <code>to_radians()</code>/<code>to_degrees()</code> ou <code>std::f64::consts::PI</code>.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Introduction &amp; outillage</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>Fonctions &amp; contrôle de flux</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

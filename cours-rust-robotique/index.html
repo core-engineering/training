@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rust pour la robotique temps réel — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Rust pour la robotique temps réel</h1>
+      <p class="sub">Un cours complet pour débuter Rust, du langage jusqu'aux implémentations
+      de filtre de Kalman et de cinématique directe/inverse. Pensé pour qui connaît déjà
+      un peu le C/C++ : chaque notion est reliée à un exemple concret de robotique.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Comment suivre ce cours ?</strong> Lis les chapitres dans l'ordre. Chaque page contient
+      de la théorie, des exemples de code commentés, des encarts « ⚠️ Piège C/C++ → Rust » et des
+      exercices. Les <em>solutions sont repliables</em> : essaie d'abord, puis clique sur
+      « Voir la solution ». Installe Rust avec <a href="https://rustup.rs">rustup.rs</a> et teste
+      chaque exemple dans un projet <code>cargo</code>.
+    </div>
+
+    <div class="part-title">Partie A — Fondations du langage</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html"><span class="num">01</span><span><strong>Introduction &amp; outillage</strong><span class="desc">rustup, cargo, structure d'un projet, premier programme</span></span></a></li>
+      <li><a href="chapitre-02.html"><span class="num">02</span><span><strong>Variables, types &amp; mutabilité</strong><span class="desc">f32/f64, shadowing, conversions — appliqué aux angles</span></span></a></li>
+      <li><a href="chapitre-03.html"><span class="num">03</span><span><strong>Fonctions &amp; contrôle de flux</strong><span class="desc">if, match, boucles — normaliser un angle</span></span></a></li>
+      <li><a href="chapitre-04.html"><span class="num">04</span><span><strong>Ownership, emprunts &amp; lifetimes</strong><span class="desc">⭐ le chapitre clé face au C/C++</span></span></a></li>
+      <li><a href="chapitre-05.html"><span class="num">05</span><span><strong>Structs, enums &amp; méthodes</strong><span class="desc">impl — types EtatRobot, Vec2/Vec3</span></span></a></li>
+      <li><a href="chapitre-06.html"><span class="num">06</span><span><strong>Collections : Vec, tableaux, slices</strong><span class="desc">représenter un vecteur d'état, une trajectoire</span></span></a></li>
+      <li><a href="chapitre-07.html"><span class="num">07</span><span><strong>Traits &amp; génériques</strong><span class="desc">surcharge d'opérateurs, code générique f32/f64</span></span></a></li>
+      <li><a href="chapitre-08.html"><span class="num">08</span><span><strong>Gestion d'erreurs</strong><span class="desc">Result, Option, ? — éviter les panics en boucle</span></span></a></li>
+      <li><a href="chapitre-09.html"><span class="num">09</span><span><strong>Modules, crates &amp; nalgebra</strong><span class="desc">organiser le code, importer une lib d'algèbre</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie B — Applications robotique</div>
+    <ul class="toc">
+      <li><a href="chapitre-10.html"><span class="num">10</span><span><strong>Algèbre linéaire appliquée</strong><span class="desc">matrices, produits, inversion (maison + nalgebra)</span></span></a></li>
+      <li><a href="chapitre-11.html"><span class="num">11</span><span><strong>Cinématique directe</strong><span class="desc">paramètres de Denavit-Hartenberg, matrices homogènes</span></span></a></li>
+      <li><a href="chapitre-12.html"><span class="num">12</span><span><strong>Cinématique inverse</strong><span class="desc">Jacobienne, méthode numérique de Newton</span></span></a></li>
+      <li><a href="chapitre-13.html"><span class="num">13</span><span><strong>Filtre de Kalman linéaire</strong><span class="desc">cycle prédiction/correction, implémentation complète</span></span></a></li>
+      <li><a href="chapitre-14.html"><span class="num">14</span><span><strong>Temps réel &amp; performance</strong><span class="desc">zéro allocation en boucle, inline, benchmarking, no_std</span></span></a></li>
+    </ul>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel · à suivre dans l'ordre 🦀
+  </footer>
+</body>
+</html>

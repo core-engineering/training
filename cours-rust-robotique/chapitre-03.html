@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — Fonctions &amp; contrôle de flux</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>Fonctions &amp; contrôle de flux</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Déclarer des fonctions typées et comprendre la différence entre expression et instruction.</li>
+        <li>Utiliser <code>if</code>/<code>else</code> et <code>match</code> comme expressions produisant une valeur.</li>
+        <li>Maîtriser les trois formes de boucles (<code>loop</code>, <code>while</code>, <code>for</code>) et les étiquettes de boucle.</li>
+        <li>Écrire des fonctions de conversion et de classification typiques d'un pipeline de contrôle robotique.</li>
+        <li>Identifier les constructions de contrôle de flux adaptées au temps réel (bornées, déterministes).</li>
+      </ul>
+    </div>
+
+    <h2>1. Déclarer une fonction</h2>
+    <p>
+      En Rust, une fonction se déclare avec le mot-clé <code>fn</code>. Chaque paramètre doit avoir un type
+      explicite (pas d'inférence sur les paramètres, contrairement aux variables locales), et le type de retour
+      s'annonce après une flèche <code>-&gt;</code>. Si la fonction ne retourne rien, on omet la flèche
+      (le type de retour est alors implicitement <code>()</code>, le « tuple unité »).
+    </p>
+
+    <pre><code class="language-rust">// Convertit une vitesse angulaire en tours par seconde.
+fn rad_par_s_vers_tours_par_s(omega: f64) -> f64 {
+    omega / (2.0 * std::f64::consts::PI)
+}
+
+// Fonction sans valeur de retour : type () implicite.
+fn journaliser(message: &str) {
+    println!("[LOG] {message}");
+}
+
+fn main() {
+    let vitesse = rad_par_s_vers_tours_par_s(31.4);
+    journaliser(&format!("vitesse = {vitesse:.3} tr/s"));
+}</code></pre>
+
+    <p>
+      Contrairement au C, l'ordre de déclaration des fonctions au sein d'un module n'a pas d'importance :
+      <code>main</code> peut appeler une fonction définie plus bas dans le fichier sans prototype préalable.
+    </p>
+
+    <h2>2. Expressions vs instructions</h2>
+    <p>
+      C'est l'un des points qui surprend le plus les personnes venant du C/C++. En Rust, presque tout est une
+      <strong>expression</strong> qui produit une valeur : un bloc <code>{ ... }</code>, un <code>if</code>, un
+      <code>match</code>. Une <strong>instruction</strong> (comme une affectation <code>let x = 5;</code>), elle,
+      ne produit rien et se termine par un point-virgule.
+    </p>
+    <p>
+      La règle clé : dans un bloc de fonction, si la <em>dernière ligne n'a pas de point-virgule</em>, sa valeur
+      devient la valeur de retour du bloc (donc, en fin de fonction, la valeur de retour de la fonction).
+      Ajouter un point-virgule par réflexe — comme en C où chaque ligne se termine ainsi — transforme
+      l'expression en instruction qui retourne <code>()</code>, ce qui casse la compilation si le type de retour
+      attendu n'est pas <code>()</code>.
+    </p>
+
+    <pre><code class="language-rust">fn carre(x: f64) -> f64 {
+    x * x   // pas de point-virgule : c'est la valeur retournée
+}
+
+fn carre_bugue(x: f64) -> f64 {
+    x * x;  // erreur de compilation : ceci retourne (), pas f64
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        Ajouter un <code>;</code> à la dernière ligne d'une fonction est l'erreur numéro un des débutant·e·s
+        venant du C/C++. Le compilateur Rust affiche alors un message explicite du type
+        <em>« expected `f64`, found `()`»</em> — c'est un excellent réflexe de vérifier immédiatement
+        la dernière ligne du bloc quand cette erreur apparaît.
+      </p>
+    </div>
+
+    <p>
+      On peut bien sûr utiliser <code>return</code> pour un retour anticipé, typiquement dans une garde
+      en début de fonction — le mot-clé reste utile et parfaitement idiomatique dans ce cas :
+    </p>
+
+    <pre><code class="language-rust">fn inverse(x: f64) -> Option&lt;f64&gt; {
+    if x == 0.0 {
+        return None; // retour anticipé explicite
+    }
+    Some(1.0 / x)
+}</code></pre>
+
+    <h2>3. <code>if</code>/<code>else</code> comme expression</h2>
+    <p>
+      Puisque <code>if</code> est une expression, on peut directement l'assigner à une variable — plus besoin
+      de l'opérateur ternaire <code>?:</code> du C. Les deux branches doivent impérativement retourner le
+      même type.
+    </p>
+
+    <pre><code class="language-rust">fn saturer(valeur: f64, limite: f64) -> f64 {
+    let resultat = if valeur > limite {
+        limite
+    } else if valeur < -limite {
+        -limite
+    } else {
+        valeur
+    };
+    resultat
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        Comme les deux branches d'un <code>if</code>-expression doivent avoir le même type, le compilateur
+        détecte immédiatement les incohérences (par exemple oublier une branche <code>else</code> alors que
+        la valeur est utilisée) — une classe entière de bugs de logique de commande est éliminée à la compilation.
+      </p>
+    </div>
+
+    <h2>4. <code>match</code> : le <em>switch</em> qui ne laisse rien passer</h2>
+    <p>
+      <code>match</code> ressemble au <code>switch</code> du C, mais avec deux différences majeures. D'abord,
+      il est <strong>exhaustif</strong> : le compilateur refuse de compiler si un cas possible n'est pas couvert
+      (fini les oublis de <code>default</code> qui font planter le robot en silence). Ensuite, <code>match</code>
+      est lui aussi une <strong>expression</strong> qui peut produire une valeur, et il n'y a jamais de
+      <em>fall-through</em> implicite comme en C — pas besoin de <code>break</code>.
+    </p>
+
+    <pre><code class="language-rust">fn classer_code_erreur(code: i32) -> &'static str {
+    match code {
+        0 => "OK",
+        1 | 2 => "avertissement mineur",       // plusieurs motifs
+        3..=9 => "erreur récupérable",          // plage inclusive
+        10..=99 => "erreur critique",
+        _ => "code inconnu",                    // motif « fourre-tout » obligatoire
+    }
+}</code></pre>
+
+    <p>
+      Le motif <code>_</code> joue le rôle du <code>default</code> du C, mais ici il n'est requis que si les
+      autres motifs ne couvrent pas déjà toutes les valeurs possibles du type. Sur une énumération (<code>enum</code>),
+      il est souvent possible — et préférable — de couvrir explicitement chaque variante plutôt que de se
+      reposer sur <code>_</code>, afin que le compilateur signale toute variante oubliée si l'énumération
+      évolue plus tard.
+    </p>
+
+    <pre><code class="language-rust">enum EtatCapteur {
+    Ok,
+    HorsLimite,
+    Deconnecte,
+}
+
+fn classer_capteur(etat: &EtatCapteur) -> &'static str {
+    match etat {
+        EtatCapteur::Ok => "capteur nominal",
+        EtatCapteur::HorsLimite => "valeur hors plage — vérifier le montage",
+        EtatCapteur::Deconnecte => "capteur absent du bus",
+        // pas de `_` nécessaire : les trois variantes sont couvertes
+    }
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        En robotique, cette exhaustivité est précieuse : si on ajoute plus tard une variante
+        <code>EtatCapteur::Saturation</code>, chaque <code>match</code> sur cette énumération qui ne la gère pas
+        encore provoquera une <strong>erreur de compilation</strong>, pas un bug silencieux découvert en test
+        sur banc, voire pire, sur le robot en mouvement.
+      </p>
+    </div>
+
+    <h2>5. Les trois formes de boucles</h2>
+    <p>
+      Rust propose <code>loop</code>, <code>while</code> et <code>for</code>. Contrairement au C, il n'y a
+      pas de boucle <code>for</code> à trois clauses (<code>for(i=0; i&lt;n; i++)</code>) : on itère sur un
+      itérateur, le plus souvent une plage (<em>range</em>).
+    </p>
+
+    <pre><code class="language-rust">// loop : boucle infinie explicite, sort avec break (éventuellement avec une valeur)
+fn attendre_stabilisation(seuil: f64, mesures: &[f64]) -> usize {
+    let mut i = 0;
+    let indice_stable = loop {
+        if i >= mesures.len() || mesures[i].abs() < seuil {
+            break i; // `break` avec une valeur : loop devient une expression
+        }
+        i += 1;
+    };
+    indice_stable
+}
+
+// while : condition classique évaluée avant chaque itération
+fn compter_jusqu_a_zero(mut compteur: i32) {
+    while compteur > 0 {
+        compteur -= 1;
+    }
+}
+
+// for : itération sur une plage — bornée par construction
+fn somme_plage(n: u32) -> u32 {
+    let mut total = 0;
+    for i in 0..n {       // 0..n : exclut n
+        total += i;
+    }
+    total
+}
+
+fn somme_plage_inclusive(n: u32) -> u32 {
+    let mut total = 0;
+    for i in 0..=n {      // 0..=n : inclut n
+        total += i;
+    }
+    total
+}
+
+// for sur une collection : pas d'indices à gérer manuellement
+fn moyenne(mesures: &[f64]) -> f64 {
+    let mut somme = 0.0;
+    for m in mesures {
+        somme += m;
+    }
+    somme / mesures.len() as f64
+}</code></pre>
+
+    <p>
+      Les étiquettes de boucle (<em>labels</em>) permettent de cibler précisément quelle boucle
+      <code>break</code> ou <code>continue</code> affecte, très utile dans des boucles imbriquées de
+      balayage de capteurs ou de recherche dans une grille d'occupation :
+    </p>
+
+    <pre><code class="language-rust">fn chercher_collision(grille: &[[bool; 4]; 4]) -> Option<(usize, usize)> {
+    let mut trouve = None;
+    'lignes: for i in 0..4 {
+        for j in 0..4 {
+            if grille[i][j] {
+                trouve = Some((i, j));
+                break 'lignes; // sort directement de la boucle externe étiquetée
+            }
+        }
+    }
+    trouve
+}</code></pre>
+
+    <div class="callout temps">
+      <p>
+        Dans un contexte temps réel, privilégiez systématiquement les boucles <strong>bornées et
+        déterministes</strong> : un <code>for i in 0..n</code> sur une plage ou une collection de taille connue
+        a un temps d'exécution prévisible. Un <code>loop</code> ou un <code>while</code> dont la condition de
+        sortie dépend d'une convergence numérique (filtrage, recherche de racine, stabilisation) peut, en
+        théorie, ne jamais se terminer dans le budget de temps imparti à une tâche périodique : bornez toujours
+        ces boucles avec un compteur maximal d'itérations, quitte à sortir en échec explicite plutôt que
+        de dépasser l'échéance (<em>deadline</em>) de la boucle de contrôle.
+      </p>
+    </div>
+
+    <h2>6. Fil rouge : conversions et classification d'angles</h2>
+    <p>
+      Reprenons le fil rouge du cours : un petit module de traitement d'angles et de capteurs, tel qu'on
+      pourrait en écrire pour un bras robotique ou une base mobile.
+    </p>
+
+    <pre><code class="language-rust">use std::f64::consts::PI;
+
+/// Convertit un angle de degrés vers radians.
+fn deg_to_rad(deg: f64) -> f64 {
+    deg * PI / 180.0
+}
+
+/// Ramène un angle (en radians) dans l'intervalle [-π, π],
+/// utile après une accumulation d'angle sur plusieurs tours de roue.
+fn normaliser_angle(angle: f64) -> f64 {
+    // rem_euclid garantit un reste toujours positif, contrairement à `%` en Rust
+    // (comme en C, `%` peut renvoyer un résultat négatif pour un dividende négatif).
+    let deux_pi = 2.0 * PI;
+    let reste = angle.rem_euclid(deux_pi); // reste dans [0, 2π)
+    if reste > PI {
+        reste - deux_pi
+    } else {
+        reste
+    }
+}
+
+enum EtatCapteur {
+    Ok,
+    HorsLimite,
+}
+
+/// Classe une mesure de capteur selon une plage de fonctionnement nominale.
+fn classer_mesure(valeur: f64, min: f64, max: f64) -> EtatCapteur {
+    match valeur {
+        v if v >= min && v <= max => EtatCapteur::Ok,
+        _ => EtatCapteur::HorsLimite,
+    }
+}
+
+fn main() {
+    let angle_deg = 450.0;
+    let angle_rad = deg_to_rad(angle_deg);
+    let angle_norm = normaliser_angle(angle_rad);
+    println!("{angle_deg}° -> {angle_rad:.3} rad -> normalisé {angle_norm:.3} rad");
+
+    match classer_mesure(2.7, 0.0, 2.5) {
+        EtatCapteur::Ok => println!("capteur dans la plage attendue"),
+        EtatCapteur::HorsLimite => println!("capteur hors limite !"),
+    }
+}</code></pre>
+
+    <div class="callout note">
+      <p>
+        Notez le motif <code>v if condition =&gt;</code> dans <code>classer_mesure</code> : c'est une
+        <strong>garde de motif</strong> (<em>match guard</em>), qui ajoute une condition booléenne arbitraire
+        au filtrage. On aurait aussi pu écrire <code>normaliser_angle</code> avec une boucle
+        <code>while angle &gt; PI { angle -= deux_pi }</code> / <code>while angle &lt; -PI { angle += deux_pi }</code> —
+        correct mathématiquement, mais non borné en nombre d'itérations si l'angle d'entrée est énorme
+        (accumulation d'erreurs sur une longue mission). La version avec <code>rem_euclid</code> est préférable
+        en temps réel car elle s'exécute en <strong>temps constant</strong>, quelle que soit la valeur d'entrée.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Normaliser un angle</h3>
+      <p>
+        Écrivez une fonction <code>fn normaliser_angle(angle: f64) -> f64</code> qui ramène n'importe quel
+        angle en radians dans l'intervalle <code>[-π, π]</code>. Testez-la avec des valeurs comme
+        <code>3.5 * PI</code> et <code>-4.0 * PI</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use std::f64::consts::PI;
+
+fn normaliser_angle(angle: f64) -> f64 {
+    let deux_pi = 2.0 * PI;
+    let reste = angle.rem_euclid(deux_pi); // toujours dans [0, 2π)
+    if reste > PI {
+        reste - deux_pi
+    } else {
+        reste
+    }
+}
+
+fn main() {
+    println!("{:.4}", normaliser_angle(3.5 * PI));  // -1.5708
+    println!("{:.4}", normaliser_angle(-4.0 * PI));  // -0.0000 (zéro signé, mathématiquement égal à 0)
+}</code></pre>
+        <p>
+          <code>rem_euclid</code> évite le piège du reste négatif de l'opérateur <code>%</code> et exécute
+          l'opération en temps constant, sans boucle — un choix naturel pour du code temps réel.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Puissance entière</h3>
+      <p>
+        Écrivez une fonction <code>fn puissance(base: f64, exposant: u32) -> f64</code> qui calcule
+        <code>base</code> élevé à la puissance <code>exposant</code> à l'aide d'une boucle <code>for</code>
+        (sans utiliser <code>f64::powi</code>). Réfléchissez au cas <code>exposant == 0</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn puissance(base: f64, exposant: u32) -> f64 {
+    let mut resultat = 1.0;
+    for _ in 0..exposant {
+        resultat *= base;
+    }
+    resultat
+}
+
+fn main() {
+    println!("{}", puissance(2.0, 10)); // 1024
+    println!("{}", puissance(5.0, 0));  // 1 (le cas 0 fonctionne naturellement : 0..0 est vide)
+}</code></pre>
+        <p>
+          La boucle <code>for _ in 0..exposant</code> est bornée par construction : elle s'exécute exactement
+          <code>exposant</code> fois, jamais plus — un exemple typique de boucle « temps réel friendly ».
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Classer un état de capteur</h3>
+      <p>
+        Définissez une énumération <code>enum EtatCapteur { Ok, HorsLimite }</code> et une fonction
+        <code>fn diagnostiquer(valeur: f64, min: f64, max: f64) -> EtatCapteur</code> qui utilise
+        <code>match</code> avec une garde de motif pour renvoyer <code>EtatCapteur::Ok</code> si
+        <code>valeur</code> est dans <code>[min, max]</code>, sinon <code>EtatCapteur::HorsLimite</code>.
+        Affichez le résultat avec un second <code>match</code> exhaustif.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">enum EtatCapteur {
+    Ok,
+    HorsLimite,
+}
+
+fn diagnostiquer(valeur: f64, min: f64, max: f64) -> EtatCapteur {
+    match valeur {
+        v if v >= min && v <= max => EtatCapteur::Ok,
+        _ => EtatCapteur::HorsLimite,
+    }
+}
+
+fn main() {
+    let etat = diagnostiquer(37.2, 0.0, 40.0);
+    match etat {
+        EtatCapteur::Ok => println!("température nominale"),
+        EtatCapteur::HorsLimite => println!("alerte : température hors limite"),
+    }
+}</code></pre>
+        <p>
+          Si l'on ajoutait plus tard une variante <code>EtatCapteur::Deconnecte</code>, le second
+          <code>match</code> refuserait de compiler tant qu'il ne la traite pas explicitement (ou via
+          <code>_</code>) — c'est l'exhaustivité de <code>match</code> au travail.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Somme avec <code>for</code></h3>
+      <p>
+        Écrivez une fonction <code>fn somme_carres(n: u32) -> u32</code> qui calcule la somme des carrés
+        de <code>0</code> à <code>n</code> inclus (<code>0² + 1² + ... + n²</code>) à l'aide d'un
+        <code>for</code> sur une plage inclusive.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn somme_carres(n: u32) -> u32 {
+    let mut total: u32 = 0;
+    for i in 0..=n {
+        total += i * i;
+    }
+    total
+}
+
+fn main() {
+    println!("{}", somme_carres(3)); // 0+1+4+9 = 14
+}</code></pre>
+        <p>
+          La plage <code>0..=n</code> inclut <code>n</code>, contrairement à <code>0..n</code>. Sur des
+          entrées volontairement grandes, méfiez-vous d'un dépassement de capacité (<em>overflow</em>) sur
+          <code>u32</code> — un sujet abordé plus en détail au chapitre sur la gestion des erreurs.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Une fonction se déclare avec <code>fn nom(param: Type) -> TypeRetour { ... }</code> ; les paramètres exigent un type explicite.</li>
+        <li>Le dernier bloc <strong>sans point-virgule</strong> d'une fonction est sa valeur de retour ; <code>return</code> sert au retour anticipé.</li>
+        <li><code>if</code>/<code>else</code> et <code>match</code> sont des <strong>expressions</strong> : on peut les assigner directement à une variable.</li>
+        <li><code>match</code> est <strong>exhaustif</strong> — le compilateur refuse tout cas non couvert, contrairement au <code>switch</code> du C.</li>
+        <li><code>loop</code> (avec <code>break valeur</code>), <code>while</code> et <code>for</code> (sur des plages <code>0..n</code> / <code>0..=n</code> ou des collections) couvrent tous les besoins d'itération ; les étiquettes (<code>'label:</code>) ciblent une boucle précise dans du code imbriqué.</li>
+        <li>En temps réel, préférez les boucles <strong>bornées</strong> (<code>for</code> sur une plage connue) aux boucles dont la sortie dépend d'une convergence numérique non garantie.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>Variables, types &amp; mutabilité</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>Ownership, emprunts &amp; lifetimes</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

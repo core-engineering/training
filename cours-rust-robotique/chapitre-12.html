@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 12 — Cinématique inverse</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 12</span><br>Cinématique inverse</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre ce que résout la cinématique inverse (IK) et pourquoi elle est plus difficile que la cinématique directe.</li>
+        <li>Dériver et implémenter la solution analytique exacte du bras planaire 2R (coude haut / coude bas, domaine d'atteignabilité).</li>
+        <li>Maîtriser la méthode numérique générale par la jacobienne : Newton, pseudo-inverse, transposée.</li>
+        <li>Traiter les singularités par amortissement (moindres carrés amortis / Levenberg–Marquardt).</li>
+        <li>Écrire une IK numérique générique en Rust avec <code>nalgebra</code>, robuste et bornée pour le temps réel.</li>
+      </ul>
+    </div>
+
+    <h2>1. Définition et difficultés</h2>
+    <p>
+      La <strong>cinématique directe</strong> (FK, chapitre 11) part des angles articulaires
+      <span class="math">θ = (θ<sub>1</sub>, …, θ<sub>n</sub>)</span> et calcule la pose de l'effecteur
+      <span class="math">x = f(θ)</span> dans l'espace cartésien. La <strong>cinématique inverse</strong> (IK)
+      résout le problème réciproque : étant donné une pose cible <span class="math">x<sub>c</sub></span>,
+      trouver les angles <span class="math">θ</span> tels que <span class="math">f(θ) = x<sub>c</sub></span>.
+    </p>
+    <div class="math">
+      FK :  θ ↦ x = f(θ)          (espace articulaire → cartésien)<br>
+      IK :  x<sub>c</sub> ↦ θ = f<sup>−1</sup>(x<sub>c</sub>)   (espace cartésien → articulaire)
+    </div>
+    <p>
+      C'est l'IK qu'on utilise en pratique : on veut placer une pince à un endroit précis, on ne connaît
+      pas d'avance les angles moteurs. Mais l'IK est <strong>fondamentalement plus dure</strong> que la FK :
+    </p>
+    <ul>
+      <li><strong>Solutions multiples.</strong> Plusieurs configurations articulaires atteignent la même pose
+        (coude « haut » et coude « bas », rotations à 2π près). <span class="math">f</span> n'est pas injective.</li>
+      <li><strong>Pas toujours de solution.</strong> Si la cible est hors de l'espace de travail (trop loin, trop près),
+        <span class="math">f<sup>−1</sup></span> n'existe pas.</li>
+      <li><strong>Singularités.</strong> À certaines configurations, le bras perd des degrés de liberté instantanés :
+        le problème devient mal conditionné et les vitesses articulaires explosent.</li>
+      <li><strong>Non-linéarité.</strong> <span class="math">f</span> contient des sinus/cosinus ;
+        il n'existe pas de formule fermée pour un bras arbitraire à 6+ axes.</li>
+    </ul>
+    <p>
+      Deux familles de méthodes : les <strong>solutions analytiques</strong> (formules fermées, exactes, rapides,
+      mais spécifiques à une géométrie) et les <strong>solutions numériques</strong> (itératives, générales,
+      basées sur la jacobienne).
+    </p>
+
+    <h2>2. Solution analytique du bras planaire 2R</h2>
+    <p>
+      Considérons un bras plan à deux articulations rotoïdes (2R), de longueurs de segments
+      <span class="math">L<sub>1</sub></span> et <span class="math">L<sub>2</sub></span>, avec les angles
+      <span class="math">θ<sub>1</sub></span> (base) et <span class="math">θ<sub>2</sub></span> (coude).
+      La cinématique directe donne la position de l'effecteur :
+    </p>
+    <div class="math">
+      x = L<sub>1</sub> cos θ<sub>1</sub> + L<sub>2</sub> cos(θ<sub>1</sub> + θ<sub>2</sub>)<br>
+      y = L<sub>1</sub> sin θ<sub>1</sub> + L<sub>2</sub> sin(θ<sub>1</sub> + θ<sub>2</sub>)
+    </div>
+
+    <h3>2.1 Résolution de θ<sub>2</sub></h3>
+    <p>
+      En additionnant les carrés de <span class="math">x</span> et <span class="math">y</span> et en utilisant
+      <span class="math">cos²+sin²=1</span> ainsi que <span class="math">cos(a−b)=cos a cos b + sin a sin b</span>,
+      les termes croisés se simplifient en <span class="math">cos θ<sub>2</sub></span> :
+    </p>
+    <div class="math">
+      x² + y² = L<sub>1</sub>² + L<sub>2</sub>² + 2 L<sub>1</sub> L<sub>2</sub> cos θ<sub>2</sub>
+    </div>
+    <p>D'où l'expression fermée du cosinus de l'angle du coude :</p>
+    <div class="math">
+      cos θ<sub>2</sub> = (x² + y² − L<sub>1</sub>² − L<sub>2</sub>²) / (2 L<sub>1</sub> L<sub>2</sub>)
+    </div>
+    <p>
+      La cible est <strong>atteignable</strong> si et seulement si
+      <span class="math">−1 ≤ cos θ<sub>2</sub> ≤ 1</span>, c'est-à-dire si la distance radiale
+      <span class="math">r = √(x²+y²)</span> vérifie <span class="math">|L<sub>1</sub>−L<sub>2</sub>| ≤ r ≤ L<sub>1</sub>+L<sub>2</sub></span>.
+      L'espace de travail est un anneau (couronne) de rayon extérieur <span class="math">L<sub>1</sub>+L<sub>2</sub></span>
+      et de rayon intérieur <span class="math">|L<sub>1</sub>−L<sub>2</sub>|</span>.
+    </p>
+    <p>Il en découle deux solutions symétriques (le signe du sinus n'est pas déterminé par le cosinus) :</p>
+    <div class="math">
+      θ<sub>2</sub> = ± acos( (x² + y² − L<sub>1</sub>² − L<sub>2</sub>²) / (2 L<sub>1</sub> L<sub>2</sub>) )
+    </div>
+    <ul>
+      <li><span class="math">θ<sub>2</sub> &gt; 0</span> : configuration <strong>coude bas</strong> (une des deux « équerres »).</li>
+      <li><span class="math">θ<sub>2</sub> &lt; 0</span> : configuration <strong>coude haut</strong>, image miroir par rapport à la ligne base→effecteur.</li>
+    </ul>
+    <p>
+      Les deux atteignent exactement la même pose <span class="math">(x, y)</span> : c'est l'illustration concrète de
+      la non-unicité de l'IK. En bordure d'espace de travail (<span class="math">r = L<sub>1</sub>+L<sub>2</sub></span>,
+      bras tendu), <span class="math">cos θ<sub>2</sub> = 1</span>, les deux solutions fusionnent en <span class="math">θ<sub>2</sub>=0</span> : c'est une singularité.
+    </p>
+
+    <h3>2.2 Résolution de θ<sub>1</sub></h3>
+    <p>
+      Une fois <span class="math">θ<sub>2</sub></span> connu, on écrit <span class="math">(x,y)</span> sous forme
+      <span class="math">x = k<sub>1</sub> cos θ<sub>1</sub> − k<sub>2</sub> sin θ<sub>1</sub></span>,
+      <span class="math">y = k<sub>1</sub> sin θ<sub>1</sub> + k<sub>2</sub> cos θ<sub>1</sub></span> avec
+      <span class="math">k<sub>1</sub> = L<sub>1</sub> + L<sub>2</sub> cos θ<sub>2</sub></span> et
+      <span class="math">k<sub>2</sub> = L<sub>2</sub> sin θ<sub>2</sub></span>. Cela se résout proprement avec <code>atan2</code> :
+    </p>
+    <div class="math">
+      θ<sub>1</sub> = atan2(y, x) − atan2( L<sub>2</sub> sin θ<sub>2</sub>, L<sub>1</sub> + L<sub>2</sub> cos θ<sub>2</sub> )
+    </div>
+    <div class="callout astuce">
+      <p>
+        Toujours utiliser <code>atan2(y, x)</code> et jamais <code>atan(y/x)</code> : <code>atan2</code> tient compte
+        des signes des deux composantes et couvre les quatre quadrants sans division par zéro. Le choix
+        du signe de <span class="math">θ<sub>2</sub></span> propage automatiquement le bon <span class="math">θ<sub>1</sub></span>
+        via le terme <span class="math">k<sub>2</sub> = L<sub>2</sub> sin θ<sub>2</sub></span>.
+      </p>
+    </div>
+
+    <h2>3. Méthode numérique générale : la jacobienne</h2>
+    <p>
+      Pour un bras quelconque (plus de 2 axes, 3D, orientations), on n'a pas de formule fermée. On linéarise
+      la FK autour de la configuration courante. La <strong>matrice jacobienne</strong>
+      <span class="math">J(θ)</span> collecte les dérivées partielles de la pose par rapport aux angles :
+    </p>
+    <div class="math">
+      J(θ) = ∂f/∂θ,   J<sub>ij</sub> = ∂x<sub>i</sub> / ∂θ<sub>j</sub>   (dimension m × n)
+    </div>
+    <p>
+      où <span class="math">m</span> est la dimension de la pose (2 en planaire, 6 en 3D avec orientation) et
+      <span class="math">n</span> le nombre d'articulations. Au premier ordre, un petit déplacement articulaire
+      produit un petit déplacement cartésien :
+    </p>
+    <div class="math">
+      Δx ≈ J(θ) · Δθ
+    </div>
+    <p>
+      L'IK numérique inverse cette relation. On part d'une estimation <span class="math">θ<sup>(0)</sup></span>,
+      on calcule l'erreur de pose <span class="math">e = x<sub>c</sub> − f(θ)</span>, on résout pour un pas
+      <span class="math">Δθ</span> qui réduit l'erreur, on met à jour, on répète.
+    </p>
+
+    <h3>3.1 Newton / inverse exacte (J carrée)</h3>
+    <p>Si <span class="math">J</span> est carrée et inversible (<span class="math">m = n</span>) :</p>
+    <div class="math">
+      Δθ = J<sup>−1</sup> · e ,   θ<sup>(k+1)</sup> = θ<sup>(k)</sup> + Δθ
+    </div>
+
+    <h3>3.2 Pseudo-inverse (redondance, non carré)</h3>
+    <p>
+      Pour <span class="math">m ≠ n</span> (bras redondant <span class="math">n &gt; m</span>, ou sur-contraint),
+      on utilise la <strong>pseudo-inverse de Moore–Penrose</strong>. Dans le cas redondant on prend la
+      pseudo-inverse à droite, qui fournit le pas de norme minimale :
+    </p>
+    <div class="math">
+      J<sup>+</sup> = J<sup>T</sup> (J J<sup>T</sup>)<sup>−1</sup> ,   Δθ = J<sup>+</sup> · e
+    </div>
+
+    <h3>3.3 Méthode de la transposée</h3>
+    <p>
+      Astuce peu coûteuse : remplacer l'inverse par la transposée mise à l'échelle. Il n'y a aucune inversion
+      matricielle, donc pas d'explosion aux singularités, au prix d'une convergence plus lente :
+    </p>
+    <div class="math">
+      Δθ = α · J<sup>T</sup> · e ,   α &gt; 0 (petit)
+    </div>
+    <p>
+      On peut montrer que <span class="math">J<sup>T</sup> e</span> est une direction de descente pour
+      <span class="math">½‖e‖²</span> tant que <span class="math">e ≠ 0</span> et <span class="math">J</span> non nulle :
+      la méthode diminue l'erreur de façon monotone pour un <span class="math">α</span> assez petit.
+    </p>
+
+    <h2>4. Singularités et amortissement</h2>
+    <p>
+      Une <strong>singularité</strong> survient quand <span class="math">J</span> perd son rang :
+      <span class="math">det(J J<sup>T</sup>) → 0</span>. Physiquement, l'effecteur ne peut plus se déplacer
+      instantanément dans certaines directions (bras tendu, alignement d'axes). Numériquement,
+      <span class="math">(J J<sup>T</sup>)<sup>−1</sup></span> explose : un déplacement cartésien minuscule exige
+      des vitesses articulaires énormes — dangereux sur un robot réel.
+    </p>
+    <p>
+      La parade standard est la méthode des <strong>moindres carrés amortis</strong> (Damped Least Squares, DLS),
+      équivalente à un pas de <strong>Levenberg–Marquardt</strong> : on ajoute un terme de régularisation
+      <span class="math">λ²</span> qui borne l'amplitude du pas près des singularités :
+    </p>
+    <div class="math">
+      Δθ = J<sup>T</sup> (J J<sup>T</sup> + λ² I)<sup>−1</sup> · e
+    </div>
+    <p>
+      Loin des singularités et pour <span class="math">λ → 0</span>, on retrouve la pseudo-inverse (précision maximale).
+      Près d'une singularité, <span class="math">λ² I</span> garde la matrice inversible et lisse la solution
+      (robustesse, au prix d'une légère erreur résiduelle). En pratique on choisit <span class="math">λ</span>
+      petit et fixe, ou adaptatif selon le conditionnement de <span class="math">J</span>.
+    </p>
+    <div class="callout note">
+      <p>
+        DLS interpole entre Newton (rapide mais fragile) et la transposée (lent mais stable). Le paramètre
+        <span class="math">λ</span> est le curseur : petit = précis/agressif, grand = stable/prudent.
+        C'est le compromis clé pour un robot réel.
+      </p>
+    </div>
+
+    <h2>5. Implémentation Rust</h2>
+
+    <h3>5.1 IK analytique du 2R</h3>
+    <p>
+      On renvoie une <code>Option&lt;(f64, f64)&gt;</code> : <code>None</code> si la cible est hors d'atteinte.
+      On calcule le coude bas (<span class="math">θ<sub>2</sub> ≥ 0</span>) ; le coude haut s'obtient en niant
+      <span class="math">θ<sub>2</sub></span> et en recalculant <span class="math">θ<sub>1</sub></span>.
+    </p>
+    <pre><code class="language-rust">/// IK analytique d'un bras planaire 2R (configuration coude bas, theta2 >= 0).
+/// Renvoie `Some((theta1, theta2))` en radians, ou `None` si (x, y) est
+/// hors de l'espace de travail atteignable.
+fn ik_2r_analytique(x: f64, y: f64, l1: f64, l2: f64) -> Option<(f64, f64)> {
+    let r2 = x * x + y * y;
+
+    // cos(theta2) selon la loi des cosinus.
+    let cos_t2 = (r2 - l1 * l1 - l2 * l2) / (2.0 * l1 * l2);
+
+    // Domaine d'atteignabilité : cos(theta2) doit rester dans [-1, 1].
+    // Une petite tolerance absorbe les erreurs d'arrondi sur la frontiere.
+    const EPS: f64 = 1e-9;
+    if cos_t2 < -1.0 - EPS || cos_t2 > 1.0 + EPS {
+        return None;
+    }
+
+    // Clamp defensif AVANT acos : sans lui, acos(1.0000000002) => NaN.
+    let cos_t2 = cos_t2.clamp(-1.0, 1.0);
+
+    // Coude bas : on prend la racine positive.
+    let theta2 = cos_t2.acos();
+
+    // theta1 = atan2(y, x) - atan2(k2, k1)
+    let k1 = l1 + l2 * theta2.cos();
+    let k2 = l2 * theta2.sin();
+    let theta1 = y.atan2(x) - k2.atan2(k1);
+
+    Some((theta1, theta2))
+}
+
+/// Variante renvoyant les deux solutions (coude bas, coude haut) quand elles existent.
+fn ik_2r_deux_solutions(
+    x: f64,
+    y: f64,
+    l1: f64,
+    l2: f64,
+) -> Option<[(f64, f64); 2]> {
+    let (t1_bas, t2_bas) = ik_2r_analytique(x, y, l1, l2)?;
+
+    // Coude haut : theta2 negatif, theta1 recalcule avec le signe oppose.
+    let t2_haut = -t2_bas;
+    let k1 = l1 + l2 * t2_haut.cos();
+    let k2 = l2 * t2_haut.sin();
+    let t1_haut = y.atan2(x) - k2.atan2(k1);
+
+    Some([(t1_bas, t2_bas), (t1_haut, t2_haut)])
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Piège numérique.</strong> Même quand la cible est atteignable, les arrondis flottants peuvent
+        produire <span class="math">cos θ<sub>2</sub> = 1.0000000002</span>. <code>acos</code> de cette valeur
+        renvoie <code>NaN</code>, qui contamine ensuite tous les calculs sans lever d'erreur. On <strong>clampe
+        systématiquement</strong> l'argument dans <code>[-1.0, 1.0]</code> avant <code>acos</code>. Et l'appelant
+        doit toujours gérer le <code>None</code> : ne jamais <code>unwrap()</code> aveuglément sur une cible fournie
+        par un utilisateur ou une trajectoire.
+      </p>
+    </div>
+
+    <h3>5.2 IK numérique générique avec nalgebra</h3>
+    <p>
+      On implémente une boucle de Newton amortie (DLS) générique en dimension 2. La jacobienne est fournie
+      par une <em>closure</em> — ici la jacobienne analytique du 2R — mais on donne aussi une version par
+      différences finies pour les cas où la dérivée exacte n'est pas disponible.
+    </p>
+    <pre><code class="language-rust">use nalgebra::{Matrix2, Vector2};
+
+/// Cinematique directe du 2R : angles -> position (x, y).
+fn fk_2r(theta: &Vector2<f64>, l1: f64, l2: f64) -> Vector2<f64> {
+    let (t1, t2) = (theta[0], theta[1]);
+    Vector2::new(
+        l1 * t1.cos() + l2 * (t1 + t2).cos(),
+        l1 * t1.sin() + l2 * (t1 + t2).sin(),
+    )
+}
+
+/// Jacobienne analytique 2x2 du 2R : J[i][j] = d(pos_i) / d(theta_j).
+fn jacobienne_2r(theta: &Vector2<f64>, l1: f64, l2: f64) -> Matrix2<f64> {
+    let (t1, t2) = (theta[0], theta[1]);
+    let s1 = t1.sin();
+    let c1 = t1.cos();
+    let s12 = (t1 + t2).sin();
+    let c12 = (t1 + t2).cos();
+
+    // dx/dt1, dx/dt2
+    // dy/dt1, dy/dt2
+    Matrix2::new(
+        -l1 * s1 - l2 * s12, -l2 * s12,
+         l1 * c1 + l2 * c12,  l2 * c12,
+    )
+}
+
+/// Jacobienne par differences finies (centrees), utile quand la FK est une boite noire.
+fn jacobienne_num<F>(f: F, theta: &Vector2<f64>, h: f64) -> Matrix2<f64>
+where
+    F: Fn(&Vector2<f64>) -> Vector2<f64>,
+{
+    let mut j = Matrix2::zeros();
+    for col in 0..2 {
+        let mut tp = *theta;
+        let mut tm = *theta;
+        tp[col] += h;
+        tm[col] -= h;
+        let d = (f(&tp) - f(&tm)) / (2.0 * h); // colonne = d(pos) / d(theta_col)
+        j.set_column(col, &d);
+    }
+    j
+}
+
+/// Resultat d'une resolution IK numerique.
+struct IkResult {
+    theta: Vector2<f64>,
+    converge: bool,
+    iterations: usize,
+    erreur: f64,
+}
+
+/// IK numerique par moindres carres amortis (Levenberg-Marquardt / DLS).
+///
+/// - `cible`     : pose cartesienne visee.
+/// - `theta0`    : estimation initiale (warm start).
+/// - `lambda`    : facteur d'amortissement (stabilite pres des singularites).
+/// - `tol`       : critere d'arret sur la norme de l'erreur de pose.
+/// - `max_iter`  : borne dure sur le nombre d'iterations (temps reel).
+fn ik_numerique(
+    cible: Vector2<f64>,
+    theta0: Vector2<f64>,
+    l1: f64,
+    l2: f64,
+    lambda: f64,
+    tol: f64,
+    max_iter: usize,
+) -> IkResult {
+    let mut theta = theta0;
+    let ident = Matrix2::identity();
+
+    for k in 0..max_iter {
+        let e = cible - fk_2r(&theta, l1, l2); // erreur de pose
+        let err_norm = e.norm();
+
+        // Critere d'arret : on est assez proche de la cible.
+        if err_norm < tol {
+            return IkResult { theta, converge: true, iterations: k, erreur: err_norm };
+        }
+
+        let j = jacobienne_2r(&theta, l1, l2);
+
+        // Delta theta = J^T (J J^T + lambda^2 I)^-1 e   (DLS)
+        // En dimension carree on peut aussi tenter J^-1 directement, mais
+        // (J J^T + lambda^2 I) est toujours inversible : plus robuste.
+        let jjt = j * j.transpose() + ident * (lambda * lambda);
+        let delta = match jjt.try_inverse() {
+            Some(inv) => j.transpose() * inv * e,
+            None => {
+                // Repli extreme : methode de la transposee (jamais singuliere).
+                j.transpose() * e * 0.1
+            }
+        };
+
+        theta += delta;
+    }
+
+    // Borne d'iterations atteinte : on renvoie la meilleure estimation courante.
+    let erreur = (cible - fk_2r(&theta, l1, l2)).norm();
+    IkResult { theta, converge: false, iterations: max_iter, erreur }
+}</code></pre>
+
+    <div class="callout temps-reel">
+      <h3>⏱ Encart temps réel</h3>
+      <ul>
+        <li><strong>Bornez les itérations.</strong> Un solveur IT sur boucle de contrôle doit terminer dans le budget
+          de la période (p. ex. 1 ms à 1 kHz). <code>max_iter</code> est une garantie de terminaison, pas un accident :
+          on renvoie la meilleure estimation même non convergée, jamais une boucle infinie.</li>
+        <li><strong>Warm start.</strong> Réutilisez la solution de l'itération de contrôle précédente comme
+          <code>theta0</code>. Entre deux cycles la cible bouge peu : on converge souvent en 1–2 itérations, et on
+          reste sur la même branche (coude haut/bas cohérent, pas de saut brutal d'articulation).</li>
+        <li><strong>Amortissement pour la stabilité.</strong> Un <span class="math">λ</span> non nul évite les
+          commandes de vitesse explosives près des singularités — un pic de couple peut endommager l'actionneur
+          ou déclencher un arrêt de sécurité.</li>
+        <li><strong>Pas d'allocation dans la boucle.</strong> <code>nalgebra</code> avec des types de taille fixe
+          (<code>Matrix2</code>, <code>Vector2</code>) reste sur la pile : aucune allocation tas, comportement
+          temporel déterministe.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — IK analytique avec gestion du domaine</h3>
+      <p>
+        Implémentez <code>ik_2r_analytique(x, y, l1, l2) -&gt; Option&lt;(f64, f64)&gt;</code>. Renvoyez
+        <code>None</code> si la cible est hors de l'anneau atteignable, clampez l'argument de <code>acos</code>,
+        et utilisez <code>atan2</code>. Testez avec <span class="math">L<sub>1</sub>=L<sub>2</sub>=1</span> sur une
+        cible atteignable et une cible trop lointaine.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn ik_2r_analytique(x: f64, y: f64, l1: f64, l2: f64) -> Option<(f64, f64)> {
+    let r2 = x * x + y * y;
+    let cos_t2 = (r2 - l1 * l1 - l2 * l2) / (2.0 * l1 * l2);
+
+    // Hors d'atteinte si |cos_t2| > 1 (au-dela de la tolerance).
+    if cos_t2.abs() > 1.0 + 1e-9 {
+        return None;
+    }
+
+    // Clamp obligatoire avant acos (sinon NaN aux frontieres).
+    let theta2 = cos_t2.clamp(-1.0, 1.0).acos(); // coude bas
+    let k1 = l1 + l2 * theta2.cos();
+    let k2 = l2 * theta2.sin();
+    let theta1 = y.atan2(x) - k2.atan2(k1);
+    Some((theta1, theta2))
+}
+
+fn main() {
+    // Cible atteignable (r = sqrt(2) dans [0, 2]).
+    println!("{:?}", ik_2r_analytique(1.0, 1.0, 1.0, 1.0)); // Some(...)
+    // Cible trop lointaine (r = 3 > L1 + L2 = 2).
+    println!("{:?}", ik_2r_analytique(3.0, 0.0, 1.0, 1.0)); // None
+}</code></pre>
+        <p>
+          Le <code>clamp</code> protège contre le <code>NaN</code> de <code>acos</code> ; le test
+          <code>abs() &gt; 1</code> distingue proprement l'infaisabilité (retour <code>None</code>) de la simple
+          erreur d'arrondi sur la frontière.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Vérification par composition avec la FK</h3>
+      <p>
+        En réutilisant <code>fk_2r</code> du chapitre 11, vérifiez que
+        <span class="math">FK(IK(x, y)) ≈ (x, y)</span> pour un échantillon de cibles atteignables. C'est le test
+        de cohérence fondamental : l'IK doit être un inverse à droite de la FK.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn fk_2r_xy(t1: f64, t2: f64, l1: f64, l2: f64) -> (f64, f64) {
+    (
+        l1 * t1.cos() + l2 * (t1 + t2).cos(),
+        l1 * t1.sin() + l2 * (t1 + t2).sin(),
+    )
+}
+
+fn main() {
+    let (l1, l2) = (1.5, 1.0);
+    let cibles = [(1.0, 0.5), (0.6, 1.2), (-0.8, 0.9), (2.0, 0.0)];
+
+    for &(x, y) in &cibles {
+        match ik_2r_analytique(x, y, l1, l2) {
+            Some((t1, t2)) => {
+                let (xr, yr) = fk_2r_xy(t1, t2, l1, l2);
+                let err = ((xr - x).powi(2) + (yr - y).powi(2)).sqrt();
+                assert!(err < 1e-9, "erreur de round-trip trop grande : {err}");
+                println!("cible ({x}, {y}) -> theta ({t1:.4}, {t2:.4}), err={err:.2e}");
+            }
+            None => println!("cible ({x}, {y}) hors d'atteinte"),
+        }
+    }
+}</code></pre>
+        <p>
+          Chaque round-trip revient au point de départ à la précision machine près. Si l'assertion casse, c'est
+          typiquement un <code>atan2</code> mal orienté ou un signe erroné dans la formule de
+          <span class="math">θ<sub>1</sub></span>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Jacobienne 2×2 du bras 2R</h3>
+      <p>
+        Dérivez à la main puis implémentez la jacobienne
+        <span class="math">J = ∂(x, y)/∂(θ<sub>1</sub>, θ<sub>2</sub>)</span>. Vérifiez-la contre une jacobienne
+        par différences finies, et identifiez la configuration singulière (<span class="math">det J = 0</span>).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use nalgebra::{Matrix2, Vector2};
+
+fn jacobienne_2r(theta: &Vector2<f64>, l1: f64, l2: f64) -> Matrix2<f64> {
+    let (t1, t2) = (theta[0], theta[1]);
+    let s1 = t1.sin();  let c1 = t1.cos();
+    let s12 = (t1 + t2).sin();  let c12 = (t1 + t2).cos();
+    Matrix2::new(
+        -l1 * s1 - l2 * s12, -l2 * s12,
+         l1 * c1 + l2 * c12,  l2 * c12,
+    )
+}
+
+fn main() {
+    let (l1, l2) = (1.0, 1.0);
+    let theta = Vector2::new(0.7, 0.4);
+
+    // Verification par differences finies centrees.
+    let h = 1e-6;
+    let fk = |th: &Vector2<f64>| Vector2::new(
+        l1 * th[0].cos() + l2 * (th[0] + th[1]).cos(),
+        l1 * th[0].sin() + l2 * (th[0] + th[1]).sin(),
+    );
+    let mut j_num = Matrix2::zeros();
+    for col in 0..2 {
+        let (mut tp, mut tm) = (theta, theta);
+        tp[col] += h; tm[col] -= h;
+        j_num.set_column(col, &((fk(&tp) - fk(&tm)) / (2.0 * h)));
+    }
+
+    let j_ana = jacobienne_2r(&theta, l1, l2);
+    println!("ecart max = {:.2e}", (j_ana - j_num).abs().max());
+
+    // Singularite : det(J) = l1 * l2 * sin(t2). Nul quand t2 = 0 ou pi (bras
+    // tendu ou replie) -> le determinant s'annule, J n'est plus inversible.
+    let sing = Vector2::new(0.7, 0.0);
+    println!("det a t2=0 : {:.3}", jacobienne_2r(&sing, l1, l2).determinant());
+}</code></pre>
+        <p>
+          On a <span class="math">det J = L<sub>1</sub> L<sub>2</sub> sin θ<sub>2</sub></span> : la singularité
+          du 2R est exactement <span class="math">θ<sub>2</sub> = 0</span> (bras tendu) ou
+          <span class="math">θ<sub>2</sub> = π</span> (bras replié), où l'effecteur ne peut plus se déplacer
+          radialement.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Boucle d'IK numérique qui converge</h3>
+      <p>
+        Écrivez une boucle d'IK numérique (Newton amorti) qui, partant d'une estimation initiale, converge vers
+        une cible atteignable. Affichez la norme de l'erreur à chaque itération pour observer la convergence
+        (quadratique près de la solution quand <span class="math">λ</span> est petit).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use nalgebra::{Matrix2, Vector2};
+
+fn fk_2r(theta: &Vector2<f64>, l1: f64, l2: f64) -> Vector2<f64> {
+    Vector2::new(
+        l1 * theta[0].cos() + l2 * (theta[0] + theta[1]).cos(),
+        l1 * theta[0].sin() + l2 * (theta[0] + theta[1]).sin(),
+    )
+}
+
+fn jacobienne_2r(theta: &Vector2<f64>, l1: f64, l2: f64) -> Matrix2<f64> {
+    let (t1, t2) = (theta[0], theta[1]);
+    Matrix2::new(
+        -l1 * t1.sin() - l2 * (t1 + t2).sin(), -l2 * (t1 + t2).sin(),
+         l1 * t1.cos() + l2 * (t1 + t2).cos(),  l2 * (t1 + t2).cos(),
+    )
+}
+
+fn main() {
+    let (l1, l2) = (1.0, 1.0);
+    let cible = Vector2::new(1.2, 0.8);
+    let mut theta = Vector2::new(0.1, 0.1); // estimation initiale
+    let (lambda, tol, max_iter) = (1e-3, 1e-10, 50);
+    let ident = Matrix2::identity();
+
+    for k in 0..max_iter {
+        let e = cible - fk_2r(&theta, l1, l2);
+        let err = e.norm();
+        println!("iter {k:2} : ||e|| = {err:.3e}");
+        if err < tol {
+            println!("converge ! theta = ({:.4}, {:.4})", theta[0], theta[1]);
+            break;
+        }
+        let j = jacobienne_2r(&theta, l1, l2);
+        let jjt = j * j.transpose() + ident * (lambda * lambda);
+        // DLS : robuste meme si J devient mal conditionnee.
+        let delta = j.transpose() * jjt.try_inverse().unwrap() * e;
+        theta += delta;
+    }
+}</code></pre>
+        <p>
+          La norme de l'erreur chute très vite (chaque itération environ carre l'erreur précédente tant qu'on est
+          loin d'une singularité). Le terme <span class="math">λ²I</span> garantit que
+          <code>try_inverse().unwrap()</code> ne panique jamais, même si l'estimation traverse une configuration
+          proche de <span class="math">θ<sub>2</sub>=0</span>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>L'IK va du <strong>cartésien vers l'articulaire</strong> ; plus dure que la FK : solutions multiples,
+          singularités, pas toujours de solution.</li>
+        <li><strong>2R analytique :</strong> <span class="math">cos θ<sub>2</sub> = (x²+y²−L<sub>1</sub>²−L<sub>2</sub>²)/(2L<sub>1</sub>L<sub>2</sub>)</span>,
+          <span class="math">θ<sub>2</sub> = ±acos(…)</span> (coude haut/bas), puis
+          <span class="math">θ<sub>1</sub> = atan2(y,x) − atan2(L<sub>2</sub>sin θ<sub>2</sub>, L<sub>1</sub>+L<sub>2</sub>cos θ<sub>2</sub>)</span>.
+          Atteignable si <span class="math">|L<sub>1</sub>−L<sub>2</sub>| ≤ r ≤ L<sub>1</sub>+L<sub>2</sub></span>.</li>
+        <li><strong>Numérique :</strong> linéarisation <span class="math">Δx = J·Δθ</span> ; Newton
+          <span class="math">Δθ = J<sup>−1</sup>e</span>, pseudo-inverse <span class="math">J<sup>+</sup> = J<sup>T</sup>(JJ<sup>T</sup>)<sup>−1</sup></span>,
+          transposée <span class="math">Δθ = αJ<sup>T</sup>e</span>.</li>
+        <li><strong>Singularités :</strong> <span class="math">det(JJ<sup>T</sup>)→0</span> ; amortir avec DLS/Levenberg–Marquardt
+          <span class="math">Δθ = J<sup>T</sup>(JJ<sup>T</sup> + λ²I)<sup>−1</sup>e</span>.</li>
+        <li><strong>Temps réel :</strong> borner <code>max_iter</code>, warm start avec la solution précédente,
+          amortissement pour la stabilité, types de taille fixe (pas d'allocation).</li>
+        <li><strong>Pièges :</strong> clamper avant <code>acos</code> (NaN), gérer <code>None</code>,
+          convergence non garantie — toujours renvoyer un statut.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-11.html"><span class="lbl">← Précédent</span>Cinématique directe</a>
+    <a class="next" href="chapitre-13.html"><span class="lbl">Suivant →</span>Filtre de Kalman linéaire</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

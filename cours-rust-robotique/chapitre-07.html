@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — Traits &amp; génériques</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>Traits &amp; génériques</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Écrire des fonctions et des structures <strong>génériques</strong> et comprendre la monomorphisation (zéro coût à l'exécution).</li>
+        <li>Définir et implémenter des <strong>traits</strong> (l'équivalent Rust des interfaces), avec méthodes par défaut.</li>
+        <li>Contraindre le générique via des <strong>bornes de traits</strong> (<code>T: Trait</code>, <code>where</code>, <code>impl Trait</code>).</li>
+        <li>Connaître les traits standards utiles : <code>Debug</code>, <code>Clone</code>, <code>Copy</code>, <code>PartialEq</code>, <code>Default</code>, <code>PartialOrd</code>.</li>
+        <li><strong>Surcharger les opérateurs</strong> (<code>+</code>, <code>-</code>, <code>*</code>) pour écrire de l'algèbre linéaire lisible et sûre.</li>
+      </ul>
+    </div>
+
+    <h2>1. Les génériques</h2>
+    <p>
+      En C++ vous connaissez les <em>templates</em>. Rust a un mécanisme très proche dans l'esprit : le
+      <strong>polymorphisme paramétrique</strong>. On écrit du code une seule fois, valable pour tout type
+      <code>T</code>, et le compilateur génère une version spécialisée par type réellement utilisé.
+    </p>
+
+    <h3>1.1 Fonctions génériques</h3>
+    <p>
+      Une fonction qui renvoie le maximum de deux valeurs, quel que soit leur type — pourvu qu'on sache les
+      comparer. La contrainte <code>T: PartialOrd</code> (une <em>borne de trait</em>, cf. §3) dit « <code>T</code>
+      doit savoir se comparer avec <code>&lt;</code>, <code>&gt;</code>, etc. »
+    </p>
+
+    <pre><code class="language-rust">fn max&lt;T: PartialOrd&gt;(a: T, b: T) -&gt; T {
+    if a &gt; b { a } else { b }
+}
+
+fn main() {
+    println!("{}", max(3, 7));       // T = i32  -&gt; 7
+    println!("{}", max(2.5_f64, 1.0)); // T = f64  -&gt; 2.5
+    println!("{}", max('a', 'z'));   // T = char -&gt; z
+}</code></pre>
+
+    <p>
+      Sans la borne <code>: PartialOrd</code>, le code <em>ne compilerait pas</em> : Rust refuse d'utiliser
+      <code>&gt;</code> sur un <code>T</code> dont il ne sait rien. C'est une différence majeure avec les templates C++.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Templates C++ vs génériques Rust.</strong> En C++, un template n'est vérifié qu'au moment de
+        l'instanciation : si vous passez un type sans <code>operator&gt;</code>, l'erreur explose au fond de la
+        bibliothèque, souvent illisible. En Rust, la <em>signature</em> déclare ses exigences (<code>T: PartialOrd</code>) :
+        le corps est vérifié une fois pour toutes, et l'erreur pointe l'appel fautif. Les <em>concepts</em> C++20
+        rapprochent enfin C++ de ce modèle.
+      </p>
+    </div>
+
+    <h3>1.2 Structures génériques</h3>
+    <p>Une structure peut elle aussi être paramétrée par un type. Un point 2D valable pour des entiers comme pour des flottants :</p>
+
+    <pre><code class="language-rust">struct Point&lt;T&gt; {
+    x: T,
+    y: T,
+}
+
+// Un bloc `impl` générique : méthodes valables pour tout T
+impl&lt;T&gt; Point&lt;T&gt; {
+    fn new(x: T, y: T) -&gt; Self {
+        Point { x, y }
+    }
+}
+
+fn main() {
+    let entier = Point::new(1, 2);       // Point&lt;i32&gt;
+    let reel   = Point::new(1.0, 2.0);   // Point&lt;f64&gt;
+    println!("{} {}", entier.x, reel.y);
+}</code></pre>
+
+    <h3>1.3 Monomorphisation : le zéro-coût</h3>
+    <p>
+      À la compilation, Rust <strong>monomorphise</strong> : pour chaque combinaison de types réellement utilisée,
+      il génère une copie spécialisée du code. <code>max(3, 7)</code> produit un <code>max</code> pour <code>i32</code>,
+      <code>max(2.5, 1.0)</code> un <code>max</code> pour <code>f64</code>. À l'exécution, il n'y a
+      <strong>aucun dispatch dynamique, aucune indirection, aucun boxing</strong> : le code généré est identique à
+      celui que vous auriez écrit à la main pour chaque type.
+    </p>
+
+    <div class="callout temps">
+      <p>
+        <strong>Pourquoi c'est capital en temps réel.</strong> La monomorphisation garantit des génériques
+        <em>à coût nul</em> : pas d'allocation cachée, pas d'appel virtuel, temps d'exécution déterministe.
+        Vous pouvez écrire une bibliothèque d'algèbre générique et l'utiliser dans une boucle de contrôle à 1 kHz
+        sans surcoût, exactement comme les templates C++. (Le revers : le binaire grossit, une version par type —
+        rarement un problème en robotique embarquée.)
+      </p>
+    </div>
+
+    <h2>2. Les traits</h2>
+    <p>
+      Un <strong>trait</strong> décrit un ensemble de comportements qu'un type peut fournir. C'est l'équivalent
+      Rust d'une <em>interface</em> (Java) ou d'une <em>classe abstraite purement virtuelle</em> (C++). Contrairement
+      au C++, Rust n'a pas d'héritage de classe : on <em>compose</em> des comportements via des traits.
+    </p>
+
+    <h3>2.1 Définir et implémenter un trait</h3>
+    <pre><code class="language-rust">// Le contrat : « tout Capteur sait donner une mesure »
+trait Capteur {
+    fn lire(&amp;self) -&gt; f64;
+}
+
+struct Thermometre {
+    tension: f64,
+}
+
+// On implémente le trait POUR un type précis
+impl Capteur for Thermometre {
+    fn lire(&amp;self) -&gt; f64 {
+        self.tension * 100.0 - 273.15 // conversion bidon
+    }
+}
+
+fn main() {
+    let t = Thermometre { tension: 3.0 };
+    println!("{:.2} °C", t.lire());
+}</code></pre>
+
+    <h3>2.2 Méthodes par défaut</h3>
+    <p>
+      Un trait peut fournir une <strong>implémentation par défaut</strong>, que chaque type peut réutiliser telle
+      quelle ou redéfinir. Cela ressemble aux méthodes concrètes d'une classe abstraite C++.
+    </p>
+
+    <pre><code class="language-rust">trait Capteur {
+    fn lire(&amp;self) -&gt; f64;
+
+    // Méthode par défaut : s'appuie sur `lire`
+    fn est_actif(&amp;self) -&gt; bool {
+        self.lire().is_finite()
+    }
+}</code></pre>
+
+    <div class="callout note">
+      <p>
+        <strong>Règle d'orphelin.</strong> Pour implémenter un trait pour un type, il faut que <em>le trait</em>
+        ou <em>le type</em> vous appartienne (soit défini dans votre crate). Cela empêche deux bibliothèques de
+        fournir des implémentations contradictoires du même trait pour le même type.
+      </p>
+    </div>
+
+    <h2>3. Bornes de traits</h2>
+    <p>
+      Une <strong>borne</strong> contraint un paramètre générique. Trois syntaxes équivalentes, du plus léger au
+      plus lisible quand les contraintes s'accumulent :
+    </p>
+
+    <pre><code class="language-rust">use std::fmt::Display;
+
+// 1) Borne inline
+fn afficher&lt;T: Display&gt;(x: T) {
+    println!("{}", x);
+}
+
+// 2) Plusieurs bornes avec `+`
+fn afficher_clone&lt;T: Display + Clone&gt;(x: T) {
+    let copie = x.clone();
+    println!("{} {}", x, copie);
+}
+
+// 3) Clause `where` : plus lisible quand il y a beaucoup de bornes
+fn traiter&lt;T, U&gt;(a: T, b: U)
+where
+    T: Display + Clone,
+    U: Display,
+{
+    println!("{} {}", a, b);
+}</code></pre>
+
+    <p>
+      Enfin, <code>impl Trait</code> est un raccourci pour « un type quelconque qui implémente ce trait », en
+      argument comme en valeur de retour :
+    </p>
+
+    <pre><code class="language-rust">// En argument : équivalent à fn afficher&lt;T: Display&gt;(x: T)
+fn afficher(x: impl Display) {
+    println!("{}", x);
+}
+
+// En retour : « je renvoie quelque chose qui implémente Iterator,
+// sans nommer le type concret »
+fn compteur() -&gt; impl Iterator&lt;Item = u32&gt; {
+    (0..5).map(|n| n * 2)
+}</code></pre>
+
+    <h2>4. Traits standards utiles</h2>
+    <p>
+      La bibliothèque standard fournit des traits que l'on active le plus souvent via <code>#[derive(...)]</code> :
+      le compilateur génère l'implémentation pour vous.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Trait</th><th>Rôle</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>Debug</code></td><td>Affichage de débogage avec <code>{:?}</code> / <code>{:#?}</code>.</td></tr>
+        <tr><td><code>Clone</code></td><td>Copie explicite en profondeur via <code>.clone()</code>.</td></tr>
+        <tr><td><code>Copy</code></td><td>Copie implicite bit-à-bit (types simples : entiers, flottants, petites structures).</td></tr>
+        <tr><td><code>PartialEq</code></td><td>Comparaison d'égalité avec <code>==</code> et <code>!=</code>.</td></tr>
+        <tr><td><code>PartialOrd</code></td><td>Comparaison d'ordre avec <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>.</td></tr>
+        <tr><td><code>Default</code></td><td>Valeur « par défaut » via <code>T::default()</code>.</td></tr>
+      </tbody>
+    </table>
+
+    <pre><code class="language-rust">#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+fn main() {
+    let a = Vec2 { x: 1.0, y: 2.0 };
+    let b = a;              // Copy : `a` reste utilisable
+    println!("{:?}", a);    // Debug : Vec2 { x: 1.0, y: 2.0 }
+    println!("{}", a == b); // PartialEq : true
+    let z = Vec2::default(); // Default : Vec2 { x: 0.0, y: 0.0 }
+    println!("{:?}", z);
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong><code>Copy</code> vs <code>Clone</code>.</strong> <code>Copy</code> ne s'applique qu'aux types dont
+        la copie est un simple <code>memcpy</code> (pas de propriété à gérer, donc pas de <code>String</code>, pas de
+        <code>Vec</code>). Dès qu'un type est <code>Copy</code>, l'affectation ne « déplace » plus la valeur : elle la
+        duplique, comme en C++ par défaut. <code>Clone</code>, lui, est explicite et peut être coûteux.
+      </p>
+    </div>
+
+    <h2>5. Surcharge d'opérateurs</h2>
+    <p>
+      En Rust, les opérateurs <em>sont</em> des traits, dans le module <code>std::ops</code>. Implémenter
+      <code>Add</code> pour votre type, c'est donner un sens à <code>+</code>. C'est exactement ce qu'il faut pour
+      écrire de l'algèbre linéaire lisible : <code>a + b</code> plutôt que <code>add(a, b)</code>.
+    </p>
+
+    <h3>5.1 Addition et soustraction de vecteurs</h3>
+    <pre><code class="language-rust">use std::ops::{Add, Sub};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+impl Add for Vec2 {
+    type Output = Vec2; // le type du résultat de a + b
+
+    fn add(self, autre: Vec2) -&gt; Vec2 {
+        Vec2 { x: self.x + autre.x, y: self.y + autre.y }
+    }
+}
+
+impl Sub for Vec2 {
+    type Output = Vec2;
+
+    fn sub(self, autre: Vec2) -&gt; Vec2 {
+        Vec2 { x: self.x - autre.x, y: self.y - autre.y }
+    }
+}
+
+fn main() {
+    let a = Vec2 { x: 1.0, y: 2.0 };
+    let b = Vec2 { x: 3.0, y: 4.0 };
+    let c = a + b; // grâce à la surcharge : Vec2 { x: 4.0, y: 6.0 }
+    let d = b - a; // Vec2 { x: 2.0, y: 2.0 }
+    println!("{:?}  {:?}", c, d);
+}</code></pre>
+
+    <h3>5.2 Mise à l'échelle par un scalaire</h3>
+    <p>
+      <code>Mul&lt;f64&gt;</code> permet de multiplier un <code>Vec2</code> par un flottant. On paramètre le trait par
+      le type de l'opérande de droite : <code>Mul&lt;f64&gt;</code> se lit « je sais me multiplier par un <code>f64</code> ».
+    </p>
+
+    <pre><code class="language-rust">use std::ops::Mul;
+
+impl Mul&lt;f64&gt; for Vec2 {
+    type Output = Vec2;
+
+    fn mul(self, k: f64) -&gt; Vec2 {
+        Vec2 { x: self.x * k, y: self.y * k }
+    }
+}
+
+fn main() {
+    let v = Vec2 { x: 1.0, y: -2.0 };
+    let w = v * 0.5; // Vec2 { x: 0.5, y: -1.0 }
+    println!("{:?}", w);
+}</code></pre>
+
+    <div class="callout note">
+      <p>
+        <strong>L'ordre compte.</strong> <code>v * 0.5</code> appelle <code>Vec2::mul(v, 0.5)</code>. Pour écrire
+        <code>0.5 * v</code>, il faudrait implémenter <code>Mul&lt;Vec2&gt; for f64</code> : Rust ne devine pas la
+        commutativité, chaque sens est une implémentation distincte.
+      </p>
+    </div>
+
+    <h3>5.3 Produit matrice-vecteur</h3>
+    <p>Une matrice 2×2 qui sait transformer un <code>Vec2</code> — le cœur d'une rotation ou d'un changement de repère :</p>
+
+    <pre><code class="language-rust">#[derive(Debug, Clone, Copy)]
+struct Mat2 {
+    // lignes
+    a: f64, b: f64,
+    c: f64, d: f64,
+}
+
+impl Mul&lt;Vec2&gt; for Mat2 {
+    type Output = Vec2;
+
+    fn mul(self, v: Vec2) -&gt; Vec2 {
+        Vec2 {
+            x: self.a * v.x + self.b * v.y,
+            y: self.c * v.x + self.d * v.y,
+        }
+    }
+}
+
+fn main() {
+    // Rotation de 90° : (x, y) -&gt; (-y, x)
+    let rot = Mat2 { a: 0.0, b: -1.0, c: 1.0, d: 0.0 };
+    let v = Vec2 { x: 1.0, y: 0.0 };
+    println!("{:?}", rot * v); // Vec2 { x: 0.0, y: 1.0 }
+}</code></pre>
+
+    <h3>5.4 Un trait maison : le produit scalaire</h3>
+    <p>Rien n'oblige à réutiliser un trait standard : on définit le sien pour exprimer un concept métier.</p>
+
+    <pre><code class="language-rust">trait ProduitScalaire {
+    fn dot(&amp;self, autre: &amp;Self) -&gt; f64;
+}
+
+impl ProduitScalaire for Vec2 {
+    fn dot(&amp;self, autre: &amp;Vec2) -&gt; f64 {
+        self.x * autre.x + self.y * autre.y
+    }
+}
+
+fn main() {
+    let a = Vec2 { x: 1.0, y: 2.0 };
+    let b = Vec2 { x: 3.0, y: 4.0 };
+    println!("{}", a.dot(&amp;b)); // 1*3 + 2*4 = 11
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Une bibliothèque d'algèbre réutilisable et sûre.</strong> En combinant génériques, traits standards
+        (<code>Copy</code>, <code>PartialEq</code>) et surcharge d'opérateurs (<code>std::ops</code>), vous construisez
+        une algèbre linéaire qui <em>se lit comme les maths</em> (<code>let c = a + b;</code>), sans surcoût runtime
+        grâce à la monomorphisation, et dont le compilateur vérifie la cohérence des types. C'est exactement le socle
+        d'un contrôleur robotique fiable — et c'est ainsi que sont bâties des caisses comme <code>nalgebra</code> ou
+        <code>glam</code>.
+      </p>
+    </div>
+
+    <h2>6. Généricité numérique (aperçu)</h2>
+    <p>
+      Vous voudrez souvent écrire une algèbre valable à la fois pour <code>f32</code> (léger, embarqué) et
+      <code>f64</code> (précis). Naïvement, on tente un <code>Vec2&lt;T&gt;</code> générique… mais on bute vite :
+      Rust ne connaît pas la constante « zéro » ou l'opération « racine carrée » pour un <code>T</code> abstrait.
+    </p>
+
+    <pre><code class="language-rust">use std::ops::Add;
+
+// On doit borner T par tout ce dont le corps a besoin.
+#[derive(Debug, Clone, Copy)]
+struct Vec2&lt;T&gt; {
+    x: T,
+    y: T,
+}
+
+impl&lt;T: Add&lt;Output = T&gt; + Copy&gt; Add for Vec2&lt;T&gt; {
+    type Output = Vec2&lt;T&gt;;
+
+    fn add(self, autre: Vec2&lt;T&gt;) -&gt; Vec2&lt;T&gt; {
+        Vec2 { x: self.x + autre.x, y: self.y + autre.y }
+    }
+}</code></pre>
+
+    <p>
+      Pour aller plus loin (avoir <code>0</code>, <code>1</code>, <code>sqrt</code>… de façon générique sur les types
+      numériques), la caisse <strong><code>num-traits</code></strong> fournit des traits prêts à l'emploi comme
+      <code>Zero</code>, <code>One</code> ou <code>Float</code> :
+    </p>
+
+    <pre><code class="language-rust">// Cargo.toml : num-traits = "0.2"
+use num_traits::Float; // Float couvre f32 ET f64
+
+fn norme&lt;T: Float&gt;(x: T, y: T) -&gt; T {
+    (x * x + y * y).sqrt()
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        Restez pragmatique : tant que votre boucle de contrôle tourne en <code>f64</code>, un type concret suffit
+        et évite un enfer de bornes. Ne passez au générique numérique (via <code>num-traits</code>) que le jour où
+        vous devez vraiment supporter <code>f32</code> et <code>f64</code> avec le même code.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — <code>Add</code> pour <code>Vec3</code></h3>
+      <p>
+        Définissez une structure <code>Vec3</code> à trois champs <code>f64</code> (<code>x</code>, <code>y</code>,
+        <code>z</code>), dérivez <code>Debug</code> et <code>Copy</code>, puis implémentez <code>Add</code> pour que
+        <code>a + b</code> additionne composante par composante.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use std::ops::Add;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Vec3 {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl Add for Vec3 {
+    type Output = Vec3;
+
+    fn add(self, autre: Vec3) -&gt; Vec3 {
+        Vec3 {
+            x: self.x + autre.x,
+            y: self.y + autre.y,
+            z: self.z + autre.z,
+        }
+    }
+}
+
+fn main() {
+    let a = Vec3 { x: 1.0, y: 2.0, z: 3.0 };
+    let b = Vec3 { x: 4.0, y: 5.0, z: 6.0 };
+    println!("{:?}", a + b); // Vec3 { x: 5.0, y: 7.0, z: 9.0 }
+}</code></pre>
+        <p>
+          Le champ <code>type Output = Vec3;</code> déclare le type de retour de l'opérateur. Comme <code>Vec3</code>
+          est <code>Copy</code>, <code>a</code> et <code>b</code> restent utilisables après l'addition.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Un trait <code>Norme</code></h3>
+      <p>
+        Définissez un trait <code>Norme</code> avec une méthode <code>norme(&amp;self) -&gt; f64</code>, puis
+        implémentez-le pour <code>Vec2</code> et <code>Vec3</code> (norme euclidienne, c.-à-d. la racine de la somme
+        des carrés).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">trait Norme {
+    fn norme(&amp;self) -&gt; f64;
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Vec2 { x: f64, y: f64 }
+
+#[derive(Debug, Clone, Copy)]
+struct Vec3 { x: f64, y: f64, z: f64 }
+
+impl Norme for Vec2 {
+    fn norme(&amp;self) -&gt; f64 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+}
+
+impl Norme for Vec3 {
+    fn norme(&amp;self) -&gt; f64 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+}
+
+fn main() {
+    let a = Vec2 { x: 3.0, y: 4.0 };
+    let b = Vec3 { x: 1.0, y: 2.0, z: 2.0 };
+    println!("{}", a.norme()); // 5
+    println!("{}", b.norme()); // 3
+}</code></pre>
+        <p>
+          Un même trait, deux implémentations distinctes. On peut ensuite écrire une fonction générique
+          <code>fn plus_long&lt;T: Norme&gt;(a: &amp;T, b: &amp;T)</code> qui compare la norme de deux vecteurs, quel que
+          soit leur type.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Fonction générique <code>plus_grand</code></h3>
+      <p>
+        Écrivez une fonction générique <code>plus_grand&lt;T: PartialOrd&gt;(a: T, b: T) -&gt; T</code> qui renvoie
+        le plus grand des deux arguments. Testez-la avec des entiers, des flottants et des <code>char</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn plus_grand&lt;T: PartialOrd&gt;(a: T, b: T) -&gt; T {
+    if a &gt;= b { a } else { b }
+}
+
+fn main() {
+    println!("{}", plus_grand(3, 7));        // 7
+    println!("{}", plus_grand(2.5_f64, 1.0)); // 2.5
+    println!("{}", plus_grand('a', 'z'));    // z
+}</code></pre>
+        <p>
+          La borne <code>T: PartialOrd</code> autorise l'usage de <code>&gt;=</code> dans le corps. Sans elle, le
+          compilateur refuse : il ne suppose <em>jamais</em> qu'un type inconnu sait se comparer. Grâce à la
+          monomorphisation, chaque appel produit une version spécialisée, sans coût à l'exécution.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — <code>Mul&lt;f64&gt;</code> pour mettre à l'échelle un <code>Vec2</code></h3>
+      <p>
+        Implémentez <code>Mul&lt;f64&gt;</code> pour <code>Vec2</code> afin d'écrire <code>v * k</code>, qui multiplie
+        chaque composante par le scalaire <code>k</code>. Vérifiez que <code>v * 2.0</code> double bien le vecteur.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use std::ops::Mul;
+
+#[derive(Debug, Clone, Copy)]
+struct Vec2 { x: f64, y: f64 }
+
+impl Mul&lt;f64&gt; for Vec2 {
+    type Output = Vec2;
+
+    fn mul(self, k: f64) -&gt; Vec2 {
+        Vec2 { x: self.x * k, y: self.y * k }
+    }
+}
+
+fn main() {
+    let v = Vec2 { x: 1.5, y: -3.0 };
+    println!("{:?}", v * 2.0); // Vec2 { x: 3.0, y: -6.0 }
+}</code></pre>
+        <p>
+          <code>Mul&lt;f64&gt;</code> précise le type de l'opérande droit. Pour obtenir aussi <code>k * v</code>, il
+          faudrait ajouter <code>impl Mul&lt;Vec2&gt; for f64</code> : Rust traite chaque sens séparément.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Les <strong>génériques</strong> (<code>fn f&lt;T&gt;</code>, <code>struct S&lt;T&gt;</code>) écrivent du code valable pour plusieurs types ; la <strong>monomorphisation</strong> les rend à coût nul — crucial en temps réel.</li>
+        <li>Un <strong>trait</strong> est une interface : on le <em>définit</em>, on l'<em>implémente pour un type</em>, et il peut fournir des <strong>méthodes par défaut</strong>. Pas d'héritage de classe : on compose.</li>
+        <li>Les <strong>bornes de traits</strong> (<code>T: Trait</code>, <code>where</code>, <code>impl Trait</code>) déclarent les exigences d'un générique — l'erreur pointe l'appel fautif, pas le fond de la bibliothèque.</li>
+        <li>Traits standards à <code>#[derive(...)]</code> : <code>Debug</code>, <code>Clone</code>, <code>Copy</code>, <code>PartialEq</code>, <code>PartialOrd</code>, <code>Default</code>.</li>
+        <li>La <strong>surcharge d'opérateurs</strong> via <code>std::ops</code> (<code>Add</code>, <code>Sub</code>, <code>Mul</code>) rend l'algèbre lisible : <code>let c = a + b;</code>, mise à l'échelle scalaire, produit matrice-vecteur.</li>
+        <li>Pour être générique sur <code>f32</code>/<code>f64</code>, bornez le type ou utilisez la caisse <code>num-traits</code> — mais ne le faites que si le besoin est réel.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Collections : Vec, tableaux, slices</a>
+    <a class="next" href="chapitre-08.html"><span class="lbl">Suivant →</span>Gestion d'erreurs</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

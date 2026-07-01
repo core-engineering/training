@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 10 — Algèbre linéaire appliquée</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 10</span><br>Algèbre linéaire appliquée</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Revoir vecteurs et matrices avec des notations rigoureuses, et comprendre pourquoi ils sont au cœur de la robotique.</li>
+        <li>Maîtriser les opérations de base : addition, produit par un scalaire, produit scalaire, norme.</li>
+        <li>Formaliser produit matrice-vecteur et matrice-matrice (dimensions, complexité).</li>
+        <li>Connaître transposée, identité, déterminant et inverse — avec les formules explicites 2×2 et 3×3.</li>
+        <li>Comprendre pourquoi on <em>résout</em> un système linéaire plutôt que d'inverser une matrice.</li>
+        <li>Implémenter une <code>Mat3</code> « maison » en Rust, puis basculer sur <code>nalgebra</code> pour la pratique.</li>
+        <li>Choisir les bons types en contexte temps réel : taille fixe sur la pile vs taille dynamique sur le tas.</li>
+      </ul>
+    </div>
+
+    <p>
+      Nous entamons la <strong>Partie B</strong> : les applications. Jusqu'ici on a bâti des outils
+      (types, ownership, modules). À partir de maintenant, on résout de vrais problèmes de robotique,
+      et le premier langage de la robotique, c'est l'algèbre linéaire. Position d'un bras articulé,
+      orientation d'un drone, fusion de capteurs, filtre de Kalman : tout se ramène à des vecteurs et
+      des matrices. Ce chapitre pose des bases <strong>mathématiquement rigoureuses</strong> puis les
+      traduit en Rust correct.
+    </p>
+
+    <h2>1. Rappels : vecteurs, matrices, notations</h2>
+
+    <p>
+      Un <strong>vecteur</strong> de dimension <em>n</em> est une liste ordonnée de <em>n</em> réels.
+      On le note en colonne, en gras minuscule, avec ses composantes indicées à partir de 1 (convention
+      mathématique ; en Rust on indexera à partir de 0) :
+    </p>
+
+    <div class="math">
+      v = (v1, v2, ..., vn)ᵀ  ∈ ℝⁿ
+    </div>
+
+    <p>
+      Une <strong>matrice</strong> <em>m×n</em> (m lignes, n colonnes) est un tableau rectangulaire de
+      réels, noté en gras majuscule. L'élément à la ligne <em>i</em> et la colonne <em>j</em> est
+      <code>A[i][j]</code>, ou en notation mathématique a<sub>ij</sub> :
+    </p>
+
+    <div class="math">
+          | a11  a12  a13 |
+      A = | a21  a22  a23 |     A ∈ ℝ^(m×n)   (ici m = 3, n = 3)
+          | a31  a32  a33 |
+    </div>
+
+    <p>
+      Un vecteur colonne de dimension <em>n</em> est simplement une matrice <em>n×1</em>. La
+      <strong>dimension</strong> est capitale : la plupart des erreurs (et des <em>panics</em>) viennent
+      de dimensions incompatibles. En robotique on rencontre surtout :
+    </p>
+    <ul>
+      <li><strong>Vecteurs 3D</strong> (ℝ³) : position, vitesse, force, axe de rotation.</li>
+      <li><strong>Matrices 3×3</strong> : matrices de rotation, tenseur d'inertie, matrice de covariance.</li>
+      <li><strong>Matrices 4×4</strong> : transformations homogènes (rotation + translation), voir chapitre 11.</li>
+    </ul>
+
+    <h3>Pourquoi l'algèbre linéaire est-elle partout ?</h3>
+    <p>
+      Deux grandes raisons. D'abord les <strong>transformations géométriques</strong> : faire tourner un
+      repère, composer les articulations d'un bras, projeter un point de caméra — ce sont des produits
+      matrice-vecteur. Ensuite l'<strong>estimation d'état</strong> : un filtre (Kalman, moindres carrés)
+      manipule des vecteurs d'état et des matrices de covariance à chaque cycle. Une boucle de contrôle à
+      1 kHz peut donc effectuer des milliers de produits matriciels par seconde : il faut que ce soit à la
+      fois <em>juste</em> et <em>rapide</em>.
+    </p>
+
+    <h2>2. Opérations de base</h2>
+
+    <p>
+      L'<strong>addition</strong> de deux vecteurs (ou matrices) de <em>mêmes dimensions</em> se fait
+      composante par composante. Le <strong>produit par un scalaire</strong> λ multiplie chaque composante :
+    </p>
+
+    <div class="math">
+      (u + v)i = ui + vi
+      (λ·v)i   = λ · vi
+    </div>
+
+    <p>
+      Le <strong>produit scalaire</strong> (dot product) de deux vecteurs de même dimension renvoie un
+      réel. C'est la brique de la projection et de la mesure d'angle :
+    </p>
+
+    <div class="math">
+      u · v = Σ (i=1..n) ui·vi = u1·v1 + u2·v2 + ... + un·vn
+
+      u · v = ‖u‖ · ‖v‖ · cos(θ)   (θ = angle entre u et v)
+    </div>
+
+    <p>
+      La <strong>norme euclidienne</strong> (longueur) d'un vecteur se déduit du produit scalaire de
+      <em>v</em> avec lui-même :
+    </p>
+
+    <div class="math">
+      ‖v‖ = √(v · v) = √( v1² + v2² + ... + vn² )
+    </div>
+
+    <div class="callout note">
+      <p>
+        Un vecteur de norme 1 est dit <em>unitaire</em>. On <strong>normalise</strong> un vecteur non nul
+        en le divisant par sa norme : <code>v̂ = v / ‖v‖</code>. Utile pour un axe de rotation ou une
+        direction de commande.
+      </p>
+    </div>
+
+    <h2>3. Produit matrice-vecteur et matrice-matrice</h2>
+
+    <p>
+      Le <strong>produit matrice-vecteur</strong> A·v n'est défini que si le nombre de colonnes de A égale
+      la dimension de v. Si A est <em>m×n</em> et v ∈ ℝⁿ, alors A·v ∈ ℝᵐ. Chaque composante du résultat
+      est le produit scalaire d'une <em>ligne</em> de A avec v :
+    </p>
+
+    <div class="math">
+      (A·v)i = Σ (j=1..n) aij · vj
+    </div>
+
+    <p>
+      Le <strong>produit matrice-matrice</strong> C = A·B n'est défini que si le nombre de colonnes de A
+      égale le nombre de lignes de B. Si A est <em>m×p</em> et B est <em>p×n</em>, alors C est <em>m×n</em>.
+      L'élément c<sub>ij</sub> est le produit scalaire de la ligne <em>i</em> de A par la colonne <em>j</em> de B :
+    </p>
+
+    <div class="math">
+      cij = Σ (k=1..p) aik · bkj
+
+      (m × p) · (p × n) → (m × n)    // les p « du milieu » doivent coïncider
+    </div>
+
+    <p>
+      <strong>Complexité.</strong> Un produit matrice-vecteur <em>m×n</em> coûte O(m·n) multiplications.
+      Un produit matrice-matrice <em>m×p</em> par <em>p×n</em> coûte O(m·p·n) : pour des matrices <em>n×n</em>,
+      c'est O(n³) avec l'algorithme naïf. Pour une 3×3, c'est 27 multiplications — négligeable ; mais dans
+      une boucle temps réel, ces constantes s'additionnent.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Le produit matriciel n'est PAS commutatif :</strong> en général A·B ≠ B·A, et l'un peut
+        même être défini quand l'autre ne l'est pas (dimensions). En robotique, l'ordre encode la
+        <em>séquence</em> des transformations : « tourner puis translater » n'est pas « translater puis
+        tourner ». Inversez l'ordre et le robot part ailleurs.
+      </p>
+    </div>
+
+    <h2>4. Transposée, identité, déterminant, inverse</h2>
+
+    <p>
+      La <strong>transposée</strong> Aᵀ échange lignes et colonnes : l'élément (i, j) de Aᵀ est
+      l'élément (j, i) de A. Une matrice <em>m×n</em> devient <em>n×m</em>.
+    </p>
+
+    <p>
+      La <strong>matrice identité</strong> I<sub>n</sub> est carrée, avec des 1 sur la diagonale et des 0
+      ailleurs. Elle est neutre pour le produit : A·I = I·A = A.
+    </p>
+
+    <div class="math">
+            | 1  0  0 |
+      I₃ =  | 0  1  0 |
+            | 0  0  1 |
+    </div>
+
+    <p>
+      Le <strong>déterminant</strong> det(A) est un scalaire défini pour les matrices carrées. Il mesure le
+      facteur d'échelle des volumes sous la transformation. Fait clé : <strong>A est inversible si et
+      seulement si det(A) ≠ 0.</strong>
+    </p>
+
+    <div class="math">
+      // Cas 2×2
+      A = | a  b |      det(A) = a·d − b·c
+          | c  d |
+    </div>
+
+    <div class="math">
+      // Cas 3×3 (développement selon la première ligne, règle de Sarrus)
+      A = | a  b  c |
+          | d  e  f |
+          | g  h  i |
+
+      det(A) = a·(e·i − f·h) − b·(d·i − f·g) + c·(d·h − e·g)
+    </div>
+
+    <p>
+      La <strong>matrice inverse</strong> A⁻¹ (quand elle existe) vérifie A·A⁻¹ = A⁻¹·A = I. Elle « annule »
+      la transformation. Formule 2×2 explicite (l'inverse existe ssi det ≠ 0) :
+    </p>
+
+    <div class="math">
+      A = | a  b |     A⁻¹ = (1 / det(A)) · |  d  −b |
+          | c  d |                          | −c   a |
+    </div>
+
+    <p>
+      Pour la 3×3, l'inverse vaut (1/det) fois la transposée de la matrice des cofacteurs (comatrice).
+      C'est calculable à la main mais fastidieux et numériquement fragile — d'où la section suivante.
+    </p>
+
+    <h2>5. Résoudre plutôt qu'inverser</h2>
+
+    <p>
+      On veut souvent trouver <em>x</em> tel que A·x = b (par exemple : quelles vitesses articulaires
+      donnent telle vitesse d'effecteur ?). La tentation est d'écrire x = A⁻¹·b. <strong>Mauvaise idée
+      en pratique.</strong>
+    </p>
+    <ul>
+      <li><strong>Coût.</strong> Calculer A⁻¹ puis A⁻¹·b fait plus d'opérations que résoudre directement.</li>
+      <li><strong>Précision.</strong> L'inversion explicite accumule des erreurs d'arrondi et se comporte
+        très mal si A est <em>mal conditionnée</em> (presque singulière). Une résolution par décomposition
+        (LU, QR, Cholesky) est plus stable.</li>
+      <li><strong>Robustesse.</strong> Les bibliothèques exposent des solveurs (<code>lu().solve(&b)</code>)
+        conçus exactement pour ça.</li>
+    </ul>
+    <p>
+      Règle : n'inversez une matrice que si vous avez réellement besoin de la matrice inverse elle-même
+      (rare). Pour résoudre un système, utilisez un solveur. On y revient au chapitre sur la cinématique
+      inverse.
+    </p>
+
+    <h2>6. Approche 1 — une <code>Mat3</code> « maison »</h2>
+
+    <p>
+      Pour comprendre ce qui se passe sous le capot, implémentons une matrice 3×3 avec un tableau
+      <code>[[f64; 3]; 3]</code> — trois lignes de trois <code>f64</code>. On choisit <code>f64</code> et
+      pas <code>f32</code> : la précision double limite l'accumulation d'erreurs dans les produits et les
+      déterminants.
+    </p>
+
+    <pre><code class="language-rust">/// Matrice 3×3 stockée en lignes : data[ligne][colonne].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Mat3 {
+    data: [[f64; 3]; 3],
+}
+
+impl Mat3 {
+    /// Constructeur direct à partir d'un tableau 3×3.
+    fn new(data: [[f64; 3]; 3]) -> Self {
+        Mat3 { data }
+    }
+
+    /// Matrice identité I₃.
+    fn identity() -> Self {
+        Mat3 {
+            data: [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    /// Produit matrice-vecteur : A·v, avec v ∈ ℝ³.
+    /// Chaque composante = produit scalaire d'une ligne par v.
+    fn mul_vec(&self, v: [f64; 3]) -> [f64; 3] {
+        let mut out = [0.0; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                out[i] += self.data[i][j] * v[j];
+            }
+        }
+        out
+    }
+
+    /// Produit matrice-matrice : C = A·B.
+    /// c[i][j] = Σ_k a[i][k] · b[k][j]
+    fn mul_mat(&self, other: &Mat3) -> Mat3 {
+        let mut out = [[0.0; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                for k in 0..3 {
+                    out[i][j] += self.data[i][k] * other.data[k][j];
+                }
+            }
+        }
+        Mat3 { data: out }
+    }
+
+    /// Transposée : (Aᵀ)[i][j] = A[j][i].
+    fn transpose(&self) -> Mat3 {
+        let mut out = [[0.0; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                out[i][j] = self.data[j][i];
+            }
+        }
+        Mat3 { data: out }
+    }
+
+    /// Déterminant 3×3 (règle de Sarrus / cofacteurs 1re ligne).
+    fn det(&self) -> f64 {
+        let m = &self.data;
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    }
+
+    /// Inverse : renvoie None si la matrice est (quasi) singulière.
+    /// A⁻¹ = (1/det) · comatriceᵀ.
+    fn inverse(&self) -> Option<Mat3> {
+        let d = self.det();
+        // Seuil pour éviter les divisions par un déterminant ~0.
+        if d.abs() < 1e-12 {
+            return None;
+        }
+        let inv_d = 1.0 / d;
+        let m = &self.data;
+
+        // Cofacteurs, déjà transposés (adjugate).
+        let mut out = [[0.0; 3]; 3];
+        out[0][0] =  (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * inv_d;
+        out[0][1] = -(m[0][1] * m[2][2] - m[0][2] * m[2][1]) * inv_d;
+        out[0][2] =  (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * inv_d;
+        out[1][0] = -(m[1][0] * m[2][2] - m[1][2] * m[2][0]) * inv_d;
+        out[1][1] =  (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * inv_d;
+        out[1][2] = -(m[0][0] * m[1][2] - m[0][2] * m[1][0]) * inv_d;
+        out[2][0] =  (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * inv_d;
+        out[2][1] = -(m[0][0] * m[2][1] - m[0][1] * m[2][0]) * inv_d;
+        out[2][2] =  (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv_d;
+        Some(Mat3 { data: out })
+    }
+}
+
+fn main() {
+    let a = Mat3::new([
+        [2.0, 0.0, 1.0],
+        [1.0, 3.0, 2.0],
+        [1.0, 0.0, 1.0],
+    ]);
+
+    println!("det(A) = {}", a.det());        // det(A) = 3
+    let v = a.mul_vec([1.0, 2.0, 3.0]);
+    println!("A·v = {:?}", v);               // A·v = [5.0, 13.0, 4.0]
+
+    match a.inverse() {
+        Some(inv) => {
+            // Vérification : A·A⁻¹ doit valoir (numériquement) l'identité.
+            let prod = a.mul_mat(&inv);
+            println!("A·A⁻¹ ≈ {:?}", prod.data);
+        }
+        None => println!("Matrice singulière, pas d'inverse."),
+    }
+}</code></pre>
+
+    <p>
+      Notez le retour <code>Option&lt;Mat3&gt;</code> : c'est la façon idiomatique en Rust d'exprimer
+      « peut ne pas exister ». Le C renverrait un code d'erreur ou écraserait un pointeur ; ici, l'absence
+      d'inverse est dans le type, et le compilateur force l'appelant à traiter le cas <code>None</code>.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Ne comparez jamais un déterminant à <code>0.0</code> exact.</strong> Avec des
+        <code>f64</code>, un déterminant théoriquement nul ressort à <code>1e-16</code> près. On teste
+        <code>d.abs() &lt; epsilon</code> avec un seuil adapté à l'échelle du problème.
+      </p>
+    </div>
+
+    <h2>7. Approche 2 — <code>nalgebra</code> (celle qu'on utilisera)</h2>
+
+    <p>
+      La <code>Mat3</code> maison est pédagogique, mais en production on utilise
+      <a href="chapitre-09.html"><code>nalgebra</code></a>. Elle offre des types de taille fixe
+      (<code>Matrix3</code>, <code>Vector3</code>, <code>Matrix4</code>…), des opérateurs surchargés,
+      des décompositions robustes et une inversion numériquement fiable via <code>try_inverse</code>
+      (qui renvoie <code>Option</code>, exactement notre convention).
+    </p>
+
+    <pre><code class="language-rust">use nalgebra::{Matrix3, Vector3};
+
+fn main() {
+    // Attention : Matrix3::new remplit LIGNE par ligne (row-major à la saisie),
+    // même si le stockage interne de nalgebra est column-major.
+    let a = Matrix3::new(
+        2.0, 0.0, 1.0,
+        1.0, 3.0, 2.0,
+        1.0, 0.0, 1.0,
+    );
+    let v = Vector3::new(1.0, 2.0, 3.0);
+
+    // Opérateurs naturels : produit matrice-vecteur, matrice-matrice.
+    let av: Vector3&lt;f64&gt; = a * v;          // [5, 13, 4]
+    let a2: Matrix3&lt;f64&gt; = a * a;           // produit matriciel
+    let at = a.transpose();
+    let d = a.determinant();               // 3.0
+
+    println!("A·v = {}", av);
+    println!("det(A) = {}", d);
+
+    // Inversion sûre : Option<Matrix3>.
+    match a.try_inverse() {
+        Some(inv) => {
+            let check = a * inv;           // ≈ identité
+            println!("A·A⁻¹ ≈\n{}", check);
+        }
+        None => println!("A n'est pas inversible."),
+    }
+
+    // Pour RÉSOUDRE A·x = b, on ne fait pas x = a.try_inverse() * b :
+    // on utilise une décomposition, plus stable.
+    let b = Vector3::new(5.0, 13.0, 4.0);
+    if let Some(x) = a.lu().solve(&b) {
+        println!("x = {}", x);             // ≈ [1, 2, 3]
+    }
+}</code></pre>
+
+    <p>
+      En quelques lignes on obtient produit, transposée, déterminant, inverse <em>et</em> un solveur LU.
+      C'est plus court, plus rapide (code optimisé, éventuellement vectorisé) et plus sûr numériquement
+      que notre version maison. La <code>Mat3</code> reste utile pour <em>comprendre</em> ; <code>nalgebra</code>
+      pour <em>produire</em>.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <code>try_inverse</code> suit exactement la même logique que notre <code>inverse -&gt; Option</code> :
+        <code>Some</code> si inversible, <code>None</code> sinon. Le pattern <code>Option</code> est le fil
+        rouge de la gestion d'erreur en Rust — vous le retrouverez partout.
+      </p>
+    </div>
+
+    <div class="callout temps">
+      <p>
+        <strong>Temps réel : taille statique sur la pile vs dynamique sur le tas.</strong>
+        <code>Matrix3</code>, <code>Matrix4</code> et <code>Vector3</code> ont une taille connue à la
+        compilation : ils sont alloués <em>sur la pile</em>, sans <code>malloc</code>, sans indirection,
+        et le compilateur peut dérouler et vectoriser les boucles. À l'inverse, <code>DMatrix</code> /
+        <code>DVector</code> ont une taille dynamique, stockée <em>sur le tas</em> : allocation, cache moins
+        prévisible, coût non déterministe — inacceptable dans une boucle de contrôle à cadence fixe.
+        <strong>Règle :</strong> dans la boucle temps réel, n'utilisez que des tailles statiques
+        (<code>Matrix3</code>/<code>Matrix4</code>). Réservez <code>DMatrix</code> à l'initialisation ou au
+        code hors boucle critique.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Produit scalaire et norme</h3>
+      <p>
+        Écris deux fonctions <code>dot(u: [f64; 3], v: [f64; 3]) -&gt; f64</code> et
+        <code>norm(v: [f64; 3]) -&gt; f64</code>. La norme doit s'exprimer à partir de <code>dot</code>.
+        Teste sur <code>u = [1, 0, 0]</code>, <code>v = [0, 2, 0]</code> (produit scalaire nul, vecteurs
+        orthogonaux) et vérifie que <code>norm([3, 4, 0]) == 5</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn dot(u: [f64; 3], v: [f64; 3]) -> f64 {
+    let mut s = 0.0;
+    for i in 0..3 {
+        s += u[i] * v[i];
+    }
+    s
+}
+
+/// ‖v‖ = √(v · v)
+fn norm(v: [f64; 3]) -> f64 {
+    dot(v, v).sqrt()
+}
+
+fn main() {
+    let u = [1.0, 0.0, 0.0];
+    let v = [0.0, 2.0, 0.0];
+    println!("u·v = {}", dot(u, v));      // 0  (orthogonaux)
+    println!("‖(3,4,0)‖ = {}", norm([3.0, 4.0, 0.0])); // 5
+}</code></pre>
+        <p>
+          <code>norm</code> réutilise <code>dot</code> : moins de code, moins de risque d'erreur. La
+          méthode <code>.sqrt()</code> est fournie par le type <code>f64</code>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Produit matrice 2×2 par vecteur (maison)</h3>
+      <p>
+        Définis une <code>struct Mat2 { data: [[f64; 2]; 2] }</code> avec une méthode
+        <code>mul_vec(&amp;self, v: [f64; 2]) -&gt; [f64; 2]</code>. Vérifie sur la matrice de rotation
+        d'angle 90° <code>[[0, -1], [1, 0]]</code> appliquée à <code>[1, 0]</code> : on doit obtenir
+        <code>[0, 1]</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">#[derive(Debug, Clone, Copy)]
+struct Mat2 {
+    data: [[f64; 2]; 2],
+}
+
+impl Mat2 {
+    fn mul_vec(&self, v: [f64; 2]) -> [f64; 2] {
+        let mut out = [0.0; 2];
+        for i in 0..2 {
+            for j in 0..2 {
+                out[i] += self.data[i][j] * v[j];
+            }
+        }
+        out
+    }
+}
+
+fn main() {
+    // Rotation de +90° dans le plan.
+    let rot = Mat2 { data: [[0.0, -1.0], [1.0, 0.0]] };
+    let r = rot.mul_vec([1.0, 0.0]);
+    println!("{:?}", r); // [0.0, 1.0]  → l'axe x devient l'axe y
+}</code></pre>
+        <p>
+          Le motif est identique à <code>Mat3::mul_vec</code> : chaque composante de sortie est le produit
+          scalaire d'une ligne par <code>v</code>. Une rotation de +90° envoie bien x sur y.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Déterminant et inverse d'une 2×2 avec <code>Option</code></h3>
+      <p>
+        Ajoute à <code>Mat2</code> une méthode <code>det(&amp;self) -&gt; f64</code> et une méthode
+        <code>inverse(&amp;self) -&gt; Option&lt;Mat2&gt;</code> qui renvoie <code>None</code> si le
+        déterminant est (quasi) nul. Applique la formule 2×2 explicite. Teste sur une matrice inversible
+        et sur une matrice singulière (deux lignes proportionnelles).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">impl Mat2 {
+    fn det(&self) -> f64 {
+        // det = a·d − b·c
+        self.data[0][0] * self.data[1][1]
+            - self.data[0][1] * self.data[1][0]
+    }
+
+    fn inverse(&self) -> Option<Mat2> {
+        let d = self.det();
+        if d.abs() < 1e-12 {
+            return None; // singulière
+        }
+        let inv_d = 1.0 / d;
+        let a = self.data[0][0];
+        let b = self.data[0][1];
+        let c = self.data[1][0];
+        let dd = self.data[1][1];
+        // A⁻¹ = (1/det) · [[ d, −b], [−c, a]]
+        Some(Mat2 {
+            data: [
+                [ dd * inv_d, -b * inv_d],
+                [ -c * inv_d,  a * inv_d],
+            ],
+        })
+    }
+}
+
+fn main() {
+    let m = Mat2 { data: [[4.0, 7.0], [2.0, 6.0]] };
+    println!("det = {}", m.det());        // 10
+    println!("{:?}", m.inverse());        // Some(...)
+
+    let sing = Mat2 { data: [[1.0, 2.0], [2.0, 4.0]] };
+    println!("{:?}", sing.inverse());     // None (det = 0)
+}</code></pre>
+        <p>
+          Le seuil <code>1e-12</code> évite d'inverser une matrice numériquement singulière. Le type de
+          retour <code>Option</code> rend l'échec impossible à ignorer.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Refaire l'inverse avec <code>nalgebra</code> et comparer</h3>
+      <p>
+        Reprends la matrice de l'exercice 3 (<code>[[4, 7], [2, 6]]</code>) avec un
+        <code>Matrix2&lt;f64&gt;</code> de <code>nalgebra</code>. Calcule son inverse avec
+        <code>try_inverse()</code> et compare, coefficient par coefficient, avec ta <code>Mat2::inverse</code>.
+        Vérifie que l'écart est inférieur à <code>1e-12</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use nalgebra::Matrix2;
+
+fn main() {
+    // nalgebra : saisie ligne par ligne.
+    let m = Matrix2::new(
+        4.0, 7.0,
+        2.0, 6.0,
+    );
+
+    let inv = m.try_inverse().expect("matrice inversible");
+    println!("nalgebra inverse =\n{}", inv);
+
+    // Inverse attendue (calcul maison) :
+    //   det = 4·6 − 7·2 = 10
+    //   A⁻¹ = 1/10 · [[6, −7], [−2, 4]]
+    let attendu = [[0.6, -0.7], [-0.2, 0.4]];
+
+    for i in 0..2 {
+        for j in 0..2 {
+            let ecart = (inv[(i, j)] - attendu[i][j]).abs();
+            assert!(ecart < 1e-12, "écart trop grand en ({i},{j})");
+        }
+    }
+    println!("Les deux inverses coïncident à 1e-12 près.");
+
+    // Contrôle final : A·A⁻¹ ≈ identité.
+    println!("A·A⁻¹ =\n{}", m * inv);
+}</code></pre>
+        <p>
+          On indexe un élément de <code>nalgebra</code> avec un tuple : <code>inv[(i, j)]</code>. Résultat
+          identique à la version maison — mais <code>try_inverse</code> reste préférable, car il est plus
+          robuste sur les cas mal conditionnés et se généralise aux dimensions supérieures. La comparaison
+          se fait avec une tolérance, jamais avec <code>==</code> sur des flottants.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Vecteurs et matrices sont le langage de la robotique : transformations géométriques et estimation d'état.</li>
+        <li>Produit scalaire → norme (<code>‖v‖ = √(v·v)</code>) ; opérations composante par composante pour l'addition et le produit scalaire externe.</li>
+        <li>Produit matriciel : dimensions compatibles obligatoires <code>(m×p)·(p×n) → (m×n)</code>, complexité O(n³) en carré, et <strong>non commutatif</strong> (l'ordre encode la séquence).</li>
+        <li>Déterminant 2×2 : <code>ad − bc</code> ; 3×3 : Sarrus. Inversible ⇔ det ≠ 0. Inverse 2×2 explicite via <code>(1/det)·[[d,−b],[−c,a]]</code>.</li>
+        <li>Pour A·x = b, on <strong>résout</strong> (LU, <code>lu().solve</code>) plutôt qu'on n'inverse : plus rapide et plus stable.</li>
+        <li>Deux approches : <code>Mat3</code> maison pour comprendre ; <code>nalgebra</code> (<code>Matrix3</code>, <code>try_inverse</code>) pour la pratique.</li>
+        <li>Temps réel : <code>Matrix3</code>/<code>Matrix4</code> sur la pile (taille statique) dans la boucle ; <code>DMatrix</code> (tas) seulement hors boucle critique. Toujours <code>f64</code> pour la précision, et un <code>epsilon</code> pour tester la singularité.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-09.html"><span class="lbl">← Précédent</span>Modules, crates &amp; nalgebra</a>
+    <a class="next" href="chapitre-11.html"><span class="lbl">Suivant →</span>Cinématique directe</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

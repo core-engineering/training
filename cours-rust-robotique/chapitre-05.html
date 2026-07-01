@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Structs, enums &amp; méthodes</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Structs, enums &amp; méthodes</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Définir des structs (nommées, tuple, unit) et comprendre la mutabilité de l'instance entière</li>
+        <li>Écrire des blocs <code>impl</code> : méthodes (<code>&amp;self</code>, <code>&amp;mut self</code>, <code>self</code>) et fonctions associées</li>
+        <li>Modéliser des alternatives avec des enums, y compris des variantes porteuses de données</li>
+        <li>Utiliser <code>match</code> pour traiter tous les cas d'un enum de façon exhaustive</li>
+        <li>Reconnaître que <code>Option&lt;T&gt;</code> et <code>Result&lt;T, E&gt;</code> sont eux-mêmes des enums</li>
+        <li>Construire les types géométriques et d'état d'un robot : <code>Vec2</code>, <code>Vec3</code>, <code>EtatRobot</code>, <code>Articulation</code></li>
+      </ul>
+    </div>
+
+    <h2>1. Structs : regrouper des données liées</h2>
+    <p>
+      En C, on regroupe des données liées dans un <code>struct</code>. Rust reprend exactement cette idée,
+      mais y ajoute des méthodes, des garanties de mutabilité et un système de dérivation automatique
+      (<code>#[derive(...)]</code>) qui évite beaucoup de code répétitif.
+    </p>
+
+    <h3>1.1 Struct nommée</h3>
+    <pre><code class="language-rust">struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+fn main() {
+    let v = Vec2 { x: 1.0, y: 2.0 };
+    println!("v.x = {}, v.y = {}", v.x, v.y);
+}</code></pre>
+    <p>
+      On instancie une struct avec la syntaxe <code>NomDeStruct { champ: valeur, ... }</code>.
+      L'ordre des champs n'a pas d'importance, seuls les noms comptent — contrairement à un
+      <code>struct</code> C initialisé positionnellement (<code>{1.0, 2.0}</code>).
+    </p>
+
+    <h3>1.2 Tuple structs</h3>
+    <p>
+      Une <em>tuple struct</em> a un nom mais des champs anonymes, accessibles par index
+      (<code>.0</code>, <code>.1</code>, ...). Pratique pour donner un type distinct à une donnée simple,
+      sans avoir besoin de nommer ses champs.
+    </p>
+    <pre><code class="language-rust">struct Angle(f64);        // radians, mais avec un type dédié
+struct Couleur(u8, u8, u8);
+
+fn main() {
+    let a = Angle(1.5708);
+    let rouge = Couleur(255, 0, 0);
+    println!("angle = {} rad, canal rouge = {}", a.0, rouge.0);
+}</code></pre>
+
+    <h3>1.3 Unit structs</h3>
+    <p>
+      Une <em>unit struct</em> n'a aucun champ. Elle sert de marqueur de type, souvent pour implémenter
+      un trait sans avoir besoin de stocker de donnée (on approfondira ça au chapitre 7 sur les traits).
+    </p>
+    <pre><code class="language-rust">struct CapteurSimule;
+
+fn main() {
+    let _c = CapteurSimule;
+}</code></pre>
+
+    <h3>1.4 Mutabilité : tout ou rien</h3>
+    <p>
+      En Rust, la mutabilité se déclare sur la <strong>variable</strong>, pas sur le champ individuellement.
+      Si <code>v</code> n'est pas <code>mut</code>, aucun de ses champs n'est modifiable — même partiellement.
+    </p>
+    <pre><code class="language-rust">let mut v = Vec2 { x: 0.0, y: 0.0 };
+v.x = 3.0;   // OK : v est mut
+v.y += 1.0;  // OK
+
+let w = Vec2 { x: 0.0, y: 0.0 };
+// w.x = 3.0;  // ERREUR de compilation : w n'est pas mut</code></pre>
+
+    <div class="callout piege">
+      <p>
+        En C++, on peut avoir un champ <code>const</code> à l'intérieur d'une struct par ailleurs mutable
+        (mutabilité fine, champ par champ). En Rust, la mutabilité est une propriété de la <em>liaison</em>
+        (<code>let</code> vs <code>let mut</code>), pas du champ : il n'existe pas de « champ const » dans
+        une struct normale. Si tu veux qu'un champ précis soit protégé après construction, il faut le rendre
+        privé et n'exposer que des méthodes de lecture (pattern « encapsulation », voir chapitre 9 sur les modules).
+      </p>
+    </div>
+
+    <h2>2. Blocs <code>impl</code> : méthodes et fonctions associées</h2>
+    <p>
+      Contrairement au C où les fonctions qui manipulent un <code>struct</code> flottent séparément
+      (souvent préfixées <code>vec2_norme(...)</code>), Rust permet d'attacher directement des fonctions
+      au type via un bloc <code>impl</code>. C'est similaire aux méthodes d'une classe C++, sans héritage
+      d'implémentation.
+    </p>
+
+    <pre><code class="language-rust">struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+impl Vec2 {
+    // Fonction associée : pas de "self", sert de constructeur.
+    // Convention : Self::new(...)
+    fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    // Méthode en lecture seule : emprunte &amp;self, ne consomme rien.
+    fn norme(&amp;self) -> f64 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+
+    // Méthode qui modifie l'instance : emprunte &amp;mut self.
+    fn normalise(&amp;mut self) {
+        let n = self.norme();
+        self.x /= n;
+        self.y /= n;
+    }
+
+    // Méthode qui consomme self : transforme la valeur et la rend.
+    fn vers_tuple(self) -> (f64, f64) {
+        (self.x, self.y)
+    }
+}
+
+fn main() {
+    let mut v = Vec2::new(3.0, 4.0);
+    println!("norme = {}", v.norme());   // 5.0
+    v.normalise();
+    println!("normalise = ({}, {})", v.x, v.y);
+
+    let t = v.vers_tuple();  // v est déplacée ici, plus utilisable après
+    println!("{:?}", t);
+}</code></pre>
+
+    <p>Trois formes de <code>self</code> possibles dans une méthode, exactement comme les emprunts vus au chapitre 4 :</p>
+    <ul>
+      <li><code>&amp;self</code> — emprunt immuable : la méthode lit l'instance sans la modifier (le cas le plus courant).</li>
+      <li><code>&amp;mut self</code> — emprunt mutable : la méthode modifie l'instance en place.</li>
+      <li><code>self</code> — prise de possession : la méthode consomme l'instance (souvent pour une conversion finale).</li>
+    </ul>
+
+    <div class="callout note">
+      <p>
+        Une <strong>fonction associée</strong> (sans <code>self</code>, comme <code>Vec2::new</code>) s'appelle
+        avec la syntaxe <code>Type::fonction(...)</code>. Une <strong>méthode</strong> (avec <code>self</code>)
+        s'appelle avec la syntaxe <code>instance.methode(...)</code> — Rust insère automatiquement les
+        <code>&amp;</code> ou <code>&amp;mut</code> nécessaires (« auto-référencement »), pas besoin d'écrire
+        <code>(&amp;v).norme()</code>.
+      </p>
+    </div>
+
+    <h2>3. Enums : bien plus qu'en C</h2>
+    <p>
+      En C, un <code>enum</code> n'est qu'une liste d'entiers nommés, et une <code>union</code> permet de
+      superposer plusieurs représentations en mémoire sans qu'aucune information ne dise laquelle est active
+      (le programmeur doit s'en souvenir lui-même, source classique de bugs). Rust fusionne les deux idées
+      dans un seul concept sûr : chaque variante d'un enum peut porter ses propres données, et le compilateur
+      sait toujours quelle variante est active.
+    </p>
+
+    <h3>3.1 Variantes simples</h3>
+    <pre><code class="language-rust">#[derive(Debug, PartialEq)]
+enum Etat {
+    Arrete,
+    EnMouvement,
+    Erreur,
+}
+
+fn main() {
+    let e = Etat::EnMouvement;
+    if e == Etat::EnMouvement {
+        println!("Le robot bouge.");
+    }
+}</code></pre>
+
+    <h3>3.2 Variantes avec données</h3>
+    <p>
+      Chaque variante peut embarquer des champs différents — impossible à exprimer nativement avec un
+      <code>enum</code> C. C'est l'équivalent sûr d'une <code>union</code> taguée.
+    </p>
+    <pre><code class="language-rust">#[derive(Debug)]
+enum Articulation {
+    Rotoide(f64),     // angle en radians
+    Prismatique(f64), // déplacement en mètres
+}
+
+fn main() {
+    let j1 = Articulation::Rotoide(0.785);
+    let j2 = Articulation::Prismatique(0.12);
+    println!("{:?} {:?}", j1, j2);
+}</code></pre>
+
+    <h3>3.3 <code>match</code> sur un enum</h3>
+    <p>
+      <code>match</code> force à traiter <strong>toutes</strong> les variantes (exhaustivité vérifiée à la
+      compilation). Impossible d'oublier un cas comme on oublierait un <code>case</code> dans un
+      <code>switch</code> C — le compilateur refuse de compiler sinon.
+    </p>
+    <pre><code class="language-rust">fn decrire(j: &amp;Articulation) -> String {
+    match j {
+        Articulation::Rotoide(angle) => format!("rotoïde, angle = {:.3} rad", angle),
+        Articulation::Prismatique(dist) => format!("prismatique, déplacement = {:.3} m", dist),
+    }
+}
+
+fn main() {
+    let j = Articulation::Rotoide(1.2);
+    println!("{}", decrire(&amp;j));
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        Un <code>switch</code> C sans <code>default</code> compile même s'il ne couvre pas tous les cas
+        possibles ; l'oubli se paie à l'exécution. Un <code>match</code> Rust qui ne couvre pas toutes les
+        variantes d'un enum est une <strong>erreur de compilation</strong>. C'est l'une des raisons pour
+        lesquelles les enums Rust sont particulièrement adaptés à une machine à états de robot (arrêt
+        d'urgence, calibration, etc.) : ajouter un nouvel état fait apparaître, à la compilation, tous les
+        endroits du code qu'il faut mettre à jour.
+      </p>
+    </div>
+
+    <h3>3.4 Aperçu : <code>Option&lt;T&gt;</code> et <code>Result&lt;T, E&gt;</code></h3>
+    <p>
+      Deux enums de la bibliothèque standard, omniprésents en Rust, ne sont rien d'autre que des enums
+      avec des variantes génériques :
+    </p>
+    <pre><code class="language-rust">enum Option&lt;T&gt; {
+    Some(T),
+    None,
+}
+
+enum Result&lt;T, E&gt; {
+    Ok(T),
+    Err(E),
+}</code></pre>
+    <p>
+      <code>Option&lt;T&gt;</code> remplace l'usage d'un pointeur nul (pas de <code>NULL</code> en Rust) et
+      <code>Result&lt;T, E&gt;</code> remplace les codes d'erreur ad hoc (<code>errno</code>, valeurs
+      sentinelles <code>-1</code>). On y reviendra en détail au chapitre 8 ; pour l'instant, retiens
+      simplement que ce sont des enums que l'on traite avec <code>match</code> comme n'importe quel autre.
+    </p>
+
+    <h2>4. Derive : générer du code automatiquement</h2>
+    <p>
+      L'attribut <code>#[derive(...)]</code> demande au compilateur de générer automatiquement
+      l'implémentation de certains traits standards, en analysant les champs de la struct ou de l'enum.
+      C'est l'équivalent Rust d'écrire soi-même un opérateur de comparaison ou une fonction de copie en
+      C++, mais sans risque d'oubli ou d'incohérence.
+    </p>
+    <pre><code class="language-rust">#[derive(Debug, Clone, Copy, PartialEq)]
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+fn main() {
+    let a = Vec2 { x: 1.0, y: 2.0 };
+    let b = a;              // Copy : b est une copie, a reste utilisable
+    println!("{:?}", a);    // Debug : affichage avec {:?}
+    println!("{}", a == b); // PartialEq : comparaison structurelle
+}</code></pre>
+    <ul>
+      <li><code>Debug</code> — permet d'afficher la valeur avec <code>{:?}</code> (utile en <code>println!</code> pour déboguer).</li>
+      <li><code>Clone</code> — ajoute une méthode <code>.clone()</code> qui duplique explicitement la valeur.</li>
+      <li><code>Copy</code> — rend le type copiable implicitement (bit à bit), comme les types numériques de base ; possible seulement si tous les champs sont eux-mêmes <code>Copy</code>.</li>
+      <li><code>PartialEq</code> — permet de comparer avec <code>==</code> et <code>!=</code>, champ par champ.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        En robotique, presque tous les petits types numériques (<code>Vec2</code>, <code>Vec3</code>,
+        <code>Quaternion</code>, un état articulaire) gagnent à être <code>#[derive(Debug, Clone, Copy, PartialEq)]</code> :
+        <code>Debug</code> facilite le diagnostic dans les logs, <code>Copy</code> évite de se soucier de
+        l'ownership pour des données de quelques octets, et <code>PartialEq</code> simplifie les tests
+        unitaires (<code>assert_eq!</code>). Résultat : du code aussi rapide qu'en C, mais où le compilateur
+        vérifie pour toi qu'on ne mélange jamais un état « non initialisé » avec un état valide.
+      </p>
+    </div>
+
+    <h2>5. Fil rouge : géométrie et état du robot</h2>
+    <p>
+      On construit maintenant les briques de base qui serviront tout au long du cours : un vecteur 2D,
+      un vecteur 3D, l'état d'un robot mobile, et le type d'une articulation.
+    </p>
+
+    <pre><code class="language-rust">#[derive(Debug, Clone, Copy, PartialEq)]
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+impl Vec2 {
+    fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    fn norme(&amp;self) -> f64 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+
+    fn produit_scalaire(&amp;self, autre: &amp;Vec2) -> f64 {
+        self.x * autre.x + self.y * autre.y
+    }
+
+    fn plus(&amp;self, autre: &amp;Vec2) -> Vec2 {
+        Vec2::new(self.x + autre.x, self.y + autre.y)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Vec3 {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl Vec3 {
+    fn new(x: f64, y: f64, z: f64) -> Self {
+        Self { x, y, z }
+    }
+
+    fn norme(&amp;self) -> f64 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    fn produit_scalaire(&amp;self, autre: &amp;Vec3) -> f64 {
+        self.x * autre.x + self.y * autre.y + self.z * autre.z
+    }
+
+    fn plus(&amp;self, autre: &amp;Vec3) -> Vec3 {
+        Vec3::new(self.x + autre.x, self.y + autre.y, self.z + autre.z)
+    }
+}
+
+/// État d'un robot mobile 2D : position (x, y) et cap theta (radians).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct EtatRobot {
+    x: f64,
+    y: f64,
+    theta: f64,
+}
+
+impl EtatRobot {
+    fn new(x: f64, y: f64, theta: f64) -> Self {
+        Self { x, y, theta }
+    }
+
+    /// Avance le robot de `d` mètres dans la direction de son cap actuel
+    /// (modèle cinématique très simplifié, sans dérive latérale).
+    fn avance(&amp;mut self, d: f64) {
+        self.x += d * self.theta.cos();
+        self.y += d * self.theta.sin();
+    }
+}
+
+/// Type d'articulation d'un bras robotique.
+#[derive(Debug, Clone, Copy)]
+enum Articulation {
+    Rotoide(f64),     // angle en radians
+    Prismatique(f64), // déplacement en mètres
+}
+
+fn main() {
+    let a = Vec2::new(1.0, 0.0);
+    let b = Vec2::new(0.0, 1.0);
+    println!("a . b = {}", a.produit_scalaire(&amp;b));  // 0.0 (orthogonaux)
+    println!("norme de a + b = {}", a.plus(&amp;b).norme());
+
+    let mut robot = EtatRobot::new(0.0, 0.0, 0.0);
+    robot.avance(2.0);
+    println!("{:?}", robot);  // EtatRobot { x: 2.0, y: 0.0, theta: 0.0 }
+
+    let joints = [Articulation::Rotoide(0.5), Articulation::Prismatique(0.1)];
+    for j in &amp;joints {
+        println!("{:?}", j);
+    }
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        Sans méthodes, le code de cinématique ressemblerait vite à une suite de fonctions libres avec des
+        noms à rallonge (<code>etat_robot_avance(&amp;mut EtatRobot, f64)</code>), comme en C. En attachant
+        les opérations aux types via <code>impl</code>, on écrit <code>robot.avance(2.0)</code> :
+        c'est plus lisible, l'auto-complétion de l'éditeur devient utile, et surtout le compilateur vérifie
+        que seule une <code>&amp;mut EtatRobot</code> peut appeler <code>avance</code> — impossible de
+        modifier l'état du robot par erreur via une référence en lecture seule, contrairement à un pointeur
+        C brut qui ne distingue pas les deux.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Compléter <code>Vec2</code> : produit scalaire et norme</h3>
+      <p>
+        Sans regarder la section 5, écris depuis zéro une struct <code>Vec2 { x: f64, y: f64 }</code>
+        avec un bloc <code>impl</code> contenant : <code>new(x, y)</code>, <code>norme(&amp;self) -&gt; f64</code>
+        et <code>produit_scalaire(&amp;self, autre: &amp;Vec2) -&gt; f64</code>. Vérifie dans <code>main</code>
+        que le produit scalaire de <code>(1.0, 0.0)</code> et <code>(0.0, 1.0)</code> vaut bien 0.0.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+impl Vec2 {
+    fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    fn norme(&amp;self) -> f64 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+
+    fn produit_scalaire(&amp;self, autre: &amp;Vec2) -> f64 {
+        self.x * autre.x + self.y * autre.y
+    }
+}
+
+fn main() {
+    let a = Vec2::new(1.0, 0.0);
+    let b = Vec2::new(0.0, 1.0);
+    println!("norme de a = {}", a.norme());               // 1.0
+    println!("a . b = {}", a.produit_scalaire(&amp;b));      // 0.0
+}</code></pre>
+        <p>
+          Le produit scalaire de deux vecteurs orthogonaux vaut zéro : c'est une bonne façon de vérifier
+          rapidement que la formule est correcte.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Méthode <code>distance</code></h3>
+      <p>
+        Ajoute à <code>Vec2</code> une méthode <code>distance(&amp;self, autre: &amp;Vec2) -&gt; f64</code>
+        qui calcule la distance euclidienne entre deux points. Réutilise <code>norme</code> et
+        <code>plus</code> (ou une soustraction) plutôt que de tout réécrire.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">impl Vec2 {
+    // ... new, norme, produit_scalaire déjà définis ...
+
+    fn moins(&amp;self, autre: &amp;Vec2) -> Vec2 {
+        Vec2::new(self.x - autre.x, self.y - autre.y)
+    }
+
+    fn distance(&amp;self, autre: &amp;Vec2) -> f64 {
+        self.moins(autre).norme()
+    }
+}
+
+fn main() {
+    let a = Vec2::new(0.0, 0.0);
+    let b = Vec2::new(3.0, 4.0);
+    println!("distance = {}", a.distance(&amp;b));  // 5.0
+}</code></pre>
+        <p>
+          <code>distance</code> ne fait presque rien elle-même : elle compose deux méthodes déjà écrites
+          (<code>moins</code> puis <code>norme</code>). C'est le style idiomatique en Rust — de petites
+          méthodes réutilisables plutôt qu'une grosse fonction qui recalcule tout.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Enum <code>TypeCapteur</code> avec <code>match</code></h3>
+      <p>
+        Définis un enum <code>TypeCapteur</code> avec trois variantes : <code>Lidar(f64)</code>
+        (portée max en mètres), <code>Camera { largeur: u32, hauteur: u32 }</code> (résolution) et
+        <code>Imu</code> (sans donnée). Écris une fonction <code>decrire(c: &amp;TypeCapteur) -&gt; String</code>
+        qui utilise <code>match</code> pour produire une description adaptée à chaque variante.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">#[derive(Debug)]
+enum TypeCapteur {
+    Lidar(f64),
+    Camera { largeur: u32, hauteur: u32 },
+    Imu,
+}
+
+fn decrire(c: &amp;TypeCapteur) -> String {
+    match c {
+        TypeCapteur::Lidar(portee) => format!("Lidar, portée max {:.1} m", portee),
+        TypeCapteur::Camera { largeur, hauteur } => {
+            format!("Caméra {}x{}", largeur, hauteur)
+        }
+        TypeCapteur::Imu => "IMU (accéléromètre + gyroscope)".to_string(),
+    }
+}
+
+fn main() {
+    let capteurs = [
+        TypeCapteur::Lidar(12.0),
+        TypeCapteur::Camera { largeur: 1920, hauteur: 1080 },
+        TypeCapteur::Imu,
+    ];
+    for c in &amp;capteurs {
+        println!("{}", decrire(c));
+    }
+}</code></pre>
+        <p>
+          La variante <code>Camera</code> utilise la syntaxe « struct-like » (champs nommés) au lieu d'un
+          tuple : c'est utile dès qu'une variante porte plusieurs valeurs et que leur ordre serait sujet à
+          confusion. Le <code>match</code> déstructure directement <code>largeur</code> et <code>hauteur</code>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Mettre à jour <code>EtatRobot</code></h3>
+      <p>
+        En reprenant la struct <code>EtatRobot { x, y, theta }</code> du fil rouge, écris une méthode
+        <code>tourne(&amp;mut self, dtheta: f64)</code> qui ajoute <code>dtheta</code> au cap actuel, puis
+        une méthode <code>avance_et_tourne(&amp;mut self, d: f64, dtheta: f64)</code> qui combine
+        <code>avance</code> et <code>tourne</code> en un seul appel (ordre : on avance d'abord dans la
+        direction actuelle, puis on tourne).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">#[derive(Debug, Clone, Copy, PartialEq)]
+struct EtatRobot {
+    x: f64,
+    y: f64,
+    theta: f64,
+}
+
+impl EtatRobot {
+    fn new(x: f64, y: f64, theta: f64) -> Self {
+        Self { x, y, theta }
+    }
+
+    fn avance(&amp;mut self, d: f64) {
+        self.x += d * self.theta.cos();
+        self.y += d * self.theta.sin();
+    }
+
+    fn tourne(&amp;mut self, dtheta: f64) {
+        self.theta += dtheta;
+    }
+
+    fn avance_et_tourne(&amp;mut self, d: f64, dtheta: f64) {
+        self.avance(d);
+        self.tourne(dtheta);
+    }
+}
+
+fn main() {
+    let mut robot = EtatRobot::new(0.0, 0.0, 0.0);
+    robot.avance_et_tourne(1.0, std::f64::consts::FRAC_PI_2); // avance de 1m, puis tourne de 90°
+    println!("{:?}", robot);
+}</code></pre>
+        <p>
+          Comme <code>avance_et_tourne</code> prend <code>&amp;mut self</code>, elle peut appeler d'autres
+          méthodes <code>&amp;mut self</code> du même type sans souci d'emprunt : on est toujours à
+          l'intérieur du même emprunt mutable exclusif sur <code>robot</code>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Les <strong>structs</strong> (nommées, tuple, unit) regroupent des données ; la mutabilité se déclare sur la variable entière, pas champ par champ.</li>
+        <li>Un bloc <code>impl</code> attache des <strong>méthodes</strong> (<code>&amp;self</code>, <code>&amp;mut self</code>, <code>self</code>) et des <strong>fonctions associées</strong> (souvent <code>Self::new</code>) à un type.</li>
+        <li>Les <strong>enums</strong> Rust combinent enum et union taguée du C : chaque variante peut porter des données différentes, et le compilateur sait toujours laquelle est active.</li>
+        <li><code>match</code> sur un enum est <strong>exhaustif</strong> : oublier une variante est une erreur de compilation, pas un bug d'exécution.</li>
+        <li><code>Option&lt;T&gt;</code> et <code>Result&lt;T, E&gt;</code> sont de simples enums de la bibliothèque standard — détaillés au chapitre 8.</li>
+        <li><code>#[derive(Debug, Clone, Copy, PartialEq)]</code> génère automatiquement affichage, copie, clonage et comparaison, sans code répétitif ni risque d'oubli.</li>
+        <li>Le fil rouge (<code>Vec2</code>, <code>Vec3</code>, <code>EtatRobot</code>, <code>Articulation</code>) servira de base aux chapitres suivants (collections, traits, algèbre linéaire, cinématique).</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>Ownership, emprunts &amp; lifetimes</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>Collections : Vec, tableaux, slices</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 09 — Modules, crates &amp; nalgebra</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 09</span><br>Modules, crates &amp; nalgebra</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Organiser un projet Rust en modules (<code>mod</code>, <code>pub</code>, chemins) plutôt qu'en un unique <code>main.rs</code> monolithique.</li>
+        <li>Répartir un module sur plusieurs fichiers (<code>src/algebre.rs</code> ou <code>algebre/mod.rs</code>).</li>
+        <li>Comprendre l'écosystème des crates (crates.io, <code>cargo add</code>, bibliothèque vs binaire).</li>
+        <li>Écrire des tests unitaires fiables pour du calcul numérique, avec tolérance sur les flottants.</li>
+        <li>Découvrir <code>nalgebra</code>, le crate de référence pour l'algèbre linéaire en robotique Rust.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi découper en modules ?</h2>
+    <p>
+      En C/C++, on sépare le code en <code>.h</code>/<code>.c</code> et on gère la visibilité avec des en-têtes et
+      parfois <code>static</code>. En Rust, l'unité d'organisation s'appelle un <strong>module</strong>
+      (<code>mod</code>) : elle regroupe des fonctions, structures, énumérations, constantes, et contrôle
+      leur visibilité de façon beaucoup plus fine et vérifiée par le compilateur.
+    </p>
+    <p>
+      Par défaut, tout est <strong>privé</strong> au module (et à ses enfants). Le mot-clé <code>pub</code>
+      expose un élément aux modules parents. Il n'y a pas de fichier d'en-tête séparé à maintenir en synchronisation :
+      le compilateur connaît toute l'arborescence des modules directement depuis le code source.
+    </p>
+
+    <pre><code class="language-rust">// src/main.rs
+mod capteurs {
+    // Privé au module `capteurs` : invisible depuis `main`.
+    fn calibrer_offset() -> f64 {
+        0.02
+    }
+
+    // `pub` : visible depuis l'extérieur du module.
+    pub fn lire_distance_brute() -> f64 {
+        1.234 + calibrer_offset()
+    }
+
+    pub struct Lidar {
+        pub portee_max_m: f64,
+        angle_deg: f64, // champ privé : encapsulation à la C++ avec des accesseurs
+    }
+
+    impl Lidar {
+        pub fn new(portee_max_m: f64) -> Self {
+            Lidar { portee_max_m, angle_deg: 0.0 }
+        }
+
+        pub fn angle(&amp;self) -> f64 {
+            self.angle_deg
+        }
+    }
+}
+
+fn main() {
+    let d = capteurs::lire_distance_brute();
+    let lidar = capteurs::Lidar::new(12.0);
+    println!("distance = {d}, portée max = {}", lidar.portee_max_m);
+    // capteurs::calibrer_offset() ; // ERREUR : fonction privée
+    // lidar.angle_deg ;             // ERREUR : champ privé
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Piège venant du C/C++ :</strong> il n'y a pas de règle « un fichier = une unité de compilation
+        indépendante ». Un module Rust peut être défini <em>inline</em> (comme ci-dessus) ou dans un fichier séparé,
+        mais dans les deux cas il fait partie du même arbre de compilation, vérifié en une seule passe par le
+        compilateur. Il n'existe pas non plus de <code>#include</code> qui copie-colle du texte : <code>mod</code>
+        déclare qu'un module existe et où le trouver, <code>use</code> sert seulement à raccourcir des chemins déjà
+        visibles.
+      </p>
+    </div>
+
+    <h2>2. Chemins : <code>crate::</code>, <code>self::</code>, <code>super::</code></h2>
+    <p>
+      Rust identifie tout élément par un <strong>chemin</strong> dans l'arbre de modules, un peu comme un chemin de
+      fichier. Trois racines sont utiles :
+    </p>
+    <ul>
+      <li><code>crate::</code> — chemin absolu, part de la racine de la crate courante.</li>
+      <li><code>self::</code> — chemin relatif, part du module courant.</li>
+      <li><code>super::</code> — chemin relatif, part du module parent (comme <code>..</code> en chemin de fichiers).</li>
+    </ul>
+
+    <pre><code class="language-rust">mod cinematique {
+    pub mod directe {
+        pub fn position_effecteur() -> [f64; 3] {
+            // Appel vers le module voisin `inverse` via `super::`
+            super::inverse::verifie_bornes();
+            [0.1, 0.2, 0.3]
+        }
+    }
+
+    pub mod inverse {
+        pub fn verifie_bornes() {
+            // ...
+        }
+
+        pub fn resoudre() {
+            // Chemin absolu explicite : toujours valide, quel que soit
+            // l'endroit d'où on écrit ce code.
+            let _p = crate::cinematique::directe::position_effecteur();
+        }
+    }
+}
+
+use cinematique::directe::position_effecteur; // raccourci pour `main`
+
+fn main() {
+    let p = position_effecteur();
+    println!("{p:?}");
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        En pratique, on utilise surtout <code>use</code> en tête de fichier pour importer ce dont on a besoin, et on
+        réserve les chemins complets (<code>crate::…</code>) aux cas où plusieurs éléments importés portent le même
+        nom, ou pour la clarté dans du code générique.
+      </p>
+    </div>
+
+    <h2>3. Découper un module en fichier séparé</h2>
+    <p>
+      Dès qu'un module grossit, on le sort de <code>main.rs</code>. Deux conventions sont possibles pour un module
+      nommé <code>algebre</code> :
+    </p>
+    <ul>
+      <li><code>src/algebre.rs</code> — un simple fichier (style moderne, recommandé pour un module « feuille »).</li>
+      <li><code>src/algebre/mod.rs</code> — un dossier avec <code>mod.rs</code>, utile quand le module a lui-même des sous-modules dans des fichiers voisins (<code>src/algebre/vecteur.rs</code>, <code>src/algebre/matrice.rs</code>…).</li>
+    </ul>
+    <p>
+      Dans les deux cas, on déclare le module une seule fois dans le parent avec <code>mod algebre;</code>
+      (sans corps de bloc, terminé par un point-virgule) : c'est ce qui indique au compilateur d'aller chercher le
+      fichier correspondant.
+    </p>
+
+    <pre><code class="language-rust">// src/main.rs
+mod algebre;      // -> cherche src/algebre.rs ou src/algebre/mod.rs
+mod cinematique;  // -> cherche src/cinematique.rs ou src/cinematique/mod.rs
+mod kalman;       // -> cherche src/kalman.rs ou src/kalman/mod.rs
+
+use algebre::Vecteur3;
+
+fn main() {
+    let v = Vecteur3::new(1.0, 0.0, 0.0);
+    println!("norme = {}", v.norme());
+}</code></pre>
+
+    <pre><code class="language-rust">// src/algebre.rs
+pub struct Vecteur3 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+impl Vecteur3 {
+    pub fn new(x: f64, y: f64, z: f64) -> Self {
+        Vecteur3 { x, y, z }
+    }
+
+    pub fn norme(&amp;self) -> f64 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+}</code></pre>
+
+    <p>
+      Voici l'arborescence d'un petit projet robotique organisé en modules — c'est celle que nous allons faire
+      évoluer pour le fil rouge du cours :
+    </p>
+
+    <pre><code class="language-text">mon_robot/
+├── Cargo.toml
+└── src/
+    ├── main.rs          // mod algebre; mod cinematique; mod kalman;
+    ├── algebre.rs        // Vecteur3, Matrice3, opérations de base
+    ├── cinematique.rs     // modèle direct / inverse du bras robotique
+    └── kalman.rs          // filtre de Kalman pour la fusion capteurs
+</code></pre>
+
+    <div class="callout note">
+      <p>
+        Chaque fichier de module peut lui-même contenir des sous-modules avec <code>mod</code>, y compris son
+        propre module de tests <code>#[cfg(test)] mod tests { … }</code> (section 5). Le découpage en fichiers
+        n'affecte ni la visibilité ni la vitesse de compilation de façon significative : c'est avant tout une
+        question de lisibilité et de responsabilité claire par fichier.
+      </p>
+    </div>
+
+    <h2>4. Crates : bibliothèques, binaires et crates.io</h2>
+    <p>
+      Une <strong>crate</strong> est l'unité de compilation et de distribution en Rust — l'équivalent grossier
+      d'une bibliothèque statique/dynamique ou d'un exécutable en C/C++, mais gérée par un outil unique :
+      <code>cargo</code>. Un projet <code>cargo new mon_robot</code> génère un <em>binaire</em>
+      (<code>src/main.rs</code>, avec une fonction <code>fn main()</code>) ; <code>cargo new --lib ma_lib</code>
+      génère une <em>bibliothèque</em> (<code>src/lib.rs</code>, sans <code>main</code>, pensée pour être
+      réutilisée par d'autres crates). Un même projet peut avoir les deux à la fois.
+    </p>
+    <p>
+      <a href="https://crates.io" target="_blank" rel="noopener">crates.io</a> est le registre public officiel de
+      crates (l'équivalent de PyPI ou npm). Pour ajouter une dépendance, deux méthodes équivalentes :
+    </p>
+
+    <pre><code class="language-toml"># Cargo.toml — méthode manuelle
+[package]
+name = "mon_robot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nalgebra = "0.33"</code></pre>
+
+    <pre><code class="language-bash"># méthode recommandée : cargo add fait la même chose automatiquement
+cargo add nalgebra
+cargo add nalgebra --features serde-serialize   # avec des fonctionnalités optionnelles</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <code>cargo add</code> résout automatiquement la dernière version compatible et met à jour
+        <code>Cargo.toml</code> ainsi que <code>Cargo.lock</code> (le fichier qui fige les versions exactes
+        utilisées, à committer pour un binaire — comparable à un <code>package-lock.json</code>). Pas besoin de
+        chercher un numéro de version à la main.
+      </p>
+    </div>
+
+    <h2>5. Tests unitaires et calcul numérique</h2>
+    <p>
+      Rust intègre un framework de tests directement dans le langage et dans <code>cargo</code> : pas besoin de
+      dépendance externe comme Google Test en C++. La convention est de placer les tests dans un sous-module
+      <code>tests</code>, annoté <code>#[cfg(test)]</code> pour qu'il ne soit compilé <em>que</em> lors des tests
+      (donc absent du binaire final).
+    </p>
+
+    <pre><code class="language-rust">// src/algebre.rs (suite)
+
+pub fn produit_scalaire(a: &amp;[f64; 3], b: &amp;[f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*; // importe tout ce qui est visible dans le module parent
+
+    #[test]
+    fn produit_scalaire_orthogonal() {
+        let x = [1.0, 0.0, 0.0];
+        let y = [0.0, 1.0, 0.0];
+        assert_eq!(produit_scalaire(&amp;x, &amp;y), 0.0);
+    }
+
+    #[test]
+    fn norme_vecteur_unitaire() {
+        let v = Vecteur3::new(1.0, 2.0, 2.0);
+        // ATTENTION : ne jamais comparer des f64 avec == !
+        let attendu = 3.0;
+        assert!(
+            (v.norme() - attendu).abs() &lt; 1e-9,
+            "norme calculée = {}, attendue = {attendu}",
+            v.norme()
+        );
+    }
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Piège classique :</strong> comme en C/C++, comparer deux <code>f64</code> avec <code>==</code> ou
+        <code>assert_eq!</code> échoue souvent à cause des erreurs d'arrondi en virgule flottante, même quand le
+        calcul est mathématiquement correct. Pour un test numérique, comparez toujours avec une tolérance :
+        <code>assert!((a - b).abs() &lt; epsilon)</code>. Un epsilon typique pour des calculs de robotique en
+        <code>f64</code> est <code>1e-9</code> à <code>1e-6</code> selon la propagation d'erreurs attendue.
+      </p>
+    </div>
+
+    <p>On lance tous les tests d'un projet avec :</p>
+    <pre><code class="language-bash">cargo test                     # tous les tests
+cargo test norme_vecteur       # filtre par nom
+cargo test -- --nocapture      # affiche les println! même si le test passe</code></pre>
+
+    <div class="callout temps">
+      <p>
+        Pour du code temps réel, les tests unitaires ne remplacent pas la mesure de latence sur cible, mais ils
+        garantissent la <strong>correction fonctionnelle</strong> des calculs (cinématique, filtrage, contrôle)
+        avant même de déployer sur le robot — un aller-retour bien moins coûteux qu'un test au banc.
+      </p>
+    </div>
+
+    <h2>6. nalgebra : l'algèbre linéaire prête à l'emploi</h2>
+    <p>
+      <code>nalgebra</code> est le crate de référence pour l'algèbre linéaire en Rust, très utilisé en robotique
+      (cinématique, SLAM, filtrage de Kalman, planification). Il fournit des types à taille fixe connue à la
+      compilation (rapides, sans allocation) et des types à taille dynamique.
+    </p>
+    <ul>
+      <li><code>Vector3&lt;f64&gt;</code>, <code>Matrix3&lt;f64&gt;</code>, <code>Matrix4&lt;f64&gt;</code> — tailles fixes, typiques pour un point 3D, une matrice de rotation, une transformation homogène.</li>
+      <li><code>DVector&lt;f64&gt;</code>, <code>DMatrix&lt;f64&gt;</code> — tailles dynamiques (déterminées à l'exécution), pour des états de taille variable (ex. un filtre de Kalman générique).</li>
+      <li><code>Isometry3&lt;f64&gt;</code>, <code>Rotation3&lt;f64&gt;</code> — transformations rigides (rotation + translation) et rotations pures, avec composition et inversion sûres.</li>
+    </ul>
+
+    <pre><code class="language-toml">[package]
+name = "mon_robot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nalgebra = "0.33"</code></pre>
+
+    <pre><code class="language-rust">use nalgebra::{Matrix3, Vector3};
+
+fn main() {
+    // Une matrice de rotation approximative autour de Z (petits angles)
+    let r = Matrix3::new(
+        0.995, -0.0998, 0.0,
+        0.0998,  0.995, 0.0,
+        0.0,     0.0,   1.0,
+    );
+    let p = Vector3::new(1.0, 0.0, 0.5);
+
+    // Produit matrice-vecteur : orientation appliquée à un point
+    let p_tourne = r * p;
+    println!("point tourné = {p_tourne}");
+
+    // Transpose : pour une matrice de rotation, transpose == inverse
+    let r_t = r.transpose();
+
+    // Inverse générale : renvoie Option<Matrix3<f64>>, jamais de panique
+    // ni d'undefined behavior comme diviser par un déterminant nul en C.
+    match r.try_inverse() {
+        Some(r_inv) => println!("inverse trouvée, déterminant = {}", r.determinant()),
+        None => println!("matrice non inversible (déterminant ≈ 0)"),
+    }
+
+    println!("R^T proche de R^-1 ? {}", (r_t - r.try_inverse().unwrap()).norm() &lt; 1e-6);
+}</code></pre>
+
+    <pre><code class="language-rust">use nalgebra::{Isometry3, Vector3, Rotation3};
+
+fn transformation_bras() {
+    // Une transformation homogène = rotation + translation, composables
+    // sans jamais construire une matrice 4x4 "à la main".
+    let rotation = Rotation3::from_axis_angle(&amp;Vector3::z_axis(), 0.3);
+    let translation = Vector3::new(0.2, 0.0, 0.15);
+    let t_base_vers_effecteur = Isometry3::from_parts(translation.into(), rotation.into());
+
+    let point_local = Vector3::new(0.05, 0.0, 0.0);
+    let point_monde = t_base_vers_effecteur * point_local;
+
+    println!("point dans le repère monde = {point_monde}");
+
+    // Inverse d'une isométrie : toujours définie (contrairement à une
+    // matrice quelconque), car une rotation + translation est toujours inversible.
+    let t_inverse = t_base_vers_effecteur.inverse();
+    println!("retour au repère local = {}", t_inverse * point_monde);
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        Réutilisez <code>nalgebra</code> plutôt que de réécrire vos propres routines d'algèbre linéaire : c'est du
+        code testé, optimisé, et qui couvre déjà l'essentiel (décompositions, résolution de systèmes linéaires,
+        quaternions…). Cela dit, il reste indispensable de comprendre <em>ce que font</em> ces opérations
+        (produit matriciel, déterminant, inversion) pour interpréter correctement les résultats et déboguer un
+        problème numérique — c'est l'objet du <a href="chapitre-10.html">chapitre 10</a>, consacré à l'algèbre
+        linéaire appliquée à la robotique.
+      </p>
+    </div>
+
+    <h2>7. Fil rouge : structurer le projet du cours</h2>
+    <p>
+      À partir de ce chapitre, le projet du fil rouge se découpe en modules dédiés, préfigurant les prochains
+      chapitres :
+    </p>
+
+    <pre><code class="language-text">mon_robot/
+├── Cargo.toml           # dépendance : nalgebra = "0.33"
+└── src/
+    ├── main.rs           # point d'entrée, assemble les modules
+    ├── algebre.rs         # wrappers/utilitaires autour de nalgebra
+    ├── cinematique.rs      # modèle géométrique du bras (chapitre 10)
+    └── kalman.rs            # fusion de capteurs (chapitres suivants)
+</code></pre>
+
+    <pre><code class="language-rust">// src/main.rs
+mod algebre;
+mod cinematique;
+mod kalman;
+
+use nalgebra::{Matrix3, Vector3};
+
+fn main() {
+    let m = Matrix3::identity();
+    let v = Vector3::new(1.0, 2.0, 3.0);
+    println!("m * v = {}", m * v);
+
+    match algebre::inverser(&amp;m) {
+        Some(inv) => println!("inverse = {inv}"),
+        None => println!("matrice non inversible"),
+    }
+}</code></pre>
+
+    <pre><code class="language-rust">// src/algebre.rs
+use nalgebra::Matrix3;
+
+/// Tente d'inverser une matrice 3x3 ; renvoie `None` si elle est singulière
+/// (déterminant proche de zéro), sans jamais paniquer.
+pub fn inverser(m: &amp;Matrix3&lt;f64&gt;) -> Option&lt;Matrix3&lt;f64&gt;&gt; {
+    m.try_inverse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nalgebra::Matrix3;
+
+    #[test]
+    fn identite_est_sa_propre_inverse() {
+        let id = Matrix3::identity();
+        let inv = inverser(&amp;id).expect("l'identité est toujours inversible");
+        assert!((inv - id).norm() &lt; 1e-9);
+    }
+
+    #[test]
+    fn matrice_singuliere_renvoie_none() {
+        let singuliere = Matrix3::new(
+            1.0, 2.0, 3.0,
+            2.0, 4.0, 6.0, // ligne 2 = 2 * ligne 1 -> déterminant nul
+            0.0, 1.0, 1.0,
+        );
+        assert!(inverser(&amp;singuliere).is_none());
+    }
+}</code></pre>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Créer un module et l'appeler depuis <code>main</code></h3>
+      <p>
+        Créez un module <code>capteurs</code> (dans un fichier <code>src/capteurs.rs</code>) contenant une fonction
+        publique <code>pub fn temperature_moyenne(mesures: &amp;[f64]) -&gt; f64</code> qui renvoie la moyenne d'un
+        tableau de mesures (0.0 si le tableau est vide). Déclarez le module dans <code>main.rs</code> et appelez la
+        fonction.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">// src/capteurs.rs
+pub fn temperature_moyenne(mesures: &amp;[f64]) -&gt; f64 {
+    if mesures.is_empty() {
+        return 0.0;
+    }
+    let somme: f64 = mesures.iter().sum();
+    somme / mesures.len() as f64
+}</code></pre>
+        <pre><code class="language-rust">// src/main.rs
+mod capteurs;
+
+fn main() {
+    let mesures = [20.1, 20.4, 19.8, 20.0];
+    let moyenne = capteurs::temperature_moyenne(&amp;mesures);
+    println!("température moyenne = {moyenne:.2} °C");
+}</code></pre>
+        <p>
+          Le module est déclaré une seule fois avec <code>mod capteurs;</code> dans <code>main.rs</code>, ce qui dit
+          au compilateur d'aller lire <code>src/capteurs.rs</code>. La fonction doit être <code>pub</code> pour être
+          appelable depuis <code>main</code> via le chemin <code>capteurs::temperature_moyenne</code>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Test unitaire avec tolérance sur des <code>f64</code></h3>
+      <p>
+        Reprenez la fonction <code>temperature_moyenne</code> de l'exercice 1 et ajoutez un module de tests
+        <code>#[cfg(test)] mod tests { … }</code> avec au moins deux tests : un cas normal, et le cas d'un tableau
+        vide. Comparez les résultats flottants avec une tolérance, pas avec <code>==</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">// src/capteurs.rs (ajout en bas du fichier)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn presque_egal(a: f64, b: f64) -> bool {
+        (a - b).abs() &lt; 1e-9
+    }
+
+    #[test]
+    fn moyenne_de_quatre_mesures() {
+        let mesures = [20.1, 20.4, 19.8, 20.0];
+        let m = temperature_moyenne(&amp;mesures);
+        assert!(presque_egal(m, 20.075), "moyenne obtenue = {m}");
+    }
+
+    #[test]
+    fn moyenne_tableau_vide_vaut_zero() {
+        let mesures: [f64; 0] = [];
+        assert_eq!(temperature_moyenne(&amp;mesures), 0.0);
+    }
+}</code></pre>
+        <p>
+          <code>assert_eq!(…, 0.0)</code> est acceptable ici car <code>0.0</code> est un cas particulier renvoyé
+          littéralement par le code (pas le résultat d'un calcul flottant accumulé) : il n'y a donc pas d'erreur
+          d'arrondi possible. Dès qu'un résultat provient d'une somme ou d'une division en virgule flottante, on
+          compare toujours avec une tolérance, comme dans <code>moyenne_de_quatre_mesures</code>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Ajouter <code>nalgebra</code> et multiplier deux matrices</h3>
+      <p>
+        Ajoutez <code>nalgebra</code> comme dépendance (via <code>cargo add nalgebra</code> ou directement dans
+        <code>Cargo.toml</code>). Écrivez une fonction qui construit deux <code>Matrix3&lt;f64&gt;</code> et affiche
+        leur produit.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-bash">cargo add nalgebra</code></pre>
+        <pre><code class="language-rust">use nalgebra::Matrix3;
+
+fn main() {
+    let a = Matrix3::new(
+        1.0, 2.0, 0.0,
+        0.0, 1.0, 3.0,
+        4.0, 0.0, 1.0,
+    );
+    let b = Matrix3::identity() * 2.0; // matrice diagonale (2, 2, 2)
+
+    let produit = a * b;
+    println!("A * B =\n{produit}");
+}</code></pre>
+        <p>
+          <code>Matrix3::new</code> prend les coefficients ligne par ligne. Le produit <code>a * b</code> utilise
+          l'opérateur <code>*</code> surchargé par <code>nalgebra</code> pour effectuer un vrai produit matriciel
+          (pas un produit terme à terme).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Inverser une matrice avec <code>try_inverse</code> et gérer le <code>None</code></h3>
+      <p>
+        Écrivez une fonction <code>pub fn inverse_ou_identite(m: &amp;Matrix3&lt;f64&gt;) -&gt; Matrix3&lt;f64&gt;</code>
+        qui renvoie l'inverse de <code>m</code> si elle existe, ou la matrice identité sinon (sans jamais paniquer).
+        Testez-la avec une matrice inversible et une matrice singulière.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use nalgebra::Matrix3;
+
+pub fn inverse_ou_identite(m: &amp;Matrix3&lt;f64&gt;) -&gt; Matrix3&lt;f64&gt; {
+    match m.try_inverse() {
+        Some(inv) => inv,
+        None => Matrix3::identity(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matrice_inversible() {
+        let m = Matrix3::new(
+            2.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+        );
+        let inv = inverse_ou_identite(&amp;m);
+        let attendu = Matrix3::identity() * 0.5;
+        assert!((inv - attendu).norm() &lt; 1e-9);
+    }
+
+    #[test]
+    fn matrice_singuliere_donne_identite() {
+        let m = Matrix3::new(
+            1.0, 1.0, 0.0,
+            2.0, 2.0, 0.0, // ligne 2 = 2 * ligne 1
+            0.0, 0.0, 1.0,
+        );
+        let resultat = inverse_ou_identite(&amp;m);
+        assert!((resultat - Matrix3::identity()).norm() &lt; 1e-9);
+    }
+}</code></pre>
+        <p>
+          <code>try_inverse</code> renvoie un <code>Option&lt;Matrix3&lt;f64&gt;&gt;</code> : c'est l'équivalent
+          sûr d'une fonction C qui renverrait un code d'erreur ou un pointeur nul en cas de matrice singulière, mais
+          ici le compilateur <em>force</em> à traiter le cas <code>None</code> avant d'utiliser le résultat — pas de
+          risque d'oublier la vérification et d'utiliser une matrice invalide par erreur.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><code>mod</code> déclare un module (inline ou dans un fichier séparé) ; <code>pub</code> contrôle sa visibilité ; <code>use</code> raccourcit les chemins.</li>
+        <li>Un module peut vivre dans <code>src/nom.rs</code> ou <code>src/nom/mod.rs</code> ; on le déclare une seule fois dans son parent avec <code>mod nom;</code>.</li>
+        <li>Une crate est soit une bibliothèque (<code>src/lib.rs</code>), soit un binaire (<code>src/main.rs</code>) ; crates.io héberge l'écosystème, <code>cargo add</code> simplifie l'ajout de dépendances.</li>
+        <li><code>#[cfg(test)] mod tests { #[test] fn … }</code> + <code>cargo test</code> pour valider le code, y compris les calculs numériques — toujours avec une tolérance sur les <code>f64</code>, jamais <code>==</code>.</li>
+        <li><code>nalgebra</code> fournit <code>Vector3</code>, <code>Matrix3</code>, <code>Matrix4</code>, <code>DVector</code>, <code>DMatrix</code>, <code>Isometry3</code>, <code>Rotation3</code> et les opérations courantes (produit, transpose, <code>try_inverse</code>, <code>determinant</code>) : à réutiliser plutôt qu'à réécrire, tout en comprenant les bases (chapitre 10).</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-08.html"><span class="lbl">← Précédent</span>Gestion d'erreurs</a>
+    <a class="next" href="chapitre-10.html"><span class="lbl">Suivant →</span>Algèbre linéaire appliquée</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

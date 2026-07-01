@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Introduction &amp; outillage</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Introduction &amp; outillage</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre pourquoi Rust est un candidat sérieux pour la robotique temps réel, et où il se situe par rapport au C/C++.</li>
+        <li>Installer une chaîne d'outils Rust complète avec <code>rustup</code> (compilateur, gestionnaire de paquets, linter, formateur).</li>
+        <li>Créer, compiler et exécuter un premier projet avec <code>cargo</code>, y compris en mode <code>--release</code>.</li>
+        <li>Découvrir <code>cargo clippy</code> et <code>cargo fmt</code>, deux outils à utiliser dès le premier jour.</li>
+        <li>Présenter le projet fil rouge du cours : un mini moteur de calcul pour bras robotisé.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi Rust pour le temps réel et la robotique&nbsp;?</h2>
+    <p>
+      En robotique, le code qui tourne dans la boucle de contrôle (lecture des capteurs, filtre de Kalman,
+      calcul de cinématique inverse, envoi des consignes moteur) doit être <strong>rapide</strong>,
+      <strong>prévisible</strong> et <strong>fiable</strong>. Historiquement, ce terrain est occupé par le
+      C et le C++&nbsp;: accès direct à la mémoire, pas de <em>garbage collector</em>, compilation vers du
+      code machine optimisé. Rust vise exactement la même niche de performance, mais en corrigeant la plus
+      grande source de bugs de ces deux langages&nbsp;: les erreurs mémoire.
+    </p>
+    <p>
+      Le compilateur Rust (<code>rustc</code>) impose, via son système de propriété (<em>ownership</em>) et
+      d'emprunts (<em>borrowing</em>) que nous détaillerons au chapitre 4, des règles qui éliminent à la
+      compilation des familles entières de bugs&nbsp;: <em>use-after-free</em>, <em>double free</em>,
+      débordements de tampon, accès concurrents non protégés (<em>data races</em>). Ces bugs ne sont pas
+      juste gênants&nbsp;: sur un robot, un déréférencement de pointeur invalide dans la boucle de commande
+      peut se traduire par un bras qui part dans une direction imprévue. Rust ne rend pas ces bugs
+      « moins graves », il empêche le code de compiler tant qu'ils ne sont pas corrigés.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Critère</th><th>C / C++</th><th>Rust</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Performance brute</td><td>Excellente</td><td>Équivalente (LLVM, zéro coût d'abstraction)</td></tr>
+        <tr><td>Garbage collector</td><td>Non</td><td>Non</td></tr>
+        <tr><td>Sécurité mémoire</td><td>À la charge du développeur</td><td>Vérifiée à la compilation</td></tr>
+        <tr><td>Data races</td><td>Possibles</td><td>Empêchées à la compilation (code sûr)</td></tr>
+        <tr><td>Écosystème embarqué / robotique</td><td>Très mature (ROS 1/2, drivers historiques)</td><td>En forte croissance (embedded-hal, ROS 2 via rclrust, nalgebra)</td></tr>
+        <tr><td>Courbe d'apprentissage</td><td>Douce au début, pièges cachés ensuite</td><td>Plus raide au début (emprunteur), puis très fiable</td></tr>
+        <tr><td><code>no_std</code> / bare-metal</td><td>Natif</td><td>Supporté (chapitre 14)</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      Soyons honnêtes&nbsp;: l'écosystème C/C++ reste plus mature pour certains drivers bas niveau et pour
+      ROS 1. Rust ne remplace pas magiquement des décennies de bibliothèques existantes. Mais pour du code
+      neuf — calcul numérique, algorithmes d'estimation d'état, logique de contrôle — Rust offre les mêmes
+      performances que le C++ avec une classe de bugs en moins, ce qui compte énormément quand ce code
+      pilote un système physique.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Retiens cette phrase&nbsp;: Rust ne rend pas le code plus lent pour le rendre plus sûr. Le
+        compilateur fait tout le travail de vérification <em>avant</em> l'exécution ; une fois compilé,
+        le code sûr n'a (quasiment) aucun coût par rapport à l'équivalent C.
+      </p>
+    </div>
+
+    <h2>2. Installer Rust avec rustup</h2>
+    <p>
+      L'outil d'installation officiel est <a href="https://rustup.rs">rustup</a>. Il gère les versions du
+      compilateur, les cibles de compilation (utile plus tard pour cibler un microcontrôleur) et les
+      composants additionnels. Sous Linux ou macOS&nbsp;:
+    </p>
+
+    <pre><code class="language-bash">curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh</code></pre>
+
+    <p>
+      Sous Windows, télécharge et exécute <code>rustup-init.exe</code> depuis rustup.rs. Dans les deux cas,
+      l'installateur pose quelques questions (garde l'option par défaut « installation standard ») puis
+      met en place trois outils essentiels&nbsp;:
+    </p>
+    <ul>
+      <li><code>rustc</code> — le compilateur.</li>
+      <li><code>cargo</code> — le gestionnaire de paquets et de projets (l'équivalent d'un <code>make</code> + <code>apt</code> + <code>CMake</code> réunis).</li>
+      <li><code>rustup</code> lui-même — pour mettre à jour la chaîne d'outils (<code>rustup update</code>) ou installer des composants.</li>
+    </ul>
+
+    <p>Ajoute ensuite deux composants indispensables au quotidien&nbsp;:</p>
+
+    <pre><code class="language-bash">rustup component add clippy   # linter
+rustup component add rustfmt  # formateur de code</code></pre>
+
+    <p>Vérifie que tout est bien installé&nbsp;:</p>
+
+    <pre><code class="language-bash">rustc --version
+cargo --version
+cargo clippy --version
+cargo fmt --version</code></pre>
+
+    <p>
+      Tu devrais voir quelque chose comme <code>rustc 1.8x.0 (xxxxxxxxx 2026-xx-xx)</code>. Si la commande
+      <code>rustc</code> n'est pas trouvée, redémarre ton terminal (l'installateur modifie le
+      <code>PATH</code> dans ton fichier de profil shell).
+    </p>
+
+    <div class="callout note">
+      <p>
+        Contrairement au C/C++, il n'existe pas de « chaîne de compilateurs concurrents » à choisir
+        (gcc, clang, MSVC…). <code>rustc</code> est le seul compilateur de référence, ce qui simplifie
+        beaucoup la portabilité d'un projet Rust d'une machine à l'autre.
+      </p>
+    </div>
+
+    <h2>3. Créer un premier projet avec cargo</h2>
+    <p>
+      Tout projet Rust sérieux passe par <code>cargo</code>, même pour un seul fichier. Crée le projet qui
+      nous servira de point de départ pour le fil rouge du cours&nbsp;:
+    </p>
+
+    <pre><code class="language-bash">cargo new robot_kalman
+cd robot_kalman</code></pre>
+
+    <p><code>cargo new</code> génère l'arborescence minimale suivante&nbsp;:</p>
+
+    <pre><code class="language-text">robot_kalman/
+├── Cargo.toml     # métadonnées du projet + dépendances (équivalent d'un CMakeLists.txt)
+├── .gitignore     # ignore déjà le dossier target/
+└── src/
+    └── main.rs    # point d'entrée du programme</code></pre>
+
+    <p>
+      <code>Cargo.toml</code> ressemble à ceci juste après création&nbsp;:
+    </p>
+
+    <pre><code class="language-toml">[package]
+name = "robot_kalman"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]</code></pre>
+
+    <p>
+      La section <code>[dependencies]</code> est vide pour l'instant ; à partir du chapitre 9 nous y
+      ajouterons <code>nalgebra</code> pour l'algèbre linéaire. Contrairement au C++ où lier une
+      bibliothèque implique souvent de bricoler un <code>CMakeLists.txt</code>, ajouter une dépendance
+      Rust se résume à une ligne dans ce fichier ; <code>cargo</code> télécharge, compile et lie la
+      bibliothèque automatiquement.
+    </p>
+
+    <h2>4. Compiler et exécuter</h2>
+    <p>Trois commandes couvrent l'essentiel du cycle de développement&nbsp;:</p>
+
+    <pre><code class="language-bash">cargo check            # vérifie que le code compile, sans générer d'exécutable (rapide)
+cargo run               # compile (mode debug) puis exécute
+cargo build --release   # compile avec toutes les optimisations activées</code></pre>
+
+    <p>
+      <code>cargo check</code> est ton meilleur ami pendant l'écriture du code&nbsp;: il fait tourner
+      l'analyse du compilateur (types, emprunts, etc.) sans passer par la génération de code machine, donc
+      c'est nettement plus rapide qu'une compilation complète. Utilise-le en boucle pendant que tu écris,
+      et <code>cargo run</code> quand tu veux réellement exécuter le programme.
+    </p>
+
+    <div class="callout temps">
+      <p>
+        Pour du code de robotique temps réel, ne mesure <strong>jamais</strong> les performances en mode
+        debug. Par défaut, <code>cargo build</code> et <code>cargo run</code> compilent en mode
+        <em>debug</em>&nbsp;: assertions de dépassement d'entier actives, quasiment aucune optimisation,
+        code parfois 10 à 50 fois plus lent. Le mode <code>--release</code> active les optimisations
+        LLVM (inlining agressif, vectorisation, suppression des vérifications de debug) et c'est le seul
+        mode représentatif de ce qui tournera sur le robot. Réflexe à prendre&nbsp;: développe et teste la
+        logique en debug (messages d'erreur plus clairs, compilation plus rapide), mais benchmarke et
+        déploie toujours en <code>--release</code>.
+      </p>
+    </div>
+
+    <p>Exécute le projet fraîchement créé&nbsp;:</p>
+
+    <pre><code class="language-bash">cargo run</code></pre>
+
+    <p>Tu devrais voir s'afficher&nbsp;:</p>
+
+    <pre><code class="language-text">   Compiling robot_kalman v0.1.0 (/chemin/vers/robot_kalman)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.42s
+     Running `target/debug/robot_kalman`
+Hello, world!</code></pre>
+
+    <h2>5. Le premier programme, ligne par ligne</h2>
+    <p>Ouvre <code>src/main.rs</code>&nbsp;: cargo y a déjà généré le programme le plus simple possible.</p>
+
+    <pre><code class="language-rust">fn main() {
+    println!("Hello, world!");
+}</code></pre>
+
+    <p>
+      <code>fn main()</code> déclare la fonction point d'entrée, exactement comme en C. Pas de type de
+      retour ici : une fonction qui ne retourne rien a le type unité <code>()</code>, implicite. Modifions
+      ce programme pour saluer notre projet&nbsp;:
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    println!("Bonjour, robot !");
+}</code></pre>
+
+    <p>
+      Remarque le <code>!</code> après <code>println</code>&nbsp;: ce n'est pas une fonction, c'est une
+      <strong>macro</strong>. En Rust, tout identifiant suivi de <code>!</code> est une macro, invoquée à
+      la compilation. <code>println!</code> vérifie à la compilation que le nombre et le type des
+      arguments correspondent au format demandé — une erreur de format est donc détectée avant même
+      l'exécution, contrairement à <code>printf</code> en C où un mauvais <code>%d</code>/<code>%s</code>
+      est un bug silencieux (voire une faille de sécurité) qui ne se révèle qu'à l'exécution.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let angle_deg = 42.5;
+    let iteration = 7;
+    println!("Itération {iteration} — angle mesuré : {angle_deg} deg");
+    println!("{} et {} sont interpolés", 0.0, 1.0);
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        En C, <code>printf("%d", ma_variable)</code> ne vérifie <strong>rien</strong> à la compilation :
+        si le type de <code>ma_variable</code> ne correspond pas au format <code>%d</code>, c'est un
+        comportement indéterminé silencieux. En Rust, <code>println!("{}", ma_variable)</code> est vérifié
+        par le compilateur au moment de l'expansion de la macro : un type qui n'implémente pas l'affichage
+        (trait <code>Display</code>) donne une erreur de compilation claire, jamais un plantage surprise
+        en production.
+      </p>
+    </div>
+
+    <h2>6. Cargo.toml : dépendances et profils de compilation</h2>
+    <p>
+      <code>Cargo.toml</code> centralise la configuration du projet. Deux notions à connaître dès
+      maintenant, même si nous les creuserons plus tard&nbsp;:
+    </p>
+
+    <pre><code class="language-toml">[package]
+name = "robot_kalman"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# nalgebra = "0.33"   # décommenté au chapitre 9, pour l'algèbre linéaire
+
+# Profil utilisé par "cargo build" et "cargo run" (sans --release)
+[profile.dev]
+opt-level = 0          # pas d'optimisation : compilation rapide, exécution lente
+
+# Profil utilisé par "cargo build --release"
+[profile.release]
+opt-level = 3           # optimisations maximales
+lto = true               # link-time optimization : inlining inter-modules
+codegen-units = 1        # meilleure optimisation au prix d'une compilation plus lente
+panic = "abort"          # pas de déroulement de pile en cas de panic : code plus petit et plus prévisible</code></pre>
+
+    <p>
+      Le bloc <code>[profile.release]</code> ci-dessus n'est pas obligatoire — Cargo a déjà de bonnes
+      valeurs par défaut pour <code>opt-level</code> et <code>panic</code> — mais c'est une configuration
+      courante en robotique embarquée : <code>lto = true</code> et <code>codegen-units = 1</code>
+      permettent au compilateur d'optimiser à travers les frontières de modules, ce qui compte pour du
+      code de boucle de contrôle appelé des milliers de fois par seconde.
+    </p>
+
+    <h2>7. Outillage quotidien : clippy et rustfmt</h2>
+    <p>
+      Deux commandes à exécuter systématiquement avant de committer du code, y compris (surtout) sur un
+      projet de robotique où un avertissement ignoré peut cacher un vrai bug numérique&nbsp;:
+    </p>
+
+    <pre><code class="language-bash">cargo clippy   # linter : détecte les erreurs probables et les non-idiomes
+cargo fmt      # formate le code selon le style Rust standard</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <code>cargo clippy</code> va bien au-delà d'un simple linter de style. Il détecte par exemple les
+        comparaisons de flottants avec <code>==</code> (dangereuses en calcul numérique — pense à un test
+        d'égalité sur un angle après une suite de rotations), les boucles réécrivables en itérateurs plus
+        idiomatiques et performants, ou les conversions de type risquées. Prends l'habitude de lancer
+        <code>cargo clippy --all-targets -- -D warnings</code> dans ta CI : cette option transforme tous
+        les avertissements en erreurs de compilation, ce qui empêche un avertissement ignoré de se glisser
+        en production.
+      </p>
+    </div>
+
+    <h2>8. Le fil rouge du cours</h2>
+    <p>
+      Tout au long de ce cours, nous allons construire progressivement un même projet,
+      <code>robot_kalman</code>, celui que tu viens de créer. Il évoluera chapitre après chapitre pour
+      devenir un mini moteur de calcul pour bras robotisé, comprenant&nbsp;:
+    </p>
+    <ul>
+      <li>des types représentant l'état du robot (position articulaire, vitesse, pose de l'effecteur) — chapitre 5 ;</li>
+      <li>de l'algèbre linéaire maison puis via <code>nalgebra</code> (vecteurs, matrices) — chapitres 6, 7, 9 et 10 ;</li>
+      <li>un calcul de cinématique directe à partir de paramètres de Denavit-Hartenberg — chapitre 11 ;</li>
+      <li>un calcul de cinématique inverse par méthode numérique — chapitre 12 ;</li>
+      <li>un filtre de Kalman linéaire complet pour fusionner des mesures bruitées et estimer l'état réel du bras — chapitre 13 ;</li>
+      <li>des optimisations pensées pour tourner dans une boucle de contrôle temps réel, sans allocation mémoire — chapitre 14.</li>
+    </ul>
+    <p>
+      Garde ce projet ouvert au fil des chapitres : chaque nouvelle notion viendra s'y greffer, exactement
+      comme un vrai projet de robotique grandit au fil du développement.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Créer un projet</h3>
+      <p>
+        Si ce n'est pas déjà fait, crée un nouveau projet cargo nommé <code>robot_kalman</code> et
+        vérifie qu'il s'exécute avec <code>cargo run</code>. Inspecte le contenu de
+        <code>Cargo.toml</code> et de <code>src/main.rs</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-bash">cargo new robot_kalman
+cd robot_kalman
+cargo run</code></pre>
+        <p>
+          La sortie doit se terminer par <code>Hello, world!</code>. Le dossier <code>target/</code> vient
+          d'apparaître : c'est là que cargo place les artefacts de compilation (à ne jamais committer,
+          <code>.gitignore</code> s'en charge déjà).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Personnaliser le message et afficher plusieurs lignes</h3>
+      <p>
+        Modifie <code>src/main.rs</code> pour qu'il affiche, sur plusieurs lignes distinctes : un message
+        de bienvenue avec le nom du projet, une ligne indiquant un nombre d'articulations (par exemple 6),
+        puis une ligne affichant ce nombre au carré à l'aide d'une variable intermédiaire.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn main() {
+    println!("Bienvenue dans robot_kalman !");
+
+    let nb_articulations = 6;
+    println!("Nombre d'articulations : {nb_articulations}");
+
+    let carre = nb_articulations * nb_articulations;
+    println!("Carré du nombre d'articulations : {carre}");
+}</code></pre>
+        <p>
+          Chaque appel à <code>println!</code> ajoute automatiquement un saut de ligne final (comme
+          <code>puts</code> en C, contrairement à <code>printf</code> qui ne le fait pas). La syntaxe
+          <code>{nb_articulations}</code> directement dans la chaîne (interpolation) est équivalente à
+          <code>println!("...: {}", nb_articulations)</code> mais plus lisible.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Comparer debug et release</h3>
+      <p>
+        Compile ton projet en mode debug puis en mode release, et compare la taille des exécutables
+        générés ainsi que le temps affiché par cargo pour chaque compilation.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-bash">cargo build
+ls -lh target/debug/robot_kalman
+
+cargo build --release
+ls -lh target/release/robot_kalman</code></pre>
+        <p>
+          Tu devrais constater que la compilation <code>--release</code> prend plus de temps (le
+          compilateur applique des optimisations LLVM coûteuses) mais que l'exécutable généré est en
+          général plus petit et surtout beaucoup plus rapide à l'exécution, une fois les optimisations
+          appliquées. Sur un vrai calcul numérique (boucle de filtre de Kalman par exemple), l'écart de
+          performance entre debug et release peut facilement atteindre un facteur 10 à 50.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Utiliser cargo clippy</h3>
+      <p>
+        Dans <code>src/main.rs</code>, ajoute volontairement une comparaison d'égalité entre deux
+        flottants avec <code>==</code>, puis lance <code>cargo clippy</code> et observe l'avertissement
+        obtenu. Corrige le code en comparant plutôt la valeur absolue de la différence à un petit seuil
+        (« epsilon »).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn main() {
+    let angle_mesure = 0.1 + 0.2; // en toute rigueur, ne vaut pas exactement 0.3 en binaire
+    let angle_cible = 0.3;
+
+    // Version fautive, détectée par clippy (clippy::float_cmp) :
+    // if angle_mesure == angle_cible { ... }
+
+    // Version correcte : comparaison à un epsilon près
+    let epsilon = 1e-6;
+    if (angle_mesure - angle_cible).abs() < epsilon {
+        println!("Angle atteint (à epsilon près) !");
+    } else {
+        println!("Écart résiduel : {}", angle_mesure - angle_cible);
+    }
+}</code></pre>
+        <p>
+          <code>cargo clippy</code> signale ce genre de comparaison directe entre flottants via le lint
+          <code>clippy::float_cmp</code>, car l'arithmétique flottante en base 2 ne représente pas
+          exactement la plupart des nombres décimaux (0.1 + 0.2 ≠ 0.3 exactement). En estimation d'état
+          (Kalman) comme en cinématique, compare toujours des flottants à un epsilon près plutôt qu'avec
+          <code>==</code>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Rust vise les mêmes performances que le C/C++ tout en éliminant à la compilation les erreurs mémoire et les data races.</li>
+        <li><code>rustup</code> installe <code>rustc</code>, <code>cargo</code>, et permet d'ajouter <code>clippy</code> et <code>rustfmt</code>.</li>
+        <li><code>cargo new</code> crée un projet standard (<code>Cargo.toml</code> + <code>src/main.rs</code>) ; <code>cargo check</code>, <code>cargo run</code> et <code>cargo build --release</code> couvrent le cycle de développement.</li>
+        <li>Le mode <code>--release</code> est obligatoire pour évaluer ou déployer du code temps réel : le mode debug n'est pas représentatif des performances réelles.</li>
+        <li>Un identifiant suivi de <code>!</code> comme <code>println!</code> est une macro, vérifiée à la compilation — contrairement à <code>printf</code> en C.</li>
+        <li><code>cargo clippy</code> et <code>cargo fmt</code> font partie du flux de travail normal, pas d'une étape optionnelle.</li>
+        <li>Le fil rouge du cours, le projet <code>robot_kalman</code>, grandira chapitre après chapitre jusqu'à un filtre de Kalman et une cinématique directe/inverse complets.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="index.html"><span class="lbl">← Précédent</span>Sommaire</a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>Variables, types &amp; mutabilité</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

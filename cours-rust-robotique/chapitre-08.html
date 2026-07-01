@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 08 — Gestion d'erreurs : Result, Option, ?</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 08</span><br>Gestion d'erreurs : Result, Option, ?</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre pourquoi Rust n'a ni exceptions, ni pointeur nul, et ce que ça change</li>
+        <li>Manipuler <code>Option&lt;T&gt;</code> pour représenter une valeur absente (mesure invalide, division impossible…)</li>
+        <li>Manipuler <code>Result&lt;T, E&gt;</code> pour représenter un échec récupérable (capteur en panne, matrice singulière…)</li>
+        <li>Propager les erreurs proprement avec l'opérateur <code>?</code> au lieu d'empiler des <code>if</code></li>
+        <li>Savoir quand un <code>panic!</code> survient et pourquoi il est inacceptable dans une boucle de contrôle temps réel</li>
+        <li>Définir son propre type d'erreur pour une bibliothèque de robotique</li>
+      </ul>
+    </div>
+
+    <h2>1. La philosophie Rust : l'erreur est une valeur</h2>
+    <p>
+      En C, une fonction qui peut échouer renvoie souvent un code magique : <code>-1</code>, <code>NULL</code>,
+      <code>0</code>… charge à l'appelant de se souvenir de la convention et de vérifier le retour — ce qu'on
+      oublie régulièrement. En C++, on peut lancer une exception, mais rien dans la signature de la fonction
+      ne le signale : il faut lire la documentation (ou le code source) pour savoir ce qui peut être lancé,
+      et un <code>throw</code> non attrapé peut dérouler la pile n'importe où, y compris dans un contexte
+      temps réel où ce n'est pas acceptable.
+    </p>
+    <p>
+      Rust n'a <strong>pas d'exceptions</strong> et n'a <strong>pas de pointeur nul</strong>. À la place,
+      il encode l'absence de valeur et l'échec directement dans le <em>type de retour</em> :
+    </p>
+    <ul>
+      <li><code>Option&lt;T&gt;</code> — « il y a peut-être une valeur, ou pas ». Remplace le <code>NULL</code>.</li>
+      <li><code>Result&lt;T, E&gt;</code> — « ça a marché et voici <code>T</code>, ou ça a échoué et voici pourquoi (<code>E</code>) ». Remplace le code d'erreur et l'exception.</li>
+    </ul>
+    <p>
+      Le compilateur t'oblige à traiter les deux cas avant de pouvoir utiliser la valeur. Impossible d'« oublier »
+      de vérifier une erreur comme on oublie un <code>if (ret != 0)</code> en C : le code ne compile tout
+      simplement pas tant que le cas d'erreur n'est pas géré (ou explicitement ignoré, ce qui se voit).
+    </p>
+
+    <div class="callout piege">
+      <p>
+        En C, <code>int diviser(int a, int b)</code> qui renvoie <code>-1</code> en cas d'erreur est ambigu :
+        comment distinguer un vrai résultat de <code>-1</code> d'un code d'erreur <code>-1</code> ? Une fonction
+        qui renvoie <code>NULL</code> en cas d'échec force l'appelant à tester le pointeur — et rien n'empêche
+        de l'oublier, ce qui produit un déréférencement nul en production. En Rust, ces deux problèmes disparaissent :
+        le type <code>Option&lt;i32&gt;</code> ou <code>Result&lt;i32, ErreurDiv&gt;</code> sépare complètement
+        « la valeur » de « l'échec », et le compilateur refuse de compiler un code qui utiliserait la valeur
+        sans avoir géré le cas d'erreur.
+      </p>
+    </div>
+
+    <h2>2. Option&lt;T&gt; : une valeur qui peut manquer</h2>
+    <p>
+      <code>Option&lt;T&gt;</code> est un enum de la bibliothèque standard, défini (conceptuellement) ainsi :
+    </p>
+    <pre><code class="language-rust">enum Option&lt;T&gt; {
+    Some(T),
+    None,
+}</code></pre>
+    <p>
+      C'est le remplaçant direct du pointeur nul : là où en C tu écrirais <code>Capteur* c = NULL;</code>,
+      en Rust tu écris <code>Option&lt;Capteur&gt;</code>. La différence essentielle : le compilateur t'oblige
+      à distinguer le cas <code>Some</code> du cas <code>None</code> avant d'accéder à la valeur contenue.
+    </p>
+    <p>Reprenons le fil rouge : une fonction d'inversion scalaire qui échoue si le dénominateur est trop proche de zéro.</p>
+    <pre><code class="language-rust">/// Inverse une valeur, ou None si elle est trop proche de zéro
+/// (typiquement un gain, un facteur d'échelle...).
+fn inverser(a: f64) -> Option&lt;f64&gt; {
+    const EPSILON: f64 = 1e-9;
+    if a.abs() &lt; EPSILON {
+        None
+    } else {
+        Some(1.0 / a)
+    }
+}
+
+fn main() {
+    let gain = 2.0;
+    let inv = inverser(gain);
+
+    // 1. match : la manière la plus explicite
+    match inv {
+        Some(v) =&gt; println!("inverse = {v}"),
+        None =&gt; println!("gain trop proche de zéro, inversion impossible"),
+    }
+
+    // 2. if let : quand on ne s'intéresse qu'au cas Some
+    if let Some(v) = inverser(4.0) {
+        println!("1/4 = {v}");
+    }
+}</code></pre>
+
+    <h3>Méthodes utiles sur Option</h3>
+    <p>
+      Le <code>match</code> exhaustif est parfois lourd pour des cas simples. <code>Option</code> fournit
+      des méthodes combinatoires pour rester concis :
+    </p>
+    <pre><code class="language-rust">fn main() {
+    let a = inverser(0.0);   // None
+    let b = inverser(5.0);   // Some(0.2)
+
+    // unwrap() : extrait la valeur, panique si None (à réserver aux prototypes/tests)
+    let v = b.unwrap();
+    println!("{v}");
+
+    // expect() : comme unwrap, mais avec un message d'erreur explicite au panic
+    let v = b.expect("le gain ne devrait jamais être nul ici");
+
+    // unwrap_or(défaut) : fournit une valeur de repli, jamais de panic
+    let v = a.unwrap_or(0.0);
+    println!("valeur de repli : {v}");
+
+    // unwrap_or_else(|| ...) : le défaut est calculé paresseusement
+    let v = a.unwrap_or_else(|| calculer_defaut());
+
+    // map() : transforme la valeur si elle est présente, sans la « déballer »
+    let v_doublee: Option&lt;f64&gt; = b.map(|x| x * 2.0);
+
+    // and_then() : enchaîne une opération qui peut elle-même échouer
+    let resultat: Option&lt;f64&gt; = inverser(2.0).and_then(inverser);
+}
+
+fn calculer_defaut() -> f64 { 1.0 }</code></pre>
+    <p>
+      <code>map</code> et <code>and_then</code> sont l'équivalent, pour <code>Option</code>, de ce que
+      les chaînes de méthodes fonctionnelles apportent ailleurs : on enchaîne des transformations sans
+      jamais avoir à écrire de <code>if (ptr != NULL)</code> imbriqués.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Règle simple : <code>unwrap()</code> et <code>expect()</code> sont parfaits pour explorer une idée
+        au REPL ou dans un test unitaire. Dans du code qui tournera sur un robot, préfère systématiquement
+        <code>match</code>, <code>if let</code>, <code>unwrap_or</code> ou l'opérateur <code>?</code> —
+        des façons de gérer l'absence de valeur sans jamais arrêter le programme.
+      </p>
+    </div>
+
+    <h2>3. Result&lt;T, E&gt; : une opération qui peut échouer, avec une raison</h2>
+    <p>
+      <code>Option</code> dit « il y a une valeur, ou rien ». Mais parfois on veut savoir <em>pourquoi</em>
+      ça a échoué. C'est le rôle de <code>Result&lt;T, E&gt;</code> :
+    </p>
+    <pre><code class="language-rust">enum Result&lt;T, E&gt; {
+    Ok(T),
+    Err(E),
+}</code></pre>
+    <p>Exemple : le calcul d'une racine carrée, qui n'a pas de sens pour un nombre négatif.</p>
+    <pre><code class="language-rust">/// Racine carrée « sûre » : Err si x est négatif.
+fn racine(x: f64) -> Result&lt;f64, String&gt; {
+    if x &lt; 0.0 {
+        Err(format!("racine carrée d'un nombre négatif : {x}"))
+    } else {
+        Ok(x.sqrt())
+    }
+}
+
+fn main() {
+    match racine(16.0) {
+        Ok(r) =&gt; println!("racine = {r}"),
+        Err(e) =&gt; eprintln!("erreur : {e}"),
+    }
+
+    match racine(-4.0) {
+        Ok(r) =&gt; println!("racine = {r}"),
+        Err(e) =&gt; eprintln!("erreur : {e}"),
+    }
+}</code></pre>
+    <p>
+      Même famille de méthodes que sur <code>Option</code> : <code>unwrap()</code>, <code>expect()</code>,
+      <code>unwrap_or()</code>, <code>map()</code>, mais aussi <code>map_err()</code> pour transformer
+      l'erreur, et <code>is_ok()</code> / <code>is_err()</code> pour un simple test booléen.
+    </p>
+
+    <h3>Cas d'usage typique en robotique : inversion de matrice</h3>
+    <p>
+      Une matrice singulière (déterminant nul) n'est pas inversible. C'est exactement le genre d'échec
+      qu'on modélise naturellement avec <code>Result</code> :
+    </p>
+    <pre><code class="language-rust">/// Vérifie qu'une matrice 2x2 [[a, b], [c, d]] est inversible
+/// (déterminant non nul), condition préalable à toute inversion.
+fn verifier_inversible(a: f64, b: f64, c: f64, d: f64) -> Result&lt;f64, String&gt; {
+    let det = a * d - b * c;
+    if det.abs() &lt; 1e-9 {
+        Err(format!("matrice singulière (déterminant = {det:.2e}), non inversible"))
+    } else {
+        Ok(det)
+    }
+}
+
+fn inverser_matrice_2x2(a: f64, b: f64, c: f64, d: f64) -> Result&lt;[[f64; 2]; 2], String&gt; {
+    let det = verifier_inversible(a, b, c, d)?;
+    let inv_det = 1.0 / det;
+    Ok([
+        [ d * inv_det, -b * inv_det],
+        [-c * inv_det,  a * inv_det],
+    ])
+}</code></pre>
+
+    <h2>4. L'opérateur <code>?</code> : propager sans s'encombrer</h2>
+    <p>
+      Remarque, dans <code>inverser_matrice_2x2</code> ci-dessus, la ligne <code>verifier_inversible(a, b, c, d)?</code>.
+      C'est l'opérateur <code>?</code>, sans doute la fonctionnalité qui rend la gestion d'erreurs de Rust
+      agréable à écrire au quotidien.
+    </p>
+    <p>Sans <code>?</code>, il faudrait écrire :</p>
+    <pre><code class="language-rust">fn inverser_matrice_2x2_verbeux(a: f64, b: f64, c: f64, d: f64) -> Result&lt;[[f64; 2]; 2], String&gt; {
+    let det = match verifier_inversible(a, b, c, d) {
+        Ok(valeur) =&gt; valeur,
+        Err(e) =&gt; return Err(e),   // retour anticipé : on propage l'erreur telle quelle
+    };
+    let inv_det = 1.0 / det;
+    Ok([
+        [ d * inv_det, -b * inv_det],
+        [-c * inv_det,  a * inv_det],
+    ])
+}</code></pre>
+    <p>
+      <code>?</code> fait exactement ceci : si la valeur est <code>Ok(x)</code>, il s'évalue en <code>x</code>
+      et l'exécution continue normalement ; si c'est <code>Err(e)</code>, il déclenche immédiatement un
+      <code>return Err(e)</code> depuis la fonction courante — un retour anticipé, sans panique, sans
+      déroulement de pile façon exception. La même règle s'applique à <code>Option</code> : <code>?</code>
+      sur un <code>None</code> déclenche un <code>return None</code> immédiat.
+    </p>
+    <pre><code class="language-rust">/// Simule la lecture d'un capteur de distance. Peut échouer
+/// (capteur déconnecté, valeur hors plage...).
+fn lire_capteur_brut(id: u8) -> Result&lt;f64, String&gt; {
+    if id == 0 {
+        return Err("capteur 0 : non connecté".to_string());
+    }
+    Ok(42.0) // valeur simulée
+}
+
+/// Lit un capteur puis en dérive une distance calibrée.
+/// Propage l'erreur de lecture avec ?, sans avoir à la re-matcher.
+fn distance_calibree(id: u8, facteur: f64) -> Result&lt;f64, String&gt; {
+    let brut = lire_capteur_brut(id)?;      // remonte l'Err telle quelle si échec
+    let inv = inverser(facteur)
+        .ok_or_else(|| "facteur de calibration nul".to_string())?; // Option -> Result puis ?
+    Ok(brut * inv)
+}
+
+fn main() {
+    match distance_calibree(1, 2.0) {
+        Ok(d) =&gt; println!("distance = {d}"),
+        Err(e) =&gt; eprintln!("échec de lecture : {e}"),
+    }
+}</code></pre>
+    <p>
+      Notez <code>ok_or_else()</code> : elle convertit un <code>Option&lt;T&gt;</code> en <code>Result&lt;T, E&gt;</code>
+      en fournissant l'erreur à utiliser si la valeur était <code>None</code>. C'est le pont naturel entre
+      les deux mondes, très utile quand une fonction combine des étapes qui renvoient l'un ou l'autre.
+    </p>
+    <p>
+      <code>?</code> ne peut être utilisé que dans une fonction dont le type de retour est compatible
+      (<code>Result&lt;_, E&gt;</code> ou <code>Option&lt;_&gt;</code>) — le compilateur refuse de compiler
+      sinon, ce qui évite toute confusion sur « où » l'erreur va réellement remonter.
+    </p>
+
+    <h2>5. panic! : quand tout s'arrête</h2>
+    <p>
+      Un <code>panic!</code> est différent d'une <code>Err</code> : ce n'est pas une erreur récupérable,
+      c'est l'arrêt (par défaut, déroulement de pile puis fin du thread, voire du programme) suite à une
+      situation que le programme juge irrécupérable. Il survient notamment :
+    </p>
+    <ul>
+      <li>en appelant <code>.unwrap()</code> ou <code>.expect()</code> sur un <code>None</code> ou un <code>Err</code> ;</li>
+      <li>en accédant à un tableau ou un <code>Vec</code> hors de ses bornes : <code>v[10]</code> quand <code>v.len() == 3</code> ;</li>
+      <li>lors d'une division entière par zéro ;</li>
+      <li>lors d'un débordement arithmétique en mode debug (<code>overflow</code> sur entiers).</li>
+    </ul>
+    <pre><code class="language-rust">fn main() {
+    let mesures: [f64; 3] = [1.0, 2.0, 3.0];
+    let i = 5;
+    let v = mesures[i]; // panique : "index out of bounds"
+
+    let x: Option&lt;f64&gt; = None;
+    let y = x.unwrap();  // panique : "called `Option::unwrap()` on a `None` value"
+}</code></pre>
+    <p>
+      C'est une amélioration nette par rapport au C, où <code>mesures[5]</code> sur un tableau de taille 3
+      lit simplement de la mémoire hors bornes sans avertissement (comportement indéfini) — un panic Rust
+      est au moins <em>détecté et signalé</em>. Mais dans un système embarqué qui pilote un bras robotisé,
+      « détecté et signalé » ne suffit pas : il faut que le programme continue à fonctionner.
+    </p>
+
+    <div class="callout temps">
+      <p>
+        Dans une boucle de contrôle temps réel (asservissement, lecture de capteurs à fréquence fixe,
+        planification de trajectoire), un <code>panic!</code> est <strong>catastrophique</strong> : la
+        boucle s'arrête net, le robot n'est plus commandé, un actionneur peut rester figé dans un état
+        dangereux. Contrairement à une exception C++ qu'on peut attraper localement avec <code>try/catch</code>,
+        un panic Rust n'est pas fait pour être « récupéré » en routine — <code>catch_unwind</code> existe
+        mais reste un filet de sécurité, pas une stratégie de gestion d'erreurs.
+      </p>
+      <p>
+        La règle en production : <strong>bannir <code>unwrap()</code>/<code>expect()</code></strong> (et
+        les indexations non vérifiées) dans tout code qui tourne dans la boucle de contrôle. Utilise
+        <code>match</code>, <code>if let</code>, <code>unwrap_or</code>, ou remonte l'erreur avec <code>?</code>
+        jusqu'à un point où elle peut être traitée sereinement : basculer sur une valeur de repli, passer
+        en mode sécurisé, journaliser et continuer avec la dernière mesure valide. Le compilateur t'aide
+        déjà énormément en forçant à traiter <code>Option</code>/<code>Result</code> ; le dernier kilomètre
+        (ne pas céder à la facilité du <code>unwrap()</code>) reste une discipline humaine.
+      </p>
+    </div>
+
+    <h2>6. Définir son propre type d'erreur</h2>
+    <p>
+      <code>String</code> comme type d'erreur (utilisé plus haut) est pratique pour prototyper, mais dans
+      une bibliothèque de robotique digne de ce nom, on préfère un <code>enum</code> : l'appelant peut alors
+      distinguer précisément les cas d'échec avec un <code>match</code>, sans parser du texte.
+    </p>
+    <pre><code class="language-rust">use std::fmt;
+
+/// Toutes les erreurs possibles d'un module de cinématique.
+#[derive(Debug)]
+enum ErreurCinematique {
+    AngleHorsPlage { articulation: usize, valeur: f64 },
+    MatriceSinguliere,
+    CapteurDeconnecte(u8),
+}
+
+// Debug (au-dessus, via #[derive]) sert au débogage : {:?}
+// Display sert à l'utilisateur final : {}
+impl fmt::Display for ErreurCinematique {
+    fn fmt(&amp;self, f: &amp;mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ErreurCinematique::AngleHorsPlage { articulation, valeur } =&gt;
+                write!(f, "articulation {articulation} : angle {valeur} hors plage"),
+            ErreurCinematique::MatriceSinguliere =&gt;
+                write!(f, "matrice jacobienne singulière, pas de solution"),
+            ErreurCinematique::CapteurDeconnecte(id) =&gt;
+                write!(f, "capteur {id} déconnecté"),
+        }
+    }
+}
+
+fn verifier_angle(articulation: usize, valeur: f64) -> Result&lt;(), ErreurCinematique&gt; {
+    if valeur.abs() &gt; std::f64::consts::PI {
+        Err(ErreurCinematique::AngleHorsPlage { articulation, valeur })
+    } else {
+        Ok(())
+    }
+}
+
+fn main() {
+    if let Err(e) = verifier_angle(2, 4.5) {
+        eprintln!("erreur cinématique : {e}");   // utilise Display
+        eprintln!("détail debug : {e:?}");        // utilise Debug
+    }
+}</code></pre>
+    <p>
+      Pour des projets plus gros, deux crates de l'écosystème simplifient ce travail (à connaître de nom,
+      sans qu'il soit nécessaire de les détailler ici) : <code>thiserror</code> génère automatiquement les
+      impl <code>Display</code>/<code>Error</code> d'un enum d'erreur via des macros d'attributs, et
+      <code>anyhow</code> fournit un type d'erreur « boîte noire » pratique pour les applications (par
+      opposition aux bibliothèques, où un enum précis reste préférable).
+    </p>
+
+    <div class="callout note">
+      <ul>
+        <li>Rust n'a ni exceptions ni <code>NULL</code> : l'échec et l'absence de valeur sont des <em>types</em>, <code>Option&lt;T&gt;</code> et <code>Result&lt;T, E&gt;</code>, que le compilateur t'oblige à traiter.</li>
+        <li><code>Option&lt;T&gt;</code> = valeur présente (<code>Some</code>) ou absente (<code>None</code>) ; <code>Result&lt;T, E&gt;</code> = succès (<code>Ok</code>) ou échec avec raison (<code>Err</code>).</li>
+        <li>L'opérateur <code>?</code> propage l'erreur d'un appel imbriqué par retour anticipé, sans verbosité — la clé d'un code de gestion d'erreurs lisible.</li>
+        <li><code>unwrap()</code>/<code>expect()</code> et les accès hors bornes provoquent un <code>panic!</code> ; inacceptable dans une boucle de contrôle temps réel, réservé au prototypage et aux tests.</li>
+        <li>Un enum d'erreur personnalisé (avec <code>Display</code>/<code>Debug</code>) donne à l'appelant une information précise et exploitable par <code>match</code> ; <code>thiserror</code>/<code>anyhow</code> outillent ce pattern en pratique.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Division sûre</h3>
+      <p>
+        Écris une fonction <code>fn diviser(a: f64, b: f64) -&gt; Option&lt;f64&gt;</code> qui renvoie
+        <code>None</code> si <code>b</code> est trop proche de zéro (utilise un seuil <code>1e-9</code>
+        comme dans <code>inverser</code>), et <code>Some(a / b)</code> sinon. Teste-la avec <code>10.0 / 2.0</code>
+        et <code>1.0 / 0.0</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn diviser(a: f64, b: f64) -> Option&lt;f64&gt; {
+    const EPSILON: f64 = 1e-9;
+    if b.abs() &lt; EPSILON {
+        None
+    } else {
+        Some(a / b)
+    }
+}
+
+fn main() {
+    match diviser(10.0, 2.0) {
+        Some(r) =&gt; println!("10 / 2 = {r}"),
+        None =&gt; println!("division impossible"),
+    }
+
+    match diviser(1.0, 0.0) {
+        Some(r) =&gt; println!("1 / 0 = {r}"),
+        None =&gt; println!("division impossible"),
+    }
+}</code></pre>
+        <p>
+          On applique exactement le même garde-fou que pour <code>inverser</code> : jamais de division brute
+          par une valeur qui pourrait être nulle, la vérification est encodée dans le type de retour lui-même.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Propagation avec ?</h3>
+      <p>
+        Écris une fonction <code>fn parser_angle(s: &amp;str) -&gt; Result&lt;f64, String&gt;</code> qui
+        parse une chaîne en <code>f64</code> (utilise <code>s.parse::&lt;f64&gt;()</code>, qui renvoie un
+        <code>Result&lt;f64, ParseFloatError&gt;</code>) puis vérifie, avec la fonction <code>racine</code> du
+        cours, que ce nombre a une racine carrée valide (donc qu'il n'est pas négatif). Utilise <code>?</code>
+        pour propager les deux échecs possibles jusqu'à l'appelant.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn racine(x: f64) -> Result&lt;f64, String&gt; {
+    if x &lt; 0.0 {
+        Err(format!("racine carrée d'un nombre négatif : {x}"))
+    } else {
+        Ok(x.sqrt())
+    }
+}
+
+fn parser_angle(s: &amp;str) -> Result&lt;f64, String&gt; {
+    // parse::&lt;f64&gt;() renvoie Result&lt;f64, ParseFloatError&gt; ; map_err
+    // convertit l'erreur en String pour rester homogène avec racine().
+    let valeur: f64 = s.parse::&lt;f64&gt;().map_err(|e| format!("nombre invalide : {e}"))?;
+    let r = racine(valeur)?;   // propage directement si valeur &lt; 0.0
+    Ok(r)
+}
+
+fn main() {
+    for entree in ["16.0", "-4.0", "abc"] {
+        match parser_angle(entree) {
+            Ok(r) =&gt; println!("{entree} -> racine = {r}"),
+            Err(e) =&gt; println!("{entree} -> erreur : {e}"),
+        }
+    }
+}</code></pre>
+        <p>
+          Deux points de propagation, un seul opérateur <code>?</code> à chaque fois : la fonction reste
+          courte et lisible, sans <code>match</code> imbriqués.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Gérer un None avec unwrap_or</h3>
+      <p>
+        En utilisant <code>inverser</code> du cours, écris une fonction
+        <code>fn gain_securise(a: f64) -&gt; f64</code> qui renvoie l'inverse de <code>a</code> si possible,
+        ou <code>1.0</code> (gain neutre) si l'inversion échoue. N'utilise ni <code>match</code> ni <code>if let</code> :
+        une seule expression avec <code>unwrap_or</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn inverser(a: f64) -> Option&lt;f64&gt; {
+    const EPSILON: f64 = 1e-9;
+    if a.abs() &lt; EPSILON { None } else { Some(1.0 / a) }
+}
+
+fn gain_securise(a: f64) -> f64 {
+    inverser(a).unwrap_or(1.0)
+}
+
+fn main() {
+    println!("{}", gain_securise(2.0)); // 0.5
+    println!("{}", gain_securise(0.0)); // 1.0 (repli, aucun panic)
+}</code></pre>
+        <p>
+          <code>unwrap_or</code> est idéal ici : la valeur de repli (<code>1.0</code>) est constante et
+          bon marché à calculer, donc pas besoin de <code>unwrap_or_else</code> avec une closure.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Enum d'erreur ErreurCinematique</h3>
+      <p>
+        Reprends l'enum <code>ErreurCinematique</code> du cours et ajoute une fonction
+        <code>fn decrire(e: &amp;ErreurCinematique) -&gt; &amp;'static str</code> qui utilise un <code>match</code>
+        pour renvoyer une courte catégorie textuelle selon la variante : <code>"entrée invalide"</code> pour
+        <code>AngleHorsPlage</code>, <code>"échec numérique"</code> pour <code>MatriceSinguliere</code>,
+        <code>"matériel"</code> pour <code>CapteurDeconnecte</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">#[derive(Debug)]
+enum ErreurCinematique {
+    AngleHorsPlage { articulation: usize, valeur: f64 },
+    MatriceSinguliere,
+    CapteurDeconnecte(u8),
+}
+
+fn decrire(e: &amp;ErreurCinematique) -> &amp;'static str {
+    match e {
+        ErreurCinematique::AngleHorsPlage { .. } =&gt; "entrée invalide",
+        ErreurCinematique::MatriceSinguliere =&gt; "échec numérique",
+        ErreurCinematique::CapteurDeconnecte(_) =&gt; "matériel",
+    }
+}
+
+fn main() {
+    let erreurs = [
+        ErreurCinematique::AngleHorsPlage { articulation: 1, valeur: 5.0 },
+        ErreurCinematique::MatriceSinguliere,
+        ErreurCinematique::CapteurDeconnecte(3),
+    ];
+
+    for e in &amp;erreurs {
+        println!("{:?} -> catégorie : {}", e, decrire(e));
+    }
+}</code></pre>
+        <p>
+          Le <code>match</code> sur l'enum est exhaustif : si on ajoute une nouvelle variante à
+          <code>ErreurCinematique</code> plus tard, le compilateur signale immédiatement tous les endroits
+          (comme cette fonction <code>decrire</code>) qu'il faut mettre à jour — impossible d'oublier un cas
+          en silence, contrairement à un <code>switch</code> C sans <code>default</code>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><code>Option&lt;T&gt;</code> remplace le pointeur nul ; <code>Result&lt;T, E&gt;</code> remplace le code d'erreur/l'exception — les deux forcent, via le système de types, à traiter le cas d'échec.</li>
+        <li><code>?</code> propage une <code>Err</code>/un <code>None</code> par retour anticipé : c'est l'outil principal pour écrire des chaînes d'opérations faillibles sans verbosité.</li>
+        <li><code>unwrap()</code>/<code>expect()</code> sont réservés au prototypage/tests ; dans une boucle de contrôle temps réel, un panic est catastrophique — gère toujours l'erreur explicitement.</li>
+        <li>Un enum d'erreur personnalisé + <code>Display</code>/<code>Debug</code> donne des erreurs précises et exploitables par <code>match</code> ; <code>thiserror</code> et <code>anyhow</code> outillent ce pattern à plus grande échelle.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-07.html"><span class="lbl">← Précédent</span>Traits &amp; génériques</a>
+    <a class="next" href="chapitre-09.html"><span class="lbl">Suivant →</span>Modules, crates &amp; nalgebra</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

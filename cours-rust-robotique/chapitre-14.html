@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 14 — Temps réel &amp; performance</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 14</span><br>Temps réel &amp; performance</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre ce que « temps réel » veut vraiment dire : déterminisme et respect des échéances, pas seulement « rapide ».</li>
+        <li>Identifier les ennemis du déterminisme : allocations imprévisibles, verrous, pagination — et pourquoi l'absence de ramasse-miettes est un atout de Rust.</li>
+        <li>Éviter les allocations dans la boucle de contrôle en préférant tableaux fixes et matrices statiques <code>nalgebra</code>.</li>
+        <li>Configurer un profil de compilation optimisé et mesurer avant d'optimiser.</li>
+        <li>Découvrir <code>no_std</code>, l'écosystème embarqué et les bases de la concurrence sûre.</li>
+        <li>Appliquer ces principes au fil rouge : une boucle FK/IK/Kalman cadencée à fréquence fixe (1 kHz).</li>
+      </ul>
+    </div>
+
+    <h2>1. Que veut dire « temps réel » ?</h2>
+    <p>
+      Un débutant confond souvent « temps réel » avec « très rapide ». C'est une erreur.
+      Un système temps réel est un système qui garantit qu'une réponse sera produite
+      <em>avant une échéance</em> (une <em>deadline</em>) donnée. Ce qui compte n'est pas la
+      vitesse moyenne, mais le <strong>déterminisme</strong> : la certitude que le pire cas
+      restera sous la limite. Une boucle qui répond en 50 µs 999 fois sur 1000, mais qui prend
+      parfois 5 ms, n'est pas temps réel — même si elle est « rapide » en moyenne.
+    </p>
+    <p>On distingue :</p>
+    <ul>
+      <li><strong>Temps réel dur</strong> : rater une échéance est une défaillance grave
+        (asservissement d'un bras robotisé, commande moteur à 1 kHz, freinage). La deadline
+        est un contrat inviolable.</li>
+      <li><strong>Temps réel souple</strong> : rater occasionnellement une échéance dégrade la
+        qualité sans être catastrophique (affichage vidéo, interface, télémétrie).</li>
+    </ul>
+    <p>
+      En robotique d'asservissement, on vise en général le temps réel dur : la boucle de contrôle
+      doit s'exécuter à période fixe (par exemple toutes les millisecondes, soit 1 kHz) avec une
+      <em>gigue</em> (jitter) minimale.
+    </p>
+
+    <p>Les principaux ennemis du déterminisme sont :</p>
+    <ul>
+      <li><strong>Les allocations dynamiques</strong> : demander de la mémoire à l'allocateur
+        (<code>malloc</code>, <code>Vec::push</code>…) a un coût imprévisible — parfois quelques
+        nanosecondes, parfois beaucoup plus si l'allocateur doit réorganiser le tas.</li>
+      <li><strong>Le ramasse-miettes (GC)</strong> : dans les langages comme Java, Go ou C#, le GC
+        peut suspendre le programme à un instant imprévisible. <strong>Rust n'a pas de GC</strong> :
+        la mémoire est gérée à la compilation par le système d'<em>ownership</em>. C'est l'un de ses
+        plus grands atouts pour le temps réel — pas de pauses surprises.</li>
+      <li><strong>La pagination</strong> : si une page mémoire a été déplacée sur le disque (swap),
+        y accéder provoque un défaut de page très lent.</li>
+      <li><strong>Les verrous (locks)</strong> : attendre un <code>Mutex</code> détenu par un autre
+        thread introduit une latence non bornée.</li>
+    </ul>
+
+    <div class="callout note">
+      <p>
+        Rust élimine le pire ennemi (le GC) par construction, mais il ne vous empêche <em>pas</em>
+        d'allouer. Un <code>Vec::push</code> ou un <code>format!</code> caché dans la boucle de
+        contrôle peut toujours ruiner votre déterminisme. Le langage vous donne les outils ;
+        c'est à vous de discipliner la boucle chaude.
+      </p>
+    </div>
+
+    <h2>2. Éviter les allocations dans la boucle de contrôle</h2>
+    <p>
+      La règle d'or : <strong>zéro allocation dans la boucle chaude</strong>. Toute la mémoire dont
+      la boucle a besoin doit être réservée <em>avant</em> son démarrage. Concrètement, on préfère
+      les données de taille connue à la compilation.
+    </p>
+    <p>
+      En C/C++ on utiliserait un tableau C <code>double x[6];</code>. En Rust, l'équivalent est le
+      tableau de taille fixe <code>[f64; N]</code>, entièrement sur la pile, sans allocation :
+    </p>
+
+    <pre><code class="language-rust">// ❌ À éviter dans la boucle : Vec alloue sur le tas
+let mut erreurs: Vec&lt;f64&gt; = Vec::new();
+for i in 0..6 {
+    erreurs.push(consigne[i] - mesure[i]); // réallocations possibles
+}
+
+// ✅ Tableau fixe : taille connue, pas d'allocation, tout sur la pile
+let mut erreurs = [0.0_f64; 6];
+for i in 0..6 {
+    erreurs[i] = consigne[i] - mesure[i];
+}</code></pre>
+
+    <p>
+      Pour l'algèbre linéaire, <code>nalgebra</code> distingue les matrices <strong>statiques</strong>
+      (taille dans le type, allouées sur la pile) des matrices <strong>dynamiques</strong> (taille
+      au runtime, allouées sur le tas). Pour du temps réel, on utilise <strong>toujours</strong> les
+      versions statiques :
+    </p>
+
+    <pre><code class="language-rust">use nalgebra::{SMatrix, Matrix3, Matrix4, Vector3};
+
+// ❌ Dynamique : allocation sur le tas à chaque création
+use nalgebra::DMatrix;
+let jacobienne = DMatrix::&lt;f64&gt;::zeros(6, 6); // alloue
+
+// ✅ Statique : taille dans le type, sur la pile, pas d'allocation
+let jacobienne: SMatrix&lt;f64, 6, 6&gt; = SMatrix::zeros();
+let rotation: Matrix3&lt;f64&gt; = Matrix3::identity();   // 3×3
+let transfo: Matrix4&lt;f64&gt; = Matrix4::identity();    // 4×4 (transformation homogène)
+let position: Vector3&lt;f64&gt; = Vector3::new(0.1, 0.2, 0.3);</code></pre>
+
+    <p>
+      Quand vous ne pouvez pas éviter une collection de taille variable, <strong>réutilisez un buffer</strong>
+      alloué une seule fois et réservez sa capacité <em>hors</em> de la boucle :
+    </p>
+
+    <pre><code class="language-rust">// Allocation UNIQUE, avant la boucle : réserve la capacité une fois pour toutes
+let mut buffer: Vec&lt;f64&gt; = Vec::with_capacity(1024);
+
+loop {
+    buffer.clear();          // remet la longueur à 0 SANS libérer la mémoire
+    for i in 0..taille {
+        buffer.push(lire_capteur(i)); // ne réalloue pas tant que len ≤ capacité
+    }
+    traiter(&amp;buffer);
+    // ... période suivante ...
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Attention aux allocations cachées.</strong> Elles ne ressemblent pas toujours à un
+        <code>Vec::new()</code>. Se cachent notamment : <code>format!</code> et <code>to_string()</code>
+        (construisent une <code>String</code>), <code>.collect::&lt;Vec&lt;_&gt;&gt;()</code>,
+        <code>.clone()</code> sur un type possédant un tas, <code>Box::new</code>, la conversion
+        <code>&amp;[T] → Vec&lt;T&gt;</code>, ou encore <code>println!</code> qui touche un verrou global
+        sur <code>stdout</code>. Dans la boucle de contrôle, traquez-les.
+      </p>
+    </div>
+
+    <h2>3. Compilation optimisée</h2>
+    <p>
+      Par défaut, <code>cargo build</code> compile en mode <em>debug</em> : sans optimisations, avec
+      des vérifications de débordement. C'est utile pour développer mais <strong>catastrophique</strong>
+      pour les performances (souvent 10 à 100× plus lent). Pour mesurer ou déployer, compilez toujours
+      en mode release : <code>cargo build --release</code>.
+    </p>
+    <p>Poussez les réglages du profil release dans le <code>Cargo.toml</code> :</p>
+
+    <pre><code class="language-rust"># Cargo.toml
+[profile.release]
+opt-level = 3          # optimisation maximale (vitesse)
+lto = true             # link-time optimization : optimise à travers les crates
+codegen-units = 1      # une seule unité : plus lent à compiler, meilleur code
+panic = "abort"        # pas de déroulement de pile : binaire plus petit et rapide</code></pre>
+
+    <p>
+      Pour exploiter les instructions spécifiques de votre processeur (par exemple AVX pour la
+      vectorisation des calculs matriciels), activez <code>target-cpu=native</code>. Attention :
+      le binaire produit ne sera plus portable vers d'autres CPU.
+    </p>
+
+    <pre><code class="language-rust"># .cargo/config.toml
+[build]
+rustflags = ["-C", "target-cpu=native"]</code></pre>
+
+    <p>
+      Enfin, l'attribut <code>#[inline]</code> suggère au compilateur d'incorporer une petite fonction
+      chaude sur son site d'appel, évitant le coût de l'appel. À réserver aux fonctions courtes et
+      très fréquemment appelées (avec LTO, le compilateur inline déjà beaucoup de choses tout seul) :
+    </p>
+
+    <pre><code class="language-rust">#[inline]
+fn produit_scalaire(a: &amp;[f64; 3], b: &amp;[f64; 3]) -&gt; f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <code>panic = "abort"</code> supprime le déroulement de pile : un panic arrête net le
+        programme au lieu de le dérouler. C'est souvent souhaitable en embarqué (on n'a rien à
+        « rattraper » proprement) et cela réduit la taille du binaire. Sachez toutefois que vous
+        perdez la possibilité de rattraper un panic avec <code>catch_unwind</code>.
+      </p>
+    </div>
+
+    <h2>4. Mesurer avant d'optimiser</h2>
+    <p>
+      « L'optimisation prématurée est la racine de tous les maux » (Knuth). Avant de tordre votre
+      code, <strong>mesurez</strong> : les intuitions sur ce qui est lent sont presque toujours
+      fausses. Pour un chronomètre rapide, <code>std::time::Instant</code> suffit :
+    </p>
+
+    <pre><code class="language-rust">use std::time::Instant;
+
+let debut = Instant::now();
+let resultat = cinematique_inverse(&amp;pose_cible);
+let ecoule = debut.elapsed();
+println!("IK calculée en {:?} ({} µs)", ecoule, ecoule.as_micros());</code></pre>
+
+    <p>
+      Un chrono maison mesure bruyamment (une seule exécution, sensible au bruit du système). Pour
+      des mesures fiables et statistiquement solides, utilisez le crate <strong>criterion</strong> :
+      il exécute la fonction des milliers de fois, gère la chauffe (warm-up), calcule des intervalles
+      de confiance et détecte les régressions entre deux versions.
+    </p>
+
+    <pre><code class="language-rust">// benches/ik.rs — exécuté avec `cargo bench`
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+fn bench_ik(c: &amp;mut Criterion) {
+    let pose = pose_test();
+    c.bench_function("cinematique_inverse", |b| {
+        // black_box empêche le compilateur d'éliminer le calcul
+        b.iter(|| cinematique_inverse(black_box(&amp;pose)));
+    });
+}
+
+criterion_group!(benches, bench_ik);
+criterion_main!(benches);</code></pre>
+
+    <div class="callout piege">
+      <p>
+        Ne mesurez <strong>jamais</strong> les performances en mode debug : les chiffres n'ont
+        aucun sens. Compilez toujours vos benchmarks en release (<code>cargo bench</code> le fait
+        automatiquement). Et méfiez-vous du compilateur : sans <code>black_box</code>, il peut
+        constater qu'un résultat n'est pas utilisé et supprimer purement et simplement votre calcul.
+      </p>
+    </div>
+
+    <h2>5. Le problème des flottants</h2>
+    <p>
+      Les nombres à virgule flottante (<code>f32</code>, <code>f64</code>) réservent des pièges qui
+      touchent directement l'asservissement et les filtres du chapitre précédent.
+    </p>
+    <ul>
+      <li><strong>Déterminisme.</strong> Un même calcul peut donner des résultats <em>légèrement</em>
+        différents selon l'ordre des opérations, le CPU ou l'usage d'instructions fusionnées (FMA).
+        Pour de la reproductibilité stricte (rejouer un log à l'identique), il faut y prêter attention.</li>
+      <li><strong>NaN et infinis.</strong> <code>0.0 / 0.0</code> donne <code>NaN</code> ; une division
+        par un nombre minuscule explose vers l'infini. Un <code>NaN</code> est contagieux : toute
+        opération qui l'implique redonne <code>NaN</code>, et il se compare <code>false</code> à tout
+        (même à lui-même). Une seule valeur <code>NaN</code> qui s'infiltre dans l'état du robot peut
+        le rendre incontrôlable.</li>
+      <li><strong>Divisions par ~0.</strong> Près d'une singularité (bras tendu en IK) ou quand une
+        matrice de covariance devient mal conditionnée (Kalman), un dénominateur frôle zéro et le
+        résultat diverge. Protégez systématiquement ces divisions.</li>
+    </ul>
+
+    <pre><code class="language-rust">const EPSILON: f64 = 1e-9;
+
+fn division_sure(numerateur: f64, denominateur: f64) -&gt; f64 {
+    if denominateur.abs() &lt; EPSILON {
+        0.0 // ou une valeur de repli adaptée au contexte physique
+    } else {
+        numerateur / denominateur
+    }
+}
+
+// Détecter une valeur corrompue avant qu'elle ne se propage
+fn est_valide(x: f64) -&gt; bool {
+    x.is_finite() // false pour NaN ET pour ±infini
+}</code></pre>
+
+    <h2>6. <code>no_std</code> et l'embarqué</h2>
+    <p>
+      Sur un microcontrôleur (STM32, RP2040…), il n'y a pas de système d'exploitation, pas de tas
+      généreux, parfois pas d'unité à virgule flottante matérielle. La bibliothèque standard de Rust
+      (<code>std</code>) suppose un OS (fichiers, threads, allocateur…) et n'est pas disponible. On
+      utilise alors <strong><code>no_std</code></strong> : on renonce à <code>std</code> pour ne
+      garder que <code>core</code>, le cœur du langage sans dépendance à un système.
+    </p>
+
+    <pre><code class="language-rust">#![no_std]   // pas de bibliothèque standard
+#![no_main]  // pas de fonction main() classique fournie par l'OS
+
+use core::f64; // core reste disponible : types, slices, Option, Result…</code></pre>
+
+    <p>
+      En <code>no_std</code>, plusieurs choses disparaissent et sont remplacées par des crates dédiés :
+    </p>
+    <ul>
+      <li><strong><code>libm</code></strong> : les fonctions mathématiques (<code>sin</code>,
+        <code>cos</code>, <code>sqrt</code>, <code>atan2</code>…) vivent normalement dans
+        <code>std</code>. <code>libm</code> les réimplémente en pur Rust, sans OS.</li>
+      <li><strong><code>heapless</code></strong> : des collections de capacité fixe
+        (<code>heapless::Vec&lt;T, N&gt;</code>, <code>heapless::String&lt;N&gt;</code>) qui vivent
+        sur la pile <em>sans jamais allouer</em> — parfait pour le temps réel dur, même hors embarqué.</li>
+      <li><strong><code>embedded-hal</code></strong> : une couche d'abstraction matérielle standard
+        (GPIO, SPI, I²C, PWM…) qui rend le code portable entre microcontrôleurs.</li>
+      <li><strong>RTIC</strong> (Real-Time Interrupt-driven Concurrency) : un framework
+        d'ordonnancement piloté par interruptions, avec priorités, qui garantit l'absence de
+        <em>data race</em> à la compilation. Idéal pour structurer une application temps réel dur.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        Bonne nouvelle pour le fil rouge : <strong><code>nalgebra</code> fonctionne en <code>no_std</code></strong>
+        (avec la feature adéquate et <code>libm</code> pour les fonctions transcendantes). Vos matrices
+        statiques <code>Matrix3</code>, <code>Matrix4</code> et votre code de FK/IK peuvent donc tourner
+        tels quels sur microcontrôleur, sans allocation.
+      </p>
+    </div>
+
+    <h2>7. Concurrence sûre (survol)</h2>
+    <p>
+      Rust est célèbre pour sa « <em>fearless concurrency</em> » : le compilateur garantit à la
+      compilation l'absence de <em>data races</em>. Deux traits marqueurs y contribuent :
+    </p>
+    <ul>
+      <li><strong><code>Send</code></strong> : un type peut être <em>transféré</em> vers un autre thread.</li>
+      <li><strong><code>Sync</code></strong> : un type peut être <em>partagé</em> (via une référence)
+        entre threads en sécurité.</li>
+    </ul>
+    <p>
+      Ces traits sont déduits automatiquement. Si vous tentez de partager une donnée mutable sans
+      protection entre threads, le programme <strong>ne compile pas</strong> — l'erreur est attrapée
+      avant l'exécution, pas dans un crash sporadique à 3 h du matin.
+    </p>
+
+    <pre><code class="language-rust">use std::thread;
+use std::sync::{Arc, Mutex};
+
+// Un état partagé, protégé par un Mutex, compté par référence (Arc)
+let etat = Arc::new(Mutex::new([0.0_f64; 6]));
+
+let etat_capteur = Arc::clone(&amp;etat);
+let lecteur = thread::spawn(move || {
+    let mut e = etat_capteur.lock().unwrap();
+    e[0] = lire_capteur();
+});
+
+lecteur.join().unwrap();</code></pre>
+
+    <div class="callout note">
+      <p>
+        La concurrence est puissante, mais rappelez-vous la section 1 : un <code>Mutex</code>
+        introduit une latence potentiellement non bornée. Pour la <strong>boucle de contrôle temps
+        réel dur</strong>, l'approche la plus sûre reste souvent une <strong>boucle mono-thread
+        déterministe</strong> : un seul fil d'exécution, à priorité élevée, cadencé par un timer,
+        sans verrou ni allocation. Le multithread sert alors aux tâches périphériques (journalisation,
+        communication, supervision), pas au cœur de l'asservissement.
+      </p>
+    </div>
+
+    <h2>8. Fil rouge : la boucle FK/IK/Kalman à 1 kHz</h2>
+    <p>
+      Rassemblons tout. Notre robot doit exécuter, à chaque milliseconde, l'enchaînement complet :
+      lire les capteurs, filtrer l'état (Kalman), calculer la cinématique directe (FK), résoudre la
+      cinématique inverse (IK), envoyer les commandes. Voici le squelette d'une boucle qui respecte
+      les principes de ce chapitre : <strong>tout est préalloué, rien n'alloue dans la boucle</strong>.
+    </p>
+
+    <pre><code class="language-rust">use nalgebra::{SMatrix, Matrix4, Vector3};
+use std::time::{Duration, Instant};
+
+const PERIODE: Duration = Duration::from_micros(1000); // 1 ms → 1 kHz
+
+fn boucle_controle() {
+    // --- Préallocation : tout l'état vit hors de la boucle, sur la pile ---
+    let mut angles = [0.0_f64; 6];            // articulations, tableau fixe
+    let mut etat_kalman = Vector3::&lt;f64&gt;::zeros();
+    let mut p: SMatrix&lt;f64, 3, 3&gt; = SMatrix::identity(); // covariance statique
+    let mut transfo: Matrix4&lt;f64&gt; = Matrix4::identity();
+
+    let mut pire_cas = Duration::ZERO;
+
+    loop {
+        let debut = Instant::now();
+
+        // 1. Lecture capteurs (dans des buffers déjà alloués)
+        lire_encodeurs(&amp;mut angles);
+
+        // 2. Filtrage Kalman — matrices statiques, aucune allocation
+        etat_kalman = predire(&amp;etat_kalman, &amp;mut p);
+        etat_kalman = corriger(&amp;etat_kalman, &amp;mut p, &amp;angles);
+
+        // 3. Cinématique directe : angles → pose de l'effecteur
+        transfo = cinematique_directe(&amp;angles);
+
+        // 4. Cinématique inverse : pose cible → angles de consigne
+        let consigne = cinematique_inverse(&amp;transfo);
+
+        // 5. Commande moteurs
+        envoyer_commande(&amp;consigne);
+
+        // --- Surveillance de l'échéance ---
+        let ecoule = debut.elapsed();
+        if ecoule &gt; pire_cas {
+            pire_cas = ecoule; // on suit le PIRE cas, pas la moyenne
+        }
+        if ecoule &gt; PERIODE {
+            // Échéance manquée : à journaliser / traiter selon la criticité
+            deadline_manquee(ecoule);
+        }
+
+        // Attendre le début de la prochaine période
+        if let Some(reste) = PERIODE.checked_sub(ecoule) {
+            attendre(reste);
+        }
+    }
+}</code></pre>
+
+    <p>
+      Ce qui rend cette boucle « temps réel » : le budget de 1 ms est explicite, on mesure le pire cas,
+      on détecte les dépassements, et surtout <em>aucune ligne n'alloue sur le tas</em>. En release avec
+      LTO et <code>target-cpu=native</code>, les calculs matriciels statiques se vectorisent et le pire
+      cas reste largement sous l'échéance.
+    </p>
+
+    <div class="callout temps">
+      <h3>Checklist « temps réel en Rust »</h3>
+      <ul>
+        <li>☐ Compiler en <code>--release</code> avec un profil optimisé (opt-level 3, LTO, codegen-units=1).</li>
+        <li>☐ Zéro allocation dans la boucle chaude : tableaux fixes <code>[f64; N]</code> et matrices statiques <code>nalgebra</code>.</li>
+        <li>☐ Préallouer tous les buffers <em>avant</em> la boucle (<code>Vec::with_capacity</code>, réutilisation).</li>
+        <li>☐ Traquer les allocations cachées : <code>format!</code>, <code>collect</code>, <code>clone</code>, <code>println!</code>.</li>
+        <li>☐ Mesurer avant d'optimiser (<code>Instant</code>, <code>criterion</code>) — jamais en debug.</li>
+        <li>☐ Protéger les divisions par ~0 et détecter les <code>NaN</code>/infinis (<code>is_finite</code>).</li>
+        <li>☐ Suivre le <strong>pire cas</strong> et détecter les échéances manquées, pas seulement la moyenne.</li>
+        <li>☐ Boucle de contrôle mono-thread déterministe ; verrous et allocations relégués aux tâches périphériques.</li>
+        <li>☐ Pour l'embarqué : <code>no_std</code> + <code>libm</code> + <code>heapless</code> ; <code>nalgebra</code> tourne aussi en no_std.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Chronométrer une fonction</h3>
+      <p>
+        Écris une fonction <code>chrono</code> générique qui exécute une fermeture (closure), mesure
+        sa durée avec <code>Instant</code>, affiche le temps écoulé en microsecondes et renvoie le
+        résultat de la fermeture. Utilise-la pour chronométrer un calcul de ton choix.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use std::time::Instant;
+
+fn chrono&lt;T, F: FnOnce() -&gt; T&gt;(nom: &amp;str, f: F) -&gt; T {
+    let debut = Instant::now();
+    let resultat = f();           // exécute le travail
+    let ecoule = debut.elapsed();
+    println!("{nom} : {} µs", ecoule.as_micros());
+    resultat                      // on rend le résultat à l'appelant
+}
+
+fn main() {
+    let somme = chrono("somme_carres", || {
+        (0u64..1_000_000).map(|x| x * x).sum::&lt;u64&gt;()
+    });
+    println!("Résultat = {somme}");
+}</code></pre>
+        <p>
+          La fonction est générique sur le type de retour <code>T</code> et le type de fermeture <code>F</code>.
+          Le trait <code>FnOnce</code> suffit car on n'appelle la fermeture qu'une fois. En renvoyant
+          <code>T</code>, le chrono devient transparent : on peut l'insérer autour de n'importe quel
+          calcul sans changer le reste du code. Pense à compiler en <code>--release</code> pour obtenir
+          des chiffres réalistes.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Du <code>Vec</code> au tableau fixe</h3>
+      <p>Voici une fonction qui alloue à chaque appel. Réécris-la sans aucune allocation, sachant que le vecteur d'état fait toujours 3 éléments.</p>
+      <pre><code class="language-rust">// Version à convertir
+fn combiner(a: &amp;[f64], b: &amp;[f64], gain: f64) -&gt; Vec&lt;f64&gt; {
+    let mut sortie = Vec::new();
+    for i in 0..a.len() {
+        sortie.push(a[i] + gain * b[i]);
+    }
+    sortie
+}</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">// La taille (3) est désormais dans le type : ni Vec, ni allocation.
+fn combiner(a: &amp;[f64; 3], b: &amp;[f64; 3], gain: f64) -&gt; [f64; 3] {
+    let mut sortie = [0.0_f64; 3];
+    for i in 0..3 {
+        sortie[i] = a[i] + gain * b[i];
+    }
+    sortie
+}
+
+// Variante idiomatique, sans indices explicites :
+fn combiner_iter(a: &amp;[f64; 3], b: &amp;[f64; 3], gain: f64) -&gt; [f64; 3] {
+    let mut sortie = [0.0_f64; 3];
+    for (s, (&amp;ai, &amp;bi)) in sortie.iter_mut().zip(a.iter().zip(b.iter())) {
+        *s = ai + gain * bi;
+    }
+    sortie
+}</code></pre>
+        <p>
+          En passant de <code>&amp;[f64]</code> (slice de taille inconnue) à <code>&amp;[f64; 3]</code>
+          (tableau de taille fixe), la taille est vérifiée à la compilation et le résultat vit sur la
+          pile. Aucune allocation, aucune réallocation. Le compilateur peut même dérouler et vectoriser
+          la boucle puisqu'il connaît la longueur.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Profil release optimisé</h3>
+      <p>
+        Rédige la section <code>[profile.release]</code> d'un <code>Cargo.toml</code> pour une
+        application temps réel : optimisation maximale, LTO activée, une seule unité de génération de
+        code, et arrêt immédiat en cas de panic. Ajoute ensuite le <code>.cargo/config.toml</code>
+        pour cibler le CPU natif.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust"># Cargo.toml
+[profile.release]
+opt-level = 3          # vitesse maximale
+lto = true             # optimisation au moment de l'édition de liens
+codegen-units = 1      # compile en une unité → meilleur code (build plus long)
+panic = "abort"        # pas de déroulement de pile : plus petit et déterministe
+
+# On peut aussi optimiser le profil bench (basé sur release par défaut)
+[profile.bench]
+lto = true
+codegen-units = 1</code></pre>
+        <pre><code class="language-rust"># .cargo/config.toml
+[build]
+rustflags = ["-C", "target-cpu=native"]</code></pre>
+        <p>
+          <code>opt-level = 3</code> et <code>lto = true</code> donnent le gros des gains.
+          <code>codegen-units = 1</code> rallonge la compilation mais laisse le compilateur optimiser
+          globalement. <code>panic = "abort"</code> convient au temps réel/embarqué. Enfin
+          <code>target-cpu=native</code> débloque les instructions SIMD de ta machine — au prix de la
+          portabilité du binaire.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Chasse aux allocations cachées</h3>
+      <p>Ce fragment est censé tourner dans la boucle de contrôle à 1 kHz. Repère toutes les allocations (et coûts) cachés, puis propose une version sans allocation.</p>
+      <pre><code class="language-rust">fn etape(angles: &amp;[f64; 6], journal: &amp;mut Vec&lt;String&gt;) -&gt; Vec&lt;f64&gt; {
+    let msg = format!("angles reçus : {:?}", angles);
+    journal.push(msg);
+    println!("étape en cours");
+    let consignes: Vec&lt;f64&gt; = angles.iter().map(|a| a * 2.0).collect();
+    consignes.clone()
+}</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Les allocations et coûts cachés sont :</p>
+        <ul>
+          <li><code>format!(...)</code> construit une nouvelle <code>String</code> sur le tas.</li>
+          <li><code>journal.push(msg)</code> peut réallouer le <code>Vec&lt;String&gt;</code>.</li>
+          <li><code>println!</code> prend un verrou global sur <code>stdout</code> et fait une
+            entrée/sortie — latence non bornée dans une boucle chaude.</li>
+          <li><code>.collect::&lt;Vec&lt;f64&gt;&gt;()</code> alloue un nouveau <code>Vec</code>.</li>
+          <li><code>consignes.clone()</code> alloue <em>encore</em> un <code>Vec</code> (copie inutile).</li>
+        </ul>
+        <pre><code class="language-rust">// Sortie de taille fixe, écrite en place, aucune allocation, aucune E/S.
+fn etape(angles: &amp;[f64; 6]) -&gt; [f64; 6] {
+    let mut consignes = [0.0_f64; 6];
+    for i in 0..6 {
+        consignes[i] = angles[i] * 2.0;
+    }
+    consignes
+}</code></pre>
+        <p>
+          Le journal et les affichages ne doivent pas vivre dans la boucle temps réel : on écrit plutôt
+          les échantillons dans un buffer circulaire préalloué, qu'un <em>autre</em> thread (basse
+          priorité) vide vers le disque ou le réseau. La boucle chaude, elle, ne fait que du calcul
+          déterministe sur des données de taille fixe.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>« Temps réel » = respect garanti des échéances (déterminisme), pas « rapide en moyenne » ; on distingue temps réel dur et souple.</li>
+        <li>Les ennemis du déterminisme : allocations imprévisibles, pagination, verrous. Rust supprime le pire (pas de GC) mais ne vous interdit pas d'allouer.</li>
+        <li>Boucle chaude : zéro allocation. Tableaux fixes <code>[f64; N]</code>, matrices statiques <code>nalgebra</code> (<code>SMatrix</code>, <code>Matrix3/4</code>), buffers préalloués et réutilisés.</li>
+        <li>Compiler en <code>--release</code> avec un profil optimisé (opt-level 3, LTO, codegen-units=1, panic=abort) et <code>target-cpu=native</code> ; <code>#[inline]</code> sur les petites fonctions chaudes.</li>
+        <li>Mesurer avant d'optimiser : <code>Instant</code> pour un chrono, <code>criterion</code> pour des benchs fiables — jamais en debug.</li>
+        <li>Flottants : gérer <code>NaN</code>/infinis (<code>is_finite</code>), protéger les divisions par ~0 (IK et Kalman).</li>
+        <li>Embarqué : <code>no_std</code> + <code>libm</code> + <code>heapless</code>, écosystème <code>embedded-hal</code>/RTIC ; <code>nalgebra</code> fonctionne aussi en no_std.</li>
+        <li>Concurrence sûre par le compilateur (<code>Send</code>/<code>Sync</code>) ; pour le temps réel dur, garder une boucle mono-thread déterministe.</li>
+      </ul>
+    </div>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Mot de la fin.</strong> Vous voici arrivé au bout de ce cours : des bases du langage
+        jusqu'à une boucle de contrôle FK/IK/Kalman cadencée à 1 kHz, sans allocation et déterministe.
+        Rust vous offre la performance du C/C++ <em>avec</em> les garanties de sécurité mémoire et de
+        concurrence en prime — un compagnon idéal pour la robotique temps réel. Mais lire ne suffit
+        pas : ouvrez un terminal, lancez <code>cargo new</code>, branchez un vrai capteur ou un
+        simulateur, mesurez, cassez, corrigez. C'est en écrivant du code temps réel qu'on l'apprend.
+        Bonne route, et que vos échéances soient toujours respectées ! 🦀
+      </p>
+    </div>
+
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-13.html"><span class="lbl">← Précédent</span>Filtre de Kalman linéaire</a>
+    <a class="next" href="index.html"><span class="lbl">Suivant →</span>Retour au sommaire</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

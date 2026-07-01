@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 13 — Filtre de Kalman linéaire</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 13</span><br>Filtre de Kalman linéaire</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre l'intuition du filtre de Kalman : fusionner un modèle de prédiction et des mesures bruitées.</li>
+        <li>Poser rigoureusement le modèle d'état linéaire gaussien (F, B, Q, H, R, P).</li>
+        <li>Connaître par cœur les équations de prédiction et de mise à jour, et le sens du gain de Kalman.</li>
+        <li>Dérouler un exemple concret : suivi 1D position-vitesse avec mesure de position seule.</li>
+        <li>Implémenter un <code>FiltreKalman</code> générique et sans allocation avec <code>nalgebra</code>.</li>
+        <li>Situer l'EKF (filtre étendu) comme suite naturelle pour les systèmes non linéaires.</li>
+      </ul>
+    </div>
+
+    <h2>1. Intuition</h2>
+    <p>
+      Un robot ne connaît jamais son état exact. Les capteurs sont bruités (un GPS oscille de quelques
+      mètres, un accéléromètre dérive) et le modèle de mouvement n'est qu'une approximation. Le
+      <strong>filtre de Kalman</strong> résout ce dilemme : il combine deux sources d'information imparfaites
+      — ce que le <em>modèle</em> prédit et ce que les <em>mesures</em> observent — pour produire une estimation
+      meilleure que chacune prise isolément.
+    </p>
+    <p>
+      L'idée maîtresse : on ne suit pas seulement une valeur, mais une <strong>distribution de probabilité</strong>.
+      Pour un système linéaire dont les bruits sont gaussiens, cette distribution reste gaussienne à chaque
+      instant, entièrement décrite par sa moyenne (l'état estimé <span class="math-inline">x</span>) et sa
+      covariance (la matrice <span class="math-inline">P</span>, notre <em>incertitude</em>). Sous ces
+      hypothèses, le filtre de Kalman est l'<strong>estimateur optimal</strong> au sens de l'erreur quadratique
+      moyenne : aucun autre estimateur ne fait mieux.
+    </p>
+    <p>
+      En robotique on le rencontre partout : suivi de position/vitesse d'un mobile, fusion de capteurs
+      (IMU + odométrie + GPS), estimation d'attitude, poursuite de cible. À chaque cycle, le filtre
+      <em>prédit</em> puis <em>corrige</em>, indéfiniment.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Mentalement : la prédiction <em>gonfle</em> l'incertitude (le modèle vieillit, on est de moins en
+        moins sûr), la mise à jour la <em>réduit</em> (une mesure fraîche resserre notre connaissance).
+        Le filtre est cette respiration permanente entre doute et confiance.
+      </p>
+    </div>
+
+    <h2>2. Le modèle</h2>
+    <p>
+      On modélise un système dynamique linéaire à temps discret. À l'instant <span class="math-inline">k</span> :
+    </p>
+    <ul>
+      <li><strong>État</strong> <span class="math-inline">x</span> (vecteur <span class="math-inline">n</span>) :
+        les grandeurs à estimer (ex. position et vitesse).</li>
+      <li><strong>Matrice de transition</strong> <span class="math-inline">F</span> (<span class="math-inline">n×n</span>) :
+        comment l'état évolue d'un pas au suivant selon la physique.</li>
+      <li><strong>Commande</strong> <span class="math-inline">u</span> et <strong>matrice de commande</strong>
+        <span class="math-inline">B</span> : l'effet des entrées connues (accélération commandée, couple).</li>
+      <li><strong>Bruit de process</strong> <span class="math-inline">Q</span> (<span class="math-inline">n×n</span>,
+        covariance) : ce que le modèle ne capture pas (forces non modélisées, discrétisation).</li>
+      <li><strong>Mesure</strong> <span class="math-inline">z</span> (vecteur <span class="math-inline">m</span>) :
+        ce que les capteurs renvoient.</li>
+      <li><strong>Matrice d'observation</strong> <span class="math-inline">H</span> (<span class="math-inline">m×n</span>) :
+        relie l'état à ce qu'on mesure (<span class="math-inline">z = H·x</span> en l'absence de bruit).</li>
+      <li><strong>Bruit de mesure</strong> <span class="math-inline">R</span> (<span class="math-inline">m×m</span>,
+        covariance) : le bruit propre des capteurs.</li>
+      <li><strong>Covariance d'état</strong> <span class="math-inline">P</span> (<span class="math-inline">n×n</span>) :
+        notre incertitude courante sur <span class="math-inline">x</span>.</li>
+    </ul>
+    <p>Le système obéit à deux équations, l'une de dynamique, l'autre d'observation :</p>
+    <div class="math">
+      x<sub>k</sub> = F · x<sub>k−1</sub> + B · u<sub>k</sub> + w<sub>k</sub> ,&nbsp;&nbsp; w<sub>k</sub> ∼ 𝒩(0, Q)<br>
+      z<sub>k</sub> = H · x<sub>k</sub> + v<sub>k</sub> ,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; v<sub>k</sub> ∼ 𝒩(0, R)
+    </div>
+    <p>
+      Les bruits <span class="math-inline">w</span> et <span class="math-inline">v</span> sont supposés
+      blancs, gaussiens, de moyenne nulle et mutuellement indépendants. Ce sont ces hypothèses qui rendent
+      le filtre optimal.
+    </p>
+
+    <h2>3. Les équations</h2>
+    <p>
+      Chaque cycle enchaîne deux phases. On note <span class="math-inline">x⁻</span>, <span class="math-inline">P⁻</span>
+      l'état et la covariance <em>prédits</em> (avant mesure, « a priori »), et <span class="math-inline">x</span>,
+      <span class="math-inline">P</span> les valeurs <em>corrigées</em> (après mesure, « a posteriori »).
+    </p>
+
+    <h3>3.1 Prédiction</h3>
+    <div class="math">
+      <strong>x⁻ = F · x + B · u</strong><br>
+      <strong>P⁻ = F · P · Fᵀ + Q</strong>
+    </div>
+    <p>
+      On propage l'état à travers la dynamique. La covariance est transportée par
+      <span class="math-inline">F·P·Fᵀ</span> (une covariance se transforme en « sandwich »
+      <span class="math-inline">F … Fᵀ</span>, jamais un simple produit) puis <em>augmentée</em> de
+      <span class="math-inline">Q</span> : prédire, c'est perdre de la certitude.
+    </p>
+
+    <h3>3.2 Mise à jour (correction)</h3>
+    <div class="math">
+      innovation : <strong>y = z − H · x⁻</strong><br>
+      covariance de l'innovation : <strong>S = H · P⁻ · Hᵀ + R</strong><br>
+      gain de Kalman : <strong>K = P⁻ · Hᵀ · S⁻¹</strong><br>
+      <strong>x = x⁻ + K · y</strong><br>
+      <strong>P = (I − K · H) · P⁻</strong>
+    </div>
+    <p>
+      L'<strong>innovation</strong> <span class="math-inline">y</span> mesure l'écart entre la mesure réelle
+      et la mesure attendue depuis la prédiction : c'est la nouvelle information. <span class="math-inline">S</span>
+      est l'incertitude totale de cet écart (incertitude prédite projetée dans l'espace des mesures, plus le
+      bruit capteur <span class="math-inline">R</span>). Le <strong>gain</strong> <span class="math-inline">K</span>
+      dose enfin la correction, et l'état est ajusté proportionnellement à l'innovation.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        La covariance ne se transforme <em>jamais</em> par <span class="math-inline">F·P</span> seul : il faut
+        le sandwich <span class="math-inline">F·P·Fᵀ</span>. De même <span class="math-inline">S</span> utilise
+        <span class="math-inline">H·P⁻·Hᵀ</span>. Oublier la transposée est l'erreur la plus fréquente et
+        produit une matrice non carrée — le compilateur nalgebra vous l'interdira à la compilation si vos
+        dimensions sont statiques (voir §7).
+      </p>
+    </div>
+
+    <h2>4. Le sens du gain de Kalman</h2>
+    <p>
+      Tout le filtre tient dans l'arbitrage porté par <span class="math-inline">K = P⁻·Hᵀ·S⁻¹</span>.
+      Regardons les deux régimes extrêmes sur un cas scalaire où
+      <span class="math-inline">K = P⁻ / (P⁻ + R)</span> :
+    </p>
+    <ul>
+      <li>
+        <strong>Capteur très précis</strong> (<span class="math-inline">R → 0</span>) :
+        <span class="math-inline">K → 1</span>. Le filtre fait confiance à la mesure et corrige fortement,
+        <span class="math-inline">x ≈ z</span>.
+      </li>
+      <li>
+        <strong>Capteur très bruité</strong> (<span class="math-inline">R → ∞</span>) :
+        <span class="math-inline">K → 0</span>. Le filtre ignore la mesure et garde sa prédiction,
+        <span class="math-inline">x ≈ x⁻</span>.
+      </li>
+    </ul>
+    <p>
+      Le gain arbitre donc en permanence entre <em>croire le modèle</em> et <em>croire la mesure</em>, en
+      fonction de leurs incertitudes respectives. C'est un pont de Wheatstone probabiliste.
+    </p>
+
+    <div class="callout note">
+      <p>
+        <strong>Régler Q et R.</strong> <span class="math-inline">R</span> est souvent connu : c'est la
+        variance du capteur, donnée par sa fiche technique ou mesurée capteur immobile.
+        <span class="math-inline">Q</span> est le paramètre d'accord : petit
+        <span class="math-inline">Q</span> ⇒ on fait confiance au modèle, le filtre est lisse mais lent à
+        réagir ; grand <span class="math-inline">Q</span> ⇒ on tolère les surprises, le filtre est réactif
+        mais nerveux. On ajuste <span class="math-inline">Q</span> jusqu'à ce que l'innovation ressemble à un
+        bruit blanc.
+      </p>
+    </div>
+
+    <h2>5. Exemple concret : suivi 1D position-vitesse</h2>
+    <p>
+      Suivons un mobile sur un axe. On mesure seulement sa <strong>position</strong> (un capteur bruité),
+      mais on veut aussi estimer sa <strong>vitesse</strong>. C'est là que Kalman brille : la vitesse n'est
+      jamais mesurée directement, elle est <em>inférée</em> de l'évolution des positions.
+    </p>
+    <p>
+      État : <span class="math-inline">x = [p, v]ᵀ</span> (position, vitesse). Modèle à vitesse constante
+      sur un pas <span class="math-inline">dt</span> : <span class="math-inline">p ← p + v·dt</span>,
+      <span class="math-inline">v ← v</span>. D'où :
+    </p>
+    <div class="math">
+      F =
+      [ 1&nbsp;&nbsp;dt ]<br>
+      &nbsp;&nbsp;&nbsp;[ 0&nbsp;&nbsp;&nbsp;1 ]
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      H = [ 1&nbsp;&nbsp;0 ]
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+      x = [ p&nbsp;&nbsp;v ]ᵀ
+    </div>
+    <p>
+      <span class="math-inline">H = [1, 0]</span> traduit « je ne mesure que la position ». Déroulons
+      l'intuition sur quelques cycles (sans commande, <span class="math-inline">u = 0</span>) :
+    </p>
+    <ol>
+      <li>
+        <strong>Départ.</strong> On initialise <span class="math-inline">x = [0, 0]</span> mais on ne sait
+        pas vraiment : <span class="math-inline">P</span> est grand (forte incertitude).
+      </li>
+      <li>
+        <strong>Prédiction.</strong> Avec <span class="math-inline">v = 0</span>, la position prédite ne
+        bouge pas, mais <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span> grandit : on doute davantage.
+      </li>
+      <li>
+        <strong>Mesure.</strong> Le capteur annonce <span class="math-inline">z = 1.0</span>. L'innovation
+        <span class="math-inline">y = 1.0 − 0 = 1.0</span> est forte. Comme <span class="math-inline">P⁻</span>
+        est grand, <span class="math-inline">K</span> est proche de 1 : le filtre saute presque à la mesure.
+      </li>
+      <li>
+        <strong>Cycles suivants.</strong> Les positions successives montent régulièrement. Le terme croisé
+        de <span class="math-inline">P</span> couple position et vitesse : le filtre <em>déduit</em> qu'une
+        vitesse non nulle explique le mouvement, et son estimation de <span class="math-inline">v</span>
+        converge vers la vraie vitesse — alors qu'aucun capteur ne l'a jamais mesurée.
+      </li>
+    </ol>
+    <p>
+      Après quelques dizaines de cycles, <span class="math-inline">P</span> se stabilise (régime permanent)
+      et <span class="math-inline">K</span> devient constant : le filtre a trouvé son équilibre entre modèle
+      et mesure.
+    </p>
+
+    <h2>6. Implémentation Rust avec nalgebra</h2>
+    <p>
+      On utilise <a href="https://nalgebra.org">nalgebra</a> avec des dimensions <strong>statiques</strong>
+      (<code>Const&lt;N&gt;</code> via les alias <code>SMatrix</code>/<code>SVector</code>) : les matrices
+      vivent sur la pile, sans allocation, et les dimensions incompatibles sont rejetées à la compilation.
+      La struct est générique sur la dimension d'état <code>N</code> et la dimension de mesure <code>M</code>
+      (const generics).
+    </p>
+
+    <pre><code class="language-rust">use nalgebra::{SMatrix, SVector};
+
+/// Filtre de Kalman linéaire générique.
+/// N = dimension de l'état, M = dimension de la mesure.
+pub struct FiltreKalman&lt;const N: usize, const M: usize&gt; {
+    pub x: SVector&lt;f64, N&gt;,       // état estimé
+    pub p: SMatrix&lt;f64, N, N&gt;,    // covariance d'état
+    pub f: SMatrix&lt;f64, N, N&gt;,    // transition
+    pub q: SMatrix&lt;f64, N, N&gt;,    // bruit de process
+    pub h: SMatrix&lt;f64, M, N&gt;,    // observation
+    pub r: SMatrix&lt;f64, M, M&gt;,    // bruit de mesure
+}
+
+impl&lt;const N: usize, const M: usize&gt; FiltreKalman&lt;N, M&gt; {
+    pub fn new(
+        x0: SVector&lt;f64, N&gt;,
+        p0: SMatrix&lt;f64, N, N&gt;,
+        f: SMatrix&lt;f64, N, N&gt;,
+        q: SMatrix&lt;f64, N, N&gt;,
+        h: SMatrix&lt;f64, M, N&gt;,
+        r: SMatrix&lt;f64, M, M&gt;,
+    ) -&gt; Self {
+        Self { x: x0, p: p0, f, q, h, r }
+    }
+
+    /// Phase de prédiction (commande nulle ici pour rester simple).
+    /// x⁻ = F·x        P⁻ = F·P·Fᵀ + Q
+    pub fn predict(&amp;mut self) {
+        self.x = self.f * self.x;
+        self.p = self.f * self.p * self.f.transpose() + self.q;
+    }
+
+    /// Phase de correction avec une mesure z.
+    /// y = z − H·x⁻      S = H·P⁻·Hᵀ + R      K = P⁻·Hᵀ·S⁻¹
+    /// x = x⁻ + K·y      P = (I − K·H)·P⁻
+    /// Renvoie false si S n'est pas inversible (correction ignorée).
+    pub fn update(&amp;mut self, z: SVector&lt;f64, M&gt;) -&gt; bool {
+        let y = z - self.h * self.x;                       // innovation (M)
+        let s = self.h * self.p * self.h.transpose() + self.r; // (M×M)
+
+        let s_inv = match s.try_inverse() {
+            Some(inv) =&gt; inv,
+            None =&gt; return false, // S singulière : on saute la correction
+        };
+
+        let k = self.p * self.h.transpose() * s_inv;       // gain (N×M)
+        self.x += k * y;
+
+        let i = SMatrix::&lt;f64, N, N&gt;::identity();
+        self.p = (i - k * self.h) * self.p;
+
+        // On resymétrise pour contrer la dérive numérique.
+        self.p = (self.p + self.p.transpose()) * 0.5;
+        true
+    }
+}
+
+use nalgebra::{Matrix1, Matrix2, Vector1, Vector2};
+
+fn main() {
+    let dt = 1.0_f64;
+
+    // Modèle à vitesse constante : état [position, vitesse].
+    let f = Matrix2::new(1.0, dt,
+                         0.0, 1.0);
+    let h = nalgebra::Matrix1x2::new(1.0, 0.0); // on ne mesure que la position
+
+    // Bruit de process : petite incertitude sur le modèle.
+    let q = Matrix2::new(0.001, 0.0,
+                         0.0,   0.001);
+    // Bruit de mesure : variance du capteur de position.
+    let r = Matrix1::new(0.5);
+
+    // Initialisation : on ne sait presque rien -> P grand.
+    let x0 = Vector2::new(0.0, 0.0);
+    let p0 = Matrix2::new(100.0, 0.0,
+                          0.0,   100.0);
+
+    let mut kf: FiltreKalman&lt;2, 1&gt; =
+        FiltreKalman::new(x0, p0, f, q, h, r);
+
+    // Vérité terrain : le mobile part de 0 et avance à 1 m/s.
+    // On simule des mesures de position bruitées (bruit pseudo-aléatoire simple).
+    let vraie_vitesse = 1.0;
+    let mut graine = 12345u64;
+    let mut bruit = || {
+        // générateur congruentiel linéaire -> bruit centré dans [-0.7, 0.7]
+        graine = graine.wrapping_mul(6364136223846793005).wrapping_add(1);
+        ((graine &gt;&gt; 33) as f64 / u32::MAX as f64 - 0.5) * 1.4
+    };
+
+    println!(" k |  z (mesure) | p estimée | v estimée");
+    for k in 1..=10 {
+        let vraie_position = vraie_vitesse * k as f64;
+        let z = Vector1::new(vraie_position + bruit());
+
+        kf.predict();
+        kf.update(z);
+
+        println!(
+            "{:2} |   {:7.3}   |  {:6.3}   |  {:6.3}",
+            k, z[0], kf.x[0], kf.x[1]
+        );
+    }
+}</code></pre>
+
+    <p>
+      À l'exécution, la position estimée suit les mesures en les lissant, et l'estimation de vitesse
+      converge vers <span class="math-inline">1.0</span> alors qu'aucune mesure de vitesse n'a jamais été
+      fournie : la vitesse est reconstruite par le couplage dans <span class="math-inline">P</span> et le
+      modèle <span class="math-inline">F</span>.
+    </p>
+
+    <h2>7. Temps réel et stabilité numérique</h2>
+    <div class="callout temps">
+      <ul>
+        <li>
+          <strong>Dimensions fixes, pile.</strong> <code>SMatrix</code>/<code>SVector</code> stockent leurs
+          coefficients dans un tableau de taille connue à la compilation : aucune allocation dynamique,
+          layout prévisible, cache-friendly. Idéal pour une boucle temps réel à échéance dure.
+        </li>
+        <li>
+          <strong>Pas d'allocation dans <code>predict</code>/<code>update</code>.</strong> Toutes les
+          opérations produisent des matrices statiques temporaires sur la pile. Aucun appel au tas, donc
+          aucune latence imprévisible ni contention d'allocateur.
+        </li>
+        <li>
+          <strong>Coût de l'inversion.</strong> <span class="math-inline">S</span> est de taille
+          <span class="math-inline">m×m</span> avec <span class="math-inline">m</span> petit (souvent 1 à 3).
+          L'inversion est donc peu coûteuse et bornée. Pour <span class="math-inline">m = 1</span> c'est une
+          simple division. Ne jamais inverser <span class="math-inline">P</span> (<span class="math-inline">n×n</span>),
+          seulement <span class="math-inline">S</span>.
+        </li>
+        <li>
+          <strong>Forme de Joseph.</strong> La mise à jour <span class="math-inline">P = (I − K·H)·P⁻</span>
+          peut perdre sa symétrie/positivité en arithmétique flottante. La forme dite <em>de Joseph</em>,
+          <span class="math-inline">P = (I − K·H)·P⁻·(I − K·H)ᵀ + K·R·Kᵀ</span>, est plus coûteuse mais
+          garantit une <span class="math-inline">P</span> symétrique définie positive, précieuse pour un
+          filtre qui tourne des heures sans redémarrage.
+        </li>
+      </ul>
+    </div>
+
+    <div class="callout piege">
+      <p>
+        <strong>Trois pièges qui minent silencieusement un filtre :</strong>
+      </p>
+      <ul>
+        <li>
+          <strong>Symétrie de P.</strong> À force d'arrondis, <span class="math-inline">P</span> devient
+          asymétrique puis non définie positive, et le filtre diverge. Resymétriser
+          (<code>P = (P + Pᵀ)/2</code>) ou utiliser la forme de Joseph.
+        </li>
+        <li>
+          <strong>Unités cohérentes.</strong> <span class="math-inline">Q</span>, <span class="math-inline">R</span>,
+          <span class="math-inline">P</span> sont des covariances : leurs unités sont des <em>carrés</em>
+          (m², (m/s)²). Mélanger m et cm dans <span class="math-inline">F</span>, <span class="math-inline">H</span>
+          et les covariances fausse tout sans erreur visible.
+        </li>
+        <li>
+          <strong>Initialisation de P.</strong> Trop petit, le filtre s'entête sur un mauvais
+          <span class="math-inline">x0</span> (il « croit » déjà tout savoir). Trop grand, les premiers
+          cycles sont erratiques. En cas de doute, initialiser large : le filtre converge.
+        </li>
+      </ul>
+    </div>
+
+    <h2>8. Et pour le non linéaire ? L'EKF</h2>
+    <p>
+      Le filtre linéaire suppose <span class="math-inline">F</span> et <span class="math-inline">H</span>
+      constantes. Or beaucoup de systèmes robotiques sont non linéaires : la dynamique
+      <span class="math-inline">x = g(x, u)</span> et l'observation <span class="math-inline">z = h(x)</span>
+      sont des fonctions non linéaires (angles, distances euclidiennes, cinématique).
+    </p>
+    <p>
+      Le <strong>filtre de Kalman étendu (EKF)</strong> garde exactement la même structure prédiction/mise à
+      jour, mais <em>linéarise</em> localement ces fonctions à chaque cycle via leurs
+      <strong>jacobiennes</strong> :
+    </p>
+    <div class="math">
+      F ≈ ∂g/∂x |<sub>x̂</sub>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; H ≈ ∂h/∂x |<sub>x̂</sub>
+    </div>
+    <p>
+      C'est le même calcul de jacobienne que celui rencontré pour la cinématique inverse au
+      <a href="chapitre-12.html">chapitre 12</a> : on remplace la matrice constante par la matrice des
+      dérivées partielles évaluée à l'estimation courante. L'EKF perd la garantie d'optimalité (la
+      linéarisation introduit une erreur) mais reste l'outil de fusion de capteurs le plus répandu en
+      robotique mobile. Nous le détaillerons dans un chapitre ultérieur.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Implémenter <code>predict()</code></h3>
+      <p>
+        En repartant d'une struct <code>FiltreKalman</code> vide, écris la méthode
+        <code>predict(&amp;mut self)</code> qui applique <span class="math-inline">x⁻ = F·x</span> et
+        <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span>. Attention au sandwich.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">pub fn predict(&amp;mut self) {
+    // Propagation de l'état.
+    self.x = self.f * self.x;
+    // Propagation de la covariance : sandwich F·P·Fᵀ puis + Q.
+    self.p = self.f * self.p * self.f.transpose() + self.q;
+}</code></pre>
+        <p>
+          Le point crucial est <code>self.f.transpose()</code> : sans lui, le produit n'est même pas carré.
+          Avec des dimensions statiques, nalgebra refuserait de compiler une version incorrecte.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Implémenter <code>update()</code> avec le gain K</h3>
+      <p>
+        Écris <code>update(&amp;mut self, z)</code> : calcule l'innovation <span class="math-inline">y</span>,
+        la covariance d'innovation <span class="math-inline">S</span>, le gain
+        <span class="math-inline">K</span> via <code>try_inverse</code> (en gérant le cas
+        <code>None</code>), puis corrige <span class="math-inline">x</span> et
+        <span class="math-inline">P</span>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">pub fn update(&amp;mut self, z: SVector&lt;f64, M&gt;) -&gt; bool {
+    let y = z - self.h * self.x;                            // innovation
+    let s = self.h * self.p * self.h.transpose() + self.r;  // covariance innovation
+
+    // Inversion de S : gérer le cas singulier plutôt que paniquer.
+    let s_inv = match s.try_inverse() {
+        Some(inv) =&gt; inv,
+        None =&gt; return false,
+    };
+
+    let k = self.p * self.h.transpose() * s_inv;            // gain de Kalman
+    self.x += k * y;
+
+    let i = SMatrix::&lt;f64, N, N&gt;::identity();
+    self.p = (i - k * self.h) * self.p;
+    self.p = (self.p + self.p.transpose()) * 0.5;           // resymétrisation
+    true
+}</code></pre>
+        <p>
+          Retourner un <code>bool</code> (ou un <code>Result</code>) plutôt que d'appeler
+          <code>.unwrap()</code> sur <code>try_inverse</code> : en temps réel, une panique est inacceptable.
+          Une <span class="math-inline">S</span> singulière signale un capteur mort ou un
+          <span class="math-inline">R = 0</span> mal réglé ; on saute la correction et on continue.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Instancier un filtre position-vitesse 1D</h3>
+      <p>
+        Instancie un <code>FiltreKalman&lt;2, 1&gt;</code> avec
+        <span class="math-inline">F = [[1, dt],[0, 1]]</span>, <span class="math-inline">H = [1, 0]</span>,
+        et fais tourner 5 itérations avec les mesures de position
+        <span class="math-inline">[1.0, 2.1, 2.9, 4.2, 5.0]</span>. Affiche la vitesse estimée à chaque pas.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">use nalgebra::{Matrix1, Matrix1x2, Matrix2, Vector1, Vector2};
+
+fn main() {
+    let dt = 1.0;
+    let f = Matrix2::new(1.0, dt, 0.0, 1.0);
+    let h = Matrix1x2::new(1.0, 0.0);
+    let q = Matrix2::new(0.001, 0.0, 0.0, 0.001);
+    let r = Matrix1::new(0.3);
+    let x0 = Vector2::new(0.0, 0.0);
+    let p0 = Matrix2::new(100.0, 0.0, 0.0, 100.0);
+
+    let mut kf: FiltreKalman&lt;2, 1&gt; = FiltreKalman::new(x0, p0, f, q, h, r);
+
+    for z in [1.0, 2.1, 2.9, 4.2, 5.0] {
+        kf.predict();
+        kf.update(Vector1::new(z));
+        println!("pos = {:.3}, vit = {:.3}", kf.x[0], kf.x[1]);
+    }
+}</code></pre>
+        <p>
+          La vitesse estimée doit converger vers ≈ 1.0 (la pente moyenne des positions), bien qu'on ne
+          mesure que la position. Les premiers pas sont bruités car <span class="math-inline">P</span> part
+          grand.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Régler Q et R (compréhension)</h3>
+      <p>
+        Sans coder : dans le suivi 1D, on double <span class="math-inline">R</span> (capteur jugé deux fois
+        plus bruité) et on laisse <span class="math-inline">Q</span> inchangé. Qu'advient-il du gain
+        <span class="math-inline">K</span> en régime permanent, de la réactivité du filtre et du lissage de
+        la sortie ? Et si à l'inverse on augmentait fortement <span class="math-inline">Q</span> ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <strong>Doubler R</strong> : on déclare la mesure moins fiable. À
+          <span class="math-inline">P⁻</span> donné, <span class="math-inline">S = H·P⁻·Hᵀ + R</span>
+          augmente, donc <span class="math-inline">K = P⁻·Hᵀ·S⁻¹</span> diminue. Le filtre corrige moins,
+          fait davantage confiance au modèle : la sortie est plus lisse mais réagit plus lentement aux vrais
+          changements (elle « traîne » derrière les mesures).
+        </p>
+        <p>
+          <strong>Augmenter fortement Q</strong> : on déclare le modèle peu fiable.
+          <span class="math-inline">P⁻</span> gonfle à chaque prédiction, <span class="math-inline">K</span>
+          se rapproche de 1, le filtre colle aux mesures : très réactif mais bruité, il lisse à peine.
+        </p>
+        <p>
+          En pratique, <span class="math-inline">R</span> est fixé par le capteur et
+          <span class="math-inline">Q</span> est le curseur réactivité ↔ lissage. On cherche le réglage où
+          l'innovation ressemble à un bruit blanc de covariance <span class="math-inline">S</span>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>
+          <strong>Prédiction :</strong><br>
+          <span class="math-inline">x⁻ = F·x + B·u</span><br>
+          <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span>
+        </li>
+        <li>
+          <strong>Mise à jour :</strong><br>
+          <span class="math-inline">y = z − H·x⁻</span> (innovation)<br>
+          <span class="math-inline">S = H·P⁻·Hᵀ + R</span><br>
+          <span class="math-inline">K = P⁻·Hᵀ·S⁻¹</span> (gain)<br>
+          <span class="math-inline">x = x⁻ + K·y</span><br>
+          <span class="math-inline">P = (I − K·H)·P⁻</span>
+        </li>
+        <li>Le gain <span class="math-inline">K</span> arbitre entre modèle et mesure ; il tend vers 1 quand le capteur est fiable, vers 0 quand il est bruité.</li>
+        <li><span class="math-inline">R</span> vient du capteur, <span class="math-inline">Q</span> est le curseur réactivité/lissage ; garder <span class="math-inline">P</span> symétrique et les unités cohérentes.</li>
+        <li>Implémentation temps réel : dimensions statiques nalgebra, aucune allocation, inverser seulement la petite matrice <span class="math-inline">S</span>, forme de Joseph pour la robustesse.</li>
+        <li>Systèmes non linéaires ⇒ EKF : même squelette, avec <span class="math-inline">F</span> et <span class="math-inline">H</span> remplacées par les jacobiennes.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-12.html"><span class="lbl">← Précédent</span>Cinématique inverse</a>
+    <a class="next" href="chapitre-14.html"><span class="lbl">Suivant →</span>Temps réel &amp; performance</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — Collections : Vec, tableaux, slices</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique Rust (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🦀 Rust pour la robotique <span>· temps réel</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>Collections : Vec, tableaux, slices</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Distinguer tableaux à taille fixe <code>[T; N]</code>, <code>Vec&lt;T&gt;</code> et slices <code>&amp;[T]</code>, et savoir quand utiliser chacun</li>
+        <li>Comprendre le coût des allocations/réallocations d'un <code>Vec</code> et l'intérêt de <code>with_capacity</code> en contexte temps réel</li>
+        <li>Écrire des fonctions génériques prenant des slices en paramètre</li>
+        <li>Choisir entre indexation <code>v[i]</code> (panic) et <code>v.get(i)</code> (<code>Option</code>) selon le contexte</li>
+        <li>Utiliser les itérateurs de base (<code>iter</code>, <code>enumerate</code>, <code>map</code>, <code>sum</code>, <code>zip</code>) pour manipuler des vecteurs d'état</li>
+      </ul>
+    </div>
+
+    <h2>1. Tableaux à taille fixe <code>[T; N]</code></h2>
+    <p>
+      Un tableau Rust <code>[T; N]</code> est l'équivalent direct d'un tableau C <code>T tab[N];</code> :
+      sa taille <code>N</code> fait partie du type, elle est connue à la compilation, et le tableau vit
+      entièrement sur la pile (aucune allocation dynamique). C'est le choix par défaut en contexte
+      temps réel dès que la dimension est fixe — un état de robot à 3 degrés de liberté, un buffer
+      de mesures IMU à taille constante, etc.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    // Un état [x, y, theta] : position + orientation d'un robot mobile.
+    let etat: [f64; 3] = [0.0, 0.0, 0.0];
+
+    // Initialisation répétée d'une valeur : [valeur; N]
+    let zeros: [f64; 5] = [0.0; 5];
+
+    println!("etat = {:?}", etat);
+    println!("taille = {} éléments, {} octets",
+        etat.len(), std::mem::size_of_val(&amp;etat));
+
+    // Accès par index : identique au C, mais vérifié à l'exécution.
+    let x = etat[0];
+    println!("x = {x}");
+}</code></pre>
+
+    <p>
+      Comparaison avec C : en C, <code>int tab[3];</code> ne connaît pas sa propre taille une fois
+      passé à une fonction (il « decay » en pointeur) — il faut la transmettre à part. En Rust, le
+      type <code>[f64; 3]</code> garde sa taille dans la signature de la fonction, et le compilateur
+      vérifie tout à la compilation. Il n'y a ni allocation, ni pointeur caché : la disposition
+      mémoire est identique à celle du tableau C, avec en plus les vérifications de bornes.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Un tableau fixe implémente <code>Copy</code> si son type d'éléments l'implémente (c'est le
+        cas de <code>f64</code>). L'affecter à une autre variable en fait donc une copie complète,
+        comme en C — pas de déplacement (<em>move</em>) ni d'emprunt implicite.
+      </p>
+    </div>
+
+    <h2>2. <code>Vec&lt;T&gt;</code> : le tableau dynamique</h2>
+    <p>
+      <code>Vec&lt;T&gt;</code> est l'équivalent de <code>std::vector&lt;T&gt;</code> en C++ : une
+      structure de trois champs (pointeur vers le tas, longueur, capacité) qui gère elle-même son
+      allocation. Utile quand la taille n'est pas connue à la compilation — une trajectoire chargée
+      depuis un fichier, une liste d'obstacles détectés, etc.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let mut mesures: Vec&lt;f64&gt; = Vec::new();
+
+    mesures.push(1.2);
+    mesures.push(3.4);
+    mesures.push(-0.8);
+
+    println!("len = {}, capacity = {}", mesures.len(), mesures.capacity());
+
+    let dernier = mesures.pop(); // Option&lt;f64&gt; : Some(-0.8) ici
+    println!("dernier retiré : {:?}", dernier);
+
+    // Indexation comme un tableau classique.
+    println!("mesures[0] = {}", mesures[0]);
+}</code></pre>
+
+    <p>
+      Un <code>Vec</code> commence avec une capacité de 0. Chaque <code>push</code> qui dépasse la
+      capacité actuelle déclenche une <strong>réallocation</strong> : le runtime alloue un nouveau
+      bloc mémoire (typiquement le double de la taille précédente), copie tous les éléments existants,
+      puis libère l'ancien bloc. C'est coûteux et surtout <em>imprévisible en durée</em> — problématique
+      dans une boucle de contrôle temps réel. Si la taille finale est connue à l'avance, on la réserve
+      d'un coup :
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    // Réserve la capacité pour 100 éléments en une seule allocation.
+    let mut trajectoire: Vec&lt;f64&gt; = Vec::with_capacity(100);
+
+    for i in 0..100 {
+        trajectoire.push(i as f64 * 0.01);
+    }
+
+    // Aucune réallocation n'a eu lieu pendant la boucle : capacity >= 100 dès le départ.
+    println!("len = {}, capacity = {}", trajectoire.len(), trajectoire.capacity());
+}</code></pre>
+
+    <div class="callout temps">
+      <p>
+        Dans une boucle de contrôle qui tourne à fréquence fixe (ex. 1 kHz), <strong>éviter toute
+        allocation</strong> : préférer un tableau fixe <code>[f64; N]</code> quand la taille est
+        connue, ou un <code>Vec</code> créé une seule fois avant la boucle avec
+        <code>Vec::with_capacity</code> puis réutilisé (<code>clear()</code> + <code>push</code>,
+        ou écriture directe par index) plutôt que recréé à chaque itération. Une allocation/désallocation
+        dans le chemin chaud introduit une latence non déterministe qui peut casser une échéance temps réel.
+      </p>
+    </div>
+
+    <h2>3. Slices <code>&amp;[T]</code> et <code>&amp;mut [T]</code></h2>
+    <p>
+      Une slice est une <strong>vue empruntée</strong> sur une séquence contiguë d'éléments — un
+      pointeur vers le début plus une longueur, sans posséder les données ni les copier. On peut
+      obtenir une slice aussi bien à partir d'un tableau fixe que d'un <code>Vec</code>, ce qui en
+      fait le type idéal pour écrire des fonctions génériques indépendantes du conteneur d'origine.
+    </p>
+
+    <pre><code class="language-rust">// Fonction générique : accepte un tableau fixe, un Vec, ou une autre slice.
+fn norme(v: &amp;[f64]) -> f64 {
+    v.iter().map(|x| x * x).sum::&lt;f64&gt;().sqrt()
+}
+
+fn mettre_a_zero(v: &amp;mut [f64]) {
+    for x in v.iter_mut() {
+        *x = 0.0;
+    }
+}
+
+fn main() {
+    let etat_fixe: [f64; 3] = [3.0, 4.0, 0.0];
+    let mut etat_vec: Vec&lt;f64&gt; = vec![3.0, 4.0, 0.0];
+
+    // &amp;etat_fixe et &amp;etat_vec[..] se convertissent tous deux en &amp;[f64]
+    println!("norme (tableau) = {}", norme(&amp;etat_fixe));
+    println!("norme (Vec)     = {}", norme(&amp;etat_vec));
+
+    mettre_a_zero(&amp;mut etat_vec);
+    println!("après remise à zéro : {:?}", etat_vec);
+
+    // Sous-slice : les 2 premiers éléments seulement.
+    let debut = &amp;etat_fixe[0..2];
+    println!("debut = {:?}", debut);
+}</code></pre>
+
+    <p>
+      La règle de conception à retenir : quand une fonction n'a besoin que de <em>lire</em> ou
+      <em>modifier</em> des éléments sans changer la taille de la collection, on la fait accepter
+      une slice (<code>&amp;[T]</code> ou <code>&amp;mut [T]</code>) plutôt qu'un <code>&amp;Vec&lt;T&gt;</code>
+      ou un <code>&amp;[T; N]</code> précis. C'est plus flexible pour l'appelant, sans coût : aucune
+      copie n'a lieu, la slice est juste un pointeur + une longueur passés par valeur.
+    </p>
+
+    <h2>4. Accès sûr : indexation vs <code>.get()</code></h2>
+    <p>
+      En C/C++, lire <code>tab[i]</code> avec un <code>i</code> hors bornes est un comportement
+      indéfini : le programme peut lire n'importe quelle mémoire adjacente, silencieusement, et planter
+      bien plus tard sans lien apparent avec la cause réelle. En Rust, l'indexation <code>v[i]</code>
+      est vérifiée à l'exécution : si <code>i</code> dépasse la longueur, le programme
+      <strong>panique</strong> immédiatement avec un message clair, plutôt que de corrompre la mémoire
+      en silence.
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let mesures = vec![1.0, 2.0, 3.0];
+
+    // Panic contrôlé si l'index est hors bornes (message explicite, pas de UB).
+    // let x = mesures[10]; // décommenter -> "index out of bounds: the len is 3 but the index is 10"
+
+    // Alternative sûre : .get() renvoie une Option, jamais de panic.
+    match mesures.get(10) {
+        Some(x) => println!("valeur = {x}"),
+        None => println!("index hors bornes, valeur ignorée"),
+    }
+
+    // Idiomatique avec unwrap_or : valeur par défaut si absent.
+    let x = mesures.get(1).copied().unwrap_or(0.0);
+    println!("x = {x}");
+}</code></pre>
+
+    <div class="callout piege">
+      <p>
+        Contrairement au C où un dépassement de tableau peut passer totalement inaperçu (et provoquer
+        un bug des heures plus tard, ailleurs dans le programme), Rust ne laisse jamais un accès hors
+        borne silencieux : c'est <code>v[i]</code> qui panique immédiatement, ou <code>v.get(i)</code>
+        qui force explicitement à gérer le cas d'absence via <code>Option</code>. Dans du code
+        embarqué critique, on préfère souvent <code>.get()</code> (ou une vérification manuelle de
+        longueur) pour éviter tout panic imprévu en production.
+      </p>
+    </div>
+
+    <h2>5. Itérateurs de base</h2>
+    <p>
+      Rust encourage à parcourir les collections via des itérateurs plutôt que des boucles indexées
+      manuelles — plus lisible, et le compilateur optimise généralement ce code aussi bien qu'une
+      boucle C avec index. Un aperçu suffisant pour ce chapitre ; les itérateurs seront approfondis
+      plus tard (adaptateurs paresseux, <code>collect</code>, performances).
+    </p>
+
+    <pre><code class="language-rust">fn main() {
+    let vitesses: Vec&lt;f64&gt; = vec![0.5, 1.2, 0.8, 2.0];
+
+    // Parcours simple par référence : ne consomme pas le Vec.
+    for v in &amp;vitesses {
+        print!("{v} ");
+    }
+    println!();
+
+    // .iter() explicite (équivalent à &amp;vitesses dans un for), avec index via enumerate().
+    for (i, v) in vitesses.iter().enumerate() {
+        println!("vitesse[{i}] = {v}");
+    }
+
+    // .iter_mut() pour modifier en place.
+    let mut copie = vitesses.clone();
+    for v in copie.iter_mut() {
+        *v *= 2.0;
+    }
+    println!("doublées = {:?}", copie);
+
+    // .map() + .sum() : somme des carrés (utile pour une norme).
+    let somme_carres: f64 = vitesses.iter().map(|v| v * v).sum();
+    println!("somme des carrés = {somme_carres}");
+
+    // .zip() : parcourir deux collections en parallèle, élément par élément.
+    // Très utile pour les opérations vectorielles (addition, produit scalaire...).
+    let a = vec![1.0, 2.0, 3.0];
+    let b = vec![4.0, 5.0, 6.0];
+    let produits: Vec&lt;f64&gt; = a.iter().zip(b.iter()).map(|(x, y)| x * y).collect();
+    println!("produits terme à terme = {:?}", produits);
+}</code></pre>
+
+    <h2>6. Fil rouge : vecteurs d'état, trajectoires, opérations vectorielles</h2>
+    <p>
+      Pour représenter l'état d'un robot, deux choix légitimes selon le contexte :
+      <code>[f64; N]</code> quand <code>N</code> est fixe et connu (ex. un bras à 6 axes,
+      toujours <code>[f64; 6]</code>), ou <code>Vec&lt;f64&gt;</code> quand la dimension varie
+      selon la configuration chargée au démarrage. Une trajectoire — une suite de points
+      <code>Vec2</code> échantillonnés dans le temps — se représente naturellement en
+      <code>Vec&lt;Vec2&gt;</code>, puisque son nombre de points n'est pas connu à la compilation.
+    </p>
+
+    <pre><code class="language-rust">#[derive(Debug, Clone, Copy)]
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+/// Norme euclidienne d'un vecteur donné sous forme de slice.
+/// Accepte aussi bien un [f64; N] qu'un Vec&lt;f64&gt;, grâce à &amp;[f64].
+fn norme(v: &amp;[f64]) -> f64 {
+    v.iter().map(|c| c * c).sum::&lt;f64&gt;().sqrt()
+}
+
+/// Produit scalaire de deux vecteurs de même longueur, via zip.
+fn produit_scalaire(a: &amp;[f64], b: &amp;[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+/// Addition élément par élément de deux vecteurs de même longueur.
+fn addition(a: &amp;[f64], b: &amp;[f64]) -> Vec&lt;f64&gt; {
+    a.iter().zip(b.iter()).map(|(x, y)| x + y).collect()
+}
+
+fn longueur_trajectoire(traj: &amp;[Vec2]) -> f64 {
+    let mut total = 0.0;
+    for fenetre in traj.windows(2) {
+        let dx = fenetre[1].x - fenetre[0].x;
+        let dy = fenetre[1].y - fenetre[0].y;
+        total += (dx * dx + dy * dy).sqrt();
+    }
+    total
+}
+
+fn main() {
+    // État à dimension fixe : bras 6 axes, angles en radians.
+    let etat_bras: [f64; 6] = [0.0, 0.3, -0.2, 0.0, 1.1, 0.0];
+    println!("norme de l'état bras = {:.3}", norme(&amp;etat_bras));
+
+    // Deux vecteurs vitesse/accélération (dimension dynamique).
+    let vitesse: Vec&lt;f64&gt; = vec![0.4, -0.1, 0.05];
+    let acceleration: Vec&lt;f64&gt; = vec![0.02, 0.0, -0.01];
+
+    println!("produit scalaire = {}", produit_scalaire(&amp;vitesse, &amp;acceleration));
+    println!("somme            = {:?}", addition(&amp;vitesse, &amp;acceleration));
+
+    // Trajectoire : suite de points 2D échantillonnés.
+    let trajectoire: Vec&lt;Vec2&gt; = vec![
+        Vec2 { x: 0.0, y: 0.0 },
+        Vec2 { x: 1.0, y: 0.0 },
+        Vec2 { x: 1.0, y: 1.0 },
+    ];
+    println!("longueur trajectoire = {:.3}", longueur_trajectoire(&amp;trajectoire));
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        <code>.windows(2)</code> renvoie des slices glissantes de 2 éléments consécutifs — très
+        pratique pour calculer des différences entre points successifs d'une trajectoire, sans
+        gérer manuellement les index <code>i</code> et <code>i-1</code> comme on le ferait en C.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Somme et moyenne d'un Vec</h3>
+      <p>
+        Écris une fonction <code>moyenne(v: &amp;[f64]) -&gt; f64</code> qui renvoie la moyenne
+        arithmétique des éléments d'une slice de <code>f64</code> (renvoie <code>0.0</code> si la
+        slice est vide, pour éviter une division par zéro). Teste-la avec un <code>Vec&lt;f64&gt;</code>
+        contenant quelques mesures.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn moyenne(v: &amp;[f64]) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    let somme: f64 = v.iter().sum();
+    somme / v.len() as f64
+}
+
+fn main() {
+    let mesures: Vec&lt;f64&gt; = vec![1.0, 2.0, 3.0, 4.0];
+    println!("moyenne = {}", moyenne(&amp;mesures));
+
+    let vide: Vec&lt;f64&gt; = Vec::new();
+    println!("moyenne (vide) = {}", moyenne(&amp;vide));
+}</code></pre>
+        <p>
+          <code>v.iter().sum()</code> additionne tous les éléments de la slice ; le test
+          <code>is_empty()</code> évite le piège classique de la division par zéro sur un
+          tableau vide, qui en C produirait un comportement indéfini plutôt qu'un <code>NaN</code>
+          ou une erreur explicite.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Produit scalaire avec <code>.zip()</code></h3>
+      <p>
+        Sans regarder la section 6, réécris <code>produit_scalaire(a: &amp;[f64], b: &amp;[f64]) -&gt; f64</code>
+        en utilisant <code>.zip()</code>, <code>.map()</code> et <code>.sum()</code>. Vérifie-la avec
+        deux slices de longueur 3.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn produit_scalaire(a: &amp;[f64], b: &amp;[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+fn main() {
+    let a = [1.0, 2.0, 3.0];
+    let b = [4.0, 5.0, 6.0];
+    // 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
+    println!("produit scalaire = {}", produit_scalaire(&amp;a, &amp;b));
+}</code></pre>
+        <p>
+          <code>zip</code> combine deux itérateurs en un itérateur de paires <code>(x, y)</code>,
+          en s'arrêtant dès que le plus court des deux est épuisé — utile si les slices n'ont pas
+          exactement la même longueur, même si dans un vrai calcul vectoriel on vérifierait
+          généralement l'égalité des longueurs avant.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Trouver le maximum avec <code>.iter()</code></h3>
+      <p>
+        Écris une fonction <code>maximum(v: &amp;[f64]) -&gt; Option&lt;f64&gt;</code> qui renvoie
+        la plus grande valeur d'une slice, ou <code>None</code> si elle est vide. Indice : les
+        <code>f64</code> n'implémentant pas <code>Ord</code> (à cause de <code>NaN</code>),
+        <code>.max()</code> classique ne fonctionne pas directement — utilise plutôt
+        <code>.fold()</code> ou <code>f64::max</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn maximum(v: &amp;[f64]) -> Option&lt;f64&gt; {
+    if v.is_empty() {
+        return None;
+    }
+    let mut max = v[0];
+    for &amp;x in v.iter() {
+        if x > max {
+            max = x;
+        }
+    }
+    Some(max)
+}
+
+fn main() {
+    let mesures = [3.0, 7.5, -2.0, 4.1];
+    println!("max = {:?}", maximum(&amp;mesures));
+
+    let vide: [f64; 0] = [];
+    println!("max (vide) = {:?}", maximum(&amp;vide));
+}</code></pre>
+        <p>
+          On aurait aussi pu écrire <code>v.iter().copied().fold(f64::MIN, f64::max)</code>, mais
+          cette version renverrait <code>f64::MIN</code> plutôt que <code>None</code> pour une slice
+          vide — moins explicite. Retourner un <code>Option</code> force l'appelant à gérer le cas
+          « aucune donnée », ce qu'un <code>-inf</code> silencieux en C laisserait facilement passer
+          inaperçu.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 4 — Addition de deux vecteurs élément par élément</h3>
+      <p>
+        Écris une fonction <code>addition(a: &amp;[f64], b: &amp;[f64]) -&gt; Vec&lt;f64&gt;</code>
+        qui renvoie un nouveau <code>Vec</code> contenant la somme terme à terme de deux slices de
+        même longueur (on suppose ici qu'elles ont la même longueur). Utilise
+        <code>Vec::with_capacity</code> pour réserver la place à l'avance plutôt que de laisser le
+        <code>Vec</code> réallouer au fil des <code>push</code>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-rust">fn addition(a: &amp;[f64], b: &amp;[f64]) -> Vec&lt;f64&gt; {
+    debug_assert_eq!(a.len(), b.len(), "les deux vecteurs doivent avoir la même longueur");
+
+    let mut resultat = Vec::with_capacity(a.len());
+    for (x, y) in a.iter().zip(b.iter()) {
+        resultat.push(x + y);
+    }
+    resultat
+}
+
+fn main() {
+    let vitesse = vec![0.4, -0.1, 0.05];
+    let correction = vec![0.02, 0.0, -0.01];
+
+    println!("somme = {:?}", addition(&amp;vitesse, &amp;correction));
+}</code></pre>
+        <p>
+          <code>Vec::with_capacity(a.len())</code> alloue une seule fois la mémoire nécessaire pour
+          tous les résultats : les appels suivants à <code>push</code> ne déclenchent aucune
+          réallocation, puisque la capacité réservée est suffisante dès le départ. On aurait aussi
+          pu écrire <code>a.iter().zip(b.iter()).map(|(x, y)| x + y).collect()</code> — plus concis,
+          et <code>collect</code> réserve lui-même la bonne capacité en amont.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><code>[T; N]</code> : taille fixe connue à la compilation, sur la pile, aucune allocation — le choix par défaut en temps réel quand la dimension est constante.</li>
+        <li><code>Vec&lt;T&gt;</code> : tableau dynamique sur le tas ; <code>push</code>/<code>pop</code> peuvent déclencher une réallocation coûteuse — réserver la capacité à l'avance avec <code>Vec::with_capacity</code> hors du chemin chaud.</li>
+        <li><code>&amp;[T]</code> / <code>&amp;mut [T]</code> : vues empruntées, sans copie, sur un tableau ou un <code>Vec</code> — le type à privilégier dans les signatures de fonctions génériques.</li>
+        <li><code>v[i]</code> panique si <code>i</code> est hors bornes (fail-fast et explicite) ; <code>v.get(i)</code> renvoie une <code>Option</code> pour gérer le cas sans jamais planter — contrairement au C, jamais de dépassement silencieux.</li>
+        <li><code>.iter()</code>, <code>.iter_mut()</code>, <code>.enumerate()</code>, <code>.map()</code>, <code>.sum()</code>, <code>.zip()</code> : la boîte à outils de base pour parcourir et combiner des collections, notamment pour les opérations vectorielles (norme, produit scalaire, addition).</li>
+        <li>En boucle de contrôle temps réel : zéro allocation — tableaux fixes ou <code>Vec</code> pré-alloués et réutilisés, jamais recréés à chaque itération.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Structs, enums &amp; méthodes</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>Traits &amp; génériques</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Rust pour la robotique temps réel 🦀
+  </footer>
+</body>
+</html>
