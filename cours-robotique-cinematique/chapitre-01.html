@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Introduction &amp; contexte automate</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne). ST ≈ Pascal. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🤖 Cinématique robotique <span>· sur automate (PLC)</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Introduction &amp; contexte automate</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Situer la <strong>cinématique</strong> dans la chaîne de commande d'un robot manipulateur.</li>
+        <li>Distinguer <strong>espace articulaire</strong> et <strong>espace cartésien</strong>, pose, SE(3), SO(3).</li>
+        <li>Fixer les <strong>conventions de notation et d'unités</strong> tenues dans tout le cours.</li>
+        <li>Comprendre pourquoi et comment on calcule de la cinématique <strong>sur un automate</strong> (IEC&nbsp;61131-3).</li>
+        <li>Poser les <strong>structures de données Structured Text</strong> (vecteurs, matrices, poses) réutilisées partout.</li>
+        <li>Intégrer les <strong>contraintes temps réel</strong> propres au PLC : cycle déterministe, pas d'allocation dynamique.</li>
+      </ul>
+    </div>
+
+    <h2>1. Cinématique : de quoi parle-t-on ?</h2>
+    <p>
+      Un <strong>robot manipulateur série</strong> est une chaîne de corps rigides (segments)
+      reliés par des <strong>liaisons</strong> motorisées — le plus souvent <em>rotoïdes</em>
+      (rotation) ou <em>prismatiques</em> (translation). La <strong>cinématique</strong> est
+      l'étude du mouvement de cette chaîne <em>sans se soucier des forces</em> qui le produisent :
+      elle relie les variables des liaisons à la position et à l'orientation de l'outil.
+    </p>
+    <p>
+      On distingue deux problèmes symétriques :
+    </p>
+    <ul>
+      <li>
+        La <strong>cinématique directe</strong> (<em>forward kinematics</em>, FK) : connaissant les
+        variables articulaires, <em>où</em> est l'effecteur et <em>comment</em> est-il orienté ?
+        C'est un calcul <strong>déterministe, unique, sans singularité de résolution</strong> —
+        le cœur de ce cours.
+      </li>
+      <li>
+        La <strong>cinématique inverse</strong> (<em>inverse kinematics</em>, IK) : quelle
+        configuration articulaire atteint une pose cartésienne donnée ? Problème inverse, parfois
+        sans solution, parfois multiple. Nous ne l'abordons ici qu'au travers du <strong>Jacobien</strong>
+        (chapitre 6), qui en est la porte d'entrée.
+      </li>
+    </ul>
+    <p>
+      La cinématique directe est la <strong>brique de base</strong> de presque tout le reste : suivi
+      de trajectoire, transformation d'un point outil, détection de collision, et surtout
+      <strong>calibration</strong> (chapitre 7), qui identifie les paramètres géométriques réels du
+      robot à partir de mesures. La maîtriser proprement, c'est se donner un socle fiable pour tout
+      l'atelier logiciel du robot.
+    </p>
+
+    <div class="callout note">
+      <p>
+        <strong>Périmètre du cours.</strong> On se concentre sur les <strong>robots série</strong>
+        (chaîne ouverte : base → segment 1 → … → effecteur). Les robots <em>parallèles</em>
+        (delta, hexapodes) ont une cinématique directe bien plus délicate — souvent numérique — et
+        sortent du cadre. Les concepts de repères, de transformations homogènes et de Jacobien,
+        eux, restent valables.
+      </p>
+    </div>
+
+    <h2>2. Repères, pose et espaces</h2>
+    <p>
+      À chaque corps du robot on attache un <strong>repère</strong> orthonormé direct. Le repère
+      <span class="math-inline">R<sub>0</sub></span> est la <strong>base</strong> (le monde, fixe) ;
+      le repère <span class="math-inline">R<sub>n</sub></span> est l'<strong>effecteur</strong> (l'outil).
+      La <strong>pose</strong> d'un repère par rapport à un autre, c'est le couple :
+    </p>
+    <div class="math">
+      pose = ( position t ∈ ℝ³,&nbsp;&nbsp; orientation R ∈ SO(3) )
+    </div>
+    <p>
+      où <span class="math-inline">SO(3)</span> est le groupe des matrices de rotation 3×3
+      (<span class="math-inline">R<sup>T</sup>R = I</span>, <span class="math-inline">det R = +1</span>),
+      et l'ensemble des poses forme le groupe <strong>SE(3)</strong> des déplacements rigides. Une
+      pose se code de façon compacte par une <strong>matrice homogène 4×4</strong> (chapitre 2).
+    </p>
+    <p>
+      Deux espaces cohabitent en permanence, et tout le métier consiste à passer de l'un à l'autre :
+    </p>
+    <table>
+      <thead>
+        <tr><th>Espace</th><th>Variable</th><th>Dimension</th><th>Exemple</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Articulaire</strong></td><td><span class="math-inline">q = (q<sub>1</sub>, …, q<sub>n</sub>)</span></td><td><em>n</em> (nb. d'axes)</td><td>angles codeurs, consignes moteur</td></tr>
+        <tr><td><strong>Cartésien / opérationnel</strong></td><td>pose <span class="math-inline">∈ SE(3)</span></td><td>6 (3 pos. + 3 orient.)</td><td>position &amp; orientation de l'outil</td></tr>
+      </tbody>
+    </table>
+    <div class="math">
+      FK :&nbsp; q ∈ ℝ<sup>n</sup>  ⟶  <sup>0</sup>T<sub>n</sub>(q) ∈ SE(3)
+    </div>
+
+    <h2>3. Conventions de notation du cours</h2>
+    <p>
+      Ces conventions sont <strong>tenues dans tous les chapitres</strong>. En cas de doute, revenez ici.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Notation</th><th>Signification</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="math-inline"><sup>i</sup>T<sub>j</sub></span></td><td>transformation homogène 4×4 plaçant le repère <em>j</em> dans le repère <em>i</em></td></tr>
+        <tr><td><span class="math-inline"><sup>i</sup>R<sub>j</sub></span>, <span class="math-inline"><sup>i</sup>t<sub>j</sub></span></td><td>partie rotation (3×3) et translation (3×1) de <span class="math-inline"><sup>i</sup>T<sub>j</sub></span></td></tr>
+        <tr><td><span class="math-inline">q<sub>i</sub></span></td><td>variable de la liaison <em>i</em> (angle si rotoïde, longueur si prismatique)</td></tr>
+        <tr><td><span class="math-inline">θ, d, a, α</span></td><td>les 4 paramètres de Denavit-Hartenberg (chapitre 3)</td></tr>
+        <tr><td><span class="math-inline">c<sub>i</sub>, s<sub>i</sub></span></td><td>raccourcis pour <span class="math-inline">cos q<sub>i</sub></span> et <span class="math-inline">sin q<sub>i</sub></span> ; <span class="math-inline">c<sub>12</sub> = cos(q<sub>1</sub>+q<sub>2</sub>)</span></td></tr>
+        <tr><td><span class="math-inline">J</span></td><td>matrice jacobienne (6×<em>n</em>), chapitre 6</td></tr>
+        <tr><td><span class="math-inline">z<sub>i</sub>, p<sub>i</sub></span></td><td>axe <em>z</em> et origine du repère <em>i</em>, exprimés dans la base</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout piege">
+      <p>
+        <strong>Toujours des unités SI, toujours des radians.</strong> Dans tout le cours les angles
+        sont en <strong>radians</strong> et les longueurs en <strong>mètres</strong>. Les fonctions
+        <code>SIN</code>/<code>COS</code> des automates (comme la <code>libm</code> du C) travaillent
+        en radians. Les IHM et les codeurs, eux, parlent souvent en <strong>degrés</strong> ou en
+        <em>incréments</em> : convertissez <strong>aux frontières</strong> du système
+        (<code>rad := deg * PI / 180.0</code>) et raisonnez en SI au cœur du calcul. Un
+        <code>COS(90.0)</code> qui vaut <code>−0.448</code> au lieu de <code>0.0</code> trahit
+        immédiatement l'oubli.
+      </p>
+    </div>
+
+    <h2>4. Pourquoi de la cinématique sur un automate ?</h2>
+    <p>
+      Historiquement, la cinématique vit dans la <em>baie de commande</em> propriétaire du robot
+      (KUKA, ABB, Fanuc…). Mais de plus en plus de machines sont pilotées par un <strong>automate
+      programmable industriel</strong> (PLC) — Beckhoff&nbsp;TwinCAT, CODESYS, Siemens, Omron… — qui
+      orchestre déjà les convoyeurs, la sécurité et les E/S. Y intégrer la cinématique du robot (ou
+      d'un axe cartésien « maison ») apporte :
+    </p>
+    <ul>
+      <li>une <strong>synchronisation</strong> parfaite avec le reste de la machine (même horloge de tâche) ;</li>
+      <li>un <strong>déterminisme dur</strong> : le calcul s'exécute dans une tâche cyclique à période fixe (250&nbsp;µs, 1&nbsp;ms…) ;</li>
+      <li>l'ouverture : on maîtrise le modèle, on peut le <strong>calibrer</strong> et l'adapter, sans boîte noire.</li>
+    </ul>
+    <p>
+      La norme <strong>IEC&nbsp;61131-3</strong> définit les langages de programmation des automates.
+      Cinq langages coexistent (LD à contacts, FBD blocs, SFC grafcet, IL liste d'instructions, et
+      <strong>ST — Structured Text</strong>). Pour du calcul mathématique matriciel, <strong>Structured
+      Text</strong> s'impose : c'est un langage textuel proche du Pascal, avec boucles
+      <code>FOR</code>, tableaux, structures et flottants. <em>Tout le code de ce cours est en ST.</em>
+    </p>
+
+    <div class="callout plc">
+      <p>
+        <strong>REAL ou LREAL ?</strong> Un automate manipule <code>REAL</code> (flottant 32 bits,
+        ~7 chiffres significatifs) et <code>LREAL</code> (64 bits, ~15 chiffres). En cinématique on
+        <strong>chaîne des produits de matrices</strong> : les erreurs d'arrondi s'accumulent, et un
+        écart de position de quelques dixièmes de millimètre peut naître d'un simple calcul en 32 bits.
+        <strong>Utilisez <code>LREAL</code> partout</strong> pour la géométrie ; réservez
+        <code>REAL</code> aux E/S où la précision importe peu. Ce cours suppose <code>LREAL</code>.
+      </p>
+    </div>
+
+    <h2>5. Structures de données Structured Text</h2>
+    <p>
+      Un automate n'a <strong>pas de tas</strong> (pas de <code>malloc</code>) : toute la mémoire est
+      allouée statiquement. On travaille donc avec des <strong>tableaux de taille fixe</strong>, ce
+      qui tombe bien pour la cinématique où les dimensions (3, 4, nombre d'axes) sont connues à la
+      compilation. Voici les types réutilisés dans <em>tout</em> le cours ; placez-les dans une
+      liste de types global (GVL de types / DUT).
+    </p>
+    <pre><code class="language-pascal">// ---- Types de base réutilisés dans tout le cours ----
+
+TYPE T_VEC3 : ARRAY[0..2] OF LREAL; END_TYPE            // vecteur 3×1  (m ou sans dim.)
+TYPE T_MAT3 : ARRAY[0..2, 0..2] OF LREAL; END_TYPE      // rotation 3×3
+TYPE T_MAT4 : ARRAY[0..3, 0..3] OF LREAL; END_TYPE      // transformation homogène 4×4
+
+// Une pose = position + orientation. Deux représentations pratiques :
+TYPE T_POSE :
+STRUCT
+    x   : LREAL;   // position (m)
+    y   : LREAL;
+    z   : LREAL;
+    R   : T_MAT3;  // orientation (matrice de rotation)
+END_STRUCT
+END_TYPE
+
+// Paramètres de Denavit-Hartenberg d'une liaison (voir chapitre 3).
+// theta et d contiennent les OFFSETS constants ; la variable articulaire
+// est ajoutée à part lors de la cinématique directe.
+TYPE T_DH :
+STRUCT
+    theta       : LREAL;  // rad — offset (souvent 0)
+    d           : LREAL;  // m
+    a           : LREAL;  // m
+    alpha       : LREAL;  // rad
+    isPrismatic : BOOL;   // TRUE = liaison prismatique, FALSE = rotoïde
+END_STRUCT
+END_TYPE</code></pre>
+
+    <p>
+      Deux briques d'algèbre linéaire reviennent sans cesse : la <strong>matrice identité</strong> et
+      le <strong>produit de deux matrices 4×4</strong>. On les code une fois pour toutes. Notez le
+      passage par <code>VAR_IN_OUT</code> pour éviter toute copie inutile de la matrice résultat —
+      un réflexe temps réel.
+    </p>
+    <pre><code class="language-pascal">// Remplit M avec la matrice identité 4×4.
+FUNCTION Mat4Identity : BOOL
+VAR_IN_OUT
+    M : T_MAT4;
+END_VAR
+VAR
+    i, j : INT;
+END_VAR
+    FOR i := 0 TO 3 DO
+        FOR j := 0 TO 3 DO
+            IF i = j THEN M[i, j] := 1.0; ELSE M[i, j] := 0.0; END_IF
+        END_FOR
+    END_FOR
+    Mat4Identity := TRUE;
+END_FUNCTION
+
+// Produit matriciel C := A * B  (4×4). C doit être DISTINCT de A et B.
+FUNCTION Mat4Mul : BOOL
+VAR_IN_OUT
+    A : T_MAT4;
+    B : T_MAT4;
+    C : T_MAT4;   // résultat
+END_VAR
+VAR
+    i, j, k : INT;
+    acc     : LREAL;
+END_VAR
+    FOR i := 0 TO 3 DO
+        FOR j := 0 TO 3 DO
+            acc := 0.0;
+            FOR k := 0 TO 3 DO
+                acc := acc + A[i, k] * B[k, j];
+            END_FOR
+            C[i, j] := acc;
+        END_FOR
+    END_FOR
+    Mat4Mul := TRUE;
+END_FUNCTION</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Ne jamais écrire le résultat sur une entrée.</strong> Dans <code>Mat4Mul</code>, si
+        <code>C</code> est la même variable que <code>A</code> ou <code>B</code>, on écrase des
+        coefficients encore nécessaires au calcul en cours → résultat faux. Utilisez toujours une
+        matrice temporaire distincte, puis recopiez si besoin. C'est l'équivalent PLC du classique
+        <em>aliasing</em> de pointeurs en C.
+      </p>
+    </div>
+
+    <h2>6. Le modèle mental temps réel du PLC</h2>
+    <p>
+      Un automate exécute son programme dans une <strong>tâche cyclique</strong> : à chaque période
+      <span class="math-inline">T<sub>cycle</sub></span> (p.&nbsp;ex. 1&nbsp;ms), il lit les entrées,
+      exécute tout le code, écrit les sorties — puis attend la période suivante. Deux règles d'or en
+      découlent pour notre calcul :
+    </p>
+    <ul>
+      <li>
+        <strong>Budget de temps borné.</strong> Tout le code doit tenir <em>largement</em> dans
+        <span class="math-inline">T<sub>cycle</sub></span>, dans le pire cas. Pas de boucle de
+        longueur inconnue, pas d'attente. La cinématique directe d'un bras 6 axes, c'est quelques
+        centaines de multiplications flottantes : quelques microsecondes, parfaitement borné.
+      </li>
+      <li>
+        <strong>Zéro allocation, zéro récursion non bornée.</strong> Tout est en tableaux fixes sur
+        la mémoire statique. On <strong>précalcule</strong> hors boucle tout ce qui est constant
+        (offsets, <span class="math-inline">cos α</span> qui ne dépendent pas de <em>q</em>).
+      </li>
+    </ul>
+
+    <div class="callout temps">
+      <p>
+        <strong>Ordre de grandeur.</strong> Une multiplication <code>LREAL</code> coûte quelques
+        nanosecondes sur un CPU d'automate moderne. Un produit de matrices 4×4 = 64 multiplications +
+        48 additions ≈ 0,5&nbsp;µs. Chaîner 6 liaisons ≈ 3&nbsp;µs. Même avec le Jacobien (chapitre 6),
+        on reste bien en-deçà de la milliseconde : la cinématique <strong>n'est pas</strong> le
+        goulot d'étranglement d'une tâche PLC. Le vrai risque n'est pas la lenteur mais le
+        <strong>non-déterminisme</strong> (branche imprévue, appel bloquant) — que nos tableaux fixes
+        éliminent par construction.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Conversion degrés → radians aux frontières</h3>
+      <p>
+        Écrivez une fonction <code>DegToRad(deg : LREAL) : LREAL</code> et son inverse
+        <code>RadToDeg</code>. Vérifiez que <code>DegToRad(180.0)</code> vaut <span class="math-inline">π</span>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">FUNCTION DegToRad : LREAL
+VAR_INPUT
+    deg : LREAL;
+END_VAR
+    DegToRad := deg * 3.14159265358979 / 180.0;
+END_FUNCTION
+
+FUNCTION RadToDeg : LREAL
+VAR_INPUT
+    rad : LREAL;
+END_VAR
+    RadToDeg := rad * 180.0 / 3.14159265358979;
+END_FUNCTION</code></pre>
+        <p>
+          En pratique, définissez une constante globale <code>PI : LREAL := 3.14159265358979;</code>
+          (ou utilisez la constante fournie par la librairie mathématique de votre runtime) plutôt
+          que de recopier la valeur. Convertir <em>aux frontières</em> — juste après la lecture IHM,
+          juste avant l'écriture — garde tout le cœur du calcul en radians.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Produit matriciel et test d'identité</h3>
+      <p>
+        En réutilisant <code>Mat4Identity</code> et <code>Mat4Mul</code>, vérifiez la propriété
+        <span class="math-inline">I · I = I</span> : construisez l'identité, multipliez-la par
+        elle-même, et contrôlez que le résultat vaut bien l'identité (aux erreurs d'arrondi près).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">PROGRAM P_TestIdentite
+VAR
+    I1, I2, R : T_MAT4;
+    i, j      : INT;
+    ok        : BOOL := TRUE;
+    attendu   : LREAL;
+END_VAR
+
+// --- corps ---
+Mat4Identity(M := I1);
+Mat4Identity(M := I2);
+Mat4Mul(A := I1, B := I2, C := R);   // R := I * I
+
+FOR i := 0 TO 3 DO
+    FOR j := 0 TO 3 DO
+        IF i = j THEN attendu := 1.0; ELSE attendu := 0.0; END_IF
+        IF ABS(R[i, j] - attendu) > 1E-12 THEN ok := FALSE; END_IF
+    END_FOR
+END_FOR
+// ok = TRUE si I*I = I</code></pre>
+        <p>
+          On compare toujours des flottants avec une <strong>tolérance</strong> (ici
+          <code>1E-12</code>), jamais avec <code>=</code> strict : deux calculs mathématiquement
+          identiques peuvent différer au dernier bit. Ce réflexe vaut pour tout le cours.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Un type pour un bras 6 axes</h3>
+      <p>
+        Déclarez un type <code>T_ROBOT6</code> contenant la table DH (6 liaisons) et le vecteur des
+        6 variables articulaires. Ce type servira de « fiche d'identité » du robot dans les chapitres
+        suivants.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-pascal">TYPE T_ROBOT6 :
+STRUCT
+    dh : ARRAY[0..5] OF T_DH;    // table Denavit-Hartenberg (6 liaisons)
+    q  : ARRAY[0..5] OF LREAL;   // variables articulaires (rad ou m)
+END_STRUCT
+END_TYPE</code></pre>
+        <p>
+          Regrouper la géométrie <em>constante</em> (<code>dh</code>) et l'état <em>variable</em>
+          (<code>q</code>) dans une même structure clarifie les interfaces : les fonctions de
+          cinématique prendront un <code>T_ROBOT6</code> en <code>VAR_IN_OUT</code> et resteront
+          génériques. On généralisera à <em>n</em> axes au chapitre 5.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>La <strong>cinématique directe</strong> passe de l'espace <strong>articulaire</strong> (<span class="math-inline">q</span>) à la <strong>pose</strong> cartésienne <span class="math-inline">∈ SE(3)</span> ; c'est déterministe et unique.</li>
+        <li>Conventions du cours : <span class="math-inline"><sup>i</sup>T<sub>j</sub></span> place le repère <em>j</em> dans <em>i</em> ; <strong>radians</strong> et <strong>mètres</strong> partout, conversion aux frontières.</li>
+        <li>Sur automate, on programme en <strong>Structured Text</strong> (IEC&nbsp;61131-3), en <strong>LREAL</strong>, avec des <strong>tableaux fixes</strong> (pas de tas).</li>
+        <li>Types socles : <code>T_VEC3</code>, <code>T_MAT3</code>, <code>T_MAT4</code>, <code>T_POSE</code>, <code>T_DH</code> ; briques <code>Mat4Identity</code> / <code>Mat4Mul</code>.</li>
+        <li>Modèle temps réel : budget de temps <strong>borné</strong>, <strong>zéro allocation</strong>, précalcul du constant, comparaisons flottantes à <strong>tolérance</strong>.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev disabled" href="#"><span class="lbl">← Précédent</span></a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>Transformations rigides &amp; orientation</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Cinématique robotique sur automate (PLC) 🤖
+  </footer>
+</body>
+</html>
