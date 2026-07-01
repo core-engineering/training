@@ -373,7 +373,7 @@ END_FUNCTION</code></pre>
 //         Lignes 0..2 = vitesse lineaire, lignes 3..5 = vitesse angulaire.
 FUNCTION_BLOCK FB_GeometricJacobian
 VAR_IN_OUT
-    T0i : ARRAY[0..N_MAX] OF T_MAT4;   // repwith cumules (0..n utilises)
+    T0i : ARRAY[0..N_MAX] OF T_MAT4;   // reperes cumules (0..n utilises)
     dh  : ARRAY[0..N_MAX-1] OF T_DH;   // parametres DH
     J   : T_JAC;                       // resultat 6 x n
 END_VAR
