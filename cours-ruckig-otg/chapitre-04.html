@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — Les familles de profil</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>Les familles de profil</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre pourquoi un profil à 7 segments prend des formes différentes selon le déplacement et les limites.</li>
+        <li>Nommer et reconnaître les cinq familles de profil (NONE, ACC0, ACC1, ACC0_ACC1, VEL) à partir de la forme de l'accélération.</li>
+        <li>Distinguer la <em>famille</em> (quelles phases existent) de la <em>direction</em> de jerk (UDDU / UDUD).</li>
+        <li>Saisir la stratégie du solveur temps-optimal : énumérer, calculer en forme fermée, écarter, garder le plus court.</li>
+      </ul>
+    </div>
+
+    <h2>1. Quand des phases disparaissent</h2>
+    <p>Au chapitre précédent, nous avons décomposé le profil limité en jerk en <strong>sept segments</strong> : trois pour monter en vitesse (jerk positif, accélération constante, jerk négatif), une croisière à vitesse constante, puis trois symétriques pour freiner. C'est le cas le plus riche — mais il n'apparaît que pour de grands déplacements sur des axes bien dégagés.</p>
+    <p>Dans la pratique, selon le <strong>déplacement demandé</strong> et les <strong>limites</strong>, certaines de ces sept phases ont une <strong>durée nulle</strong>. Un petit déplacement n'a jamais le temps d'atteindre <span class="math-inline">vₘₐₓ</span> : la phase de croisière s'annule. Un déplacement encore plus court n'atteint même pas <span class="math-inline">aₘₐₓ</span> : les plateaux d'accélération constante s'annulent aussi. Chaque combinaison de phases survivantes définit une <strong>famille de profil</strong>.</p>
+
+    <figure class="fig">
+      <img src="figures/fig-families.svg" alt="Quatre mini-panneaux montrant l'allure de l'accélération dans le temps. VEL : deux trapèzes d'accélération de signes opposés séparés par un long palier à zéro (croisière), vmax atteinte. ACC0_ACC1 : deux trapèzes qui atteignent amax et -amax mais sans palier de croisière entre eux. NONE : deux triangles d'accélération, aucun plateau, ni amax ni vmax atteints. ACC0 : un trapèze qui sature amax à l'accélération, puis un triangle à la décélération.">
+      <figcaption><b>Figure 4.1.</b> Quatre familles vues par l'allure de l'<span style="color:#e8912d">accélération</span>. <b>VEL</b> : la croisière est présente, <span class="math-inline">vₘₐₓ</span> est atteinte. <b>ACC0_ACC1</b> : les deux plateaux d'accélération saturent <span class="math-inline">aₘₐₓ</span>, mais aucune croisière. <b>NONE</b> : accélération purement triangulaire, ni <span class="math-inline">aₘₐₓ</span> ni <span class="math-inline">vₘₐₓ</span>. <b>ACC0</b> : plateau saturé à l'accélération seulement.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>💡 Le nom de la famille est une <strong>liste de cases cochées</strong> : quelles saturations le profil réussit-il à atteindre&nbsp;? Plus le déplacement est petit, moins on coche de cases — et plus le profil est «&nbsp;maigre&nbsp;».</p>
+    </div>
+
+    <h2>2. Les cinq familles</h2>
+    <p>Regardons chaque famille par la forme de son accélération. Le raisonnement est toujours le même : de haut en bas, on retire d'abord la croisière, puis les plateaux d'accélération.</p>
+    <ul>
+      <li><strong>VEL</strong> — la croisière existe : la vitesse atteint <span class="math-inline">vₘₐₓ</span> et y reste un moment. C'est le profil complet, réservé aux grands déplacements.</li>
+      <li><strong>ACC0_ACC1</strong> — <em>pas</em> de croisière (<span class="math-inline">vₘₐₓ</span> jamais atteinte), mais les <strong>deux</strong> plateaux d'accélération saturent : <span class="math-inline">aₘₐₓ</span> à la montée <em>et</em> <span class="math-inline">−aₘₐₓ</span> à la descente.</li>
+      <li><strong>ACC0</strong> — le plateau d'accélération sature seulement à la phase d'<strong>accélération</strong> (indice 0) ; la décélération reste triangulaire.</li>
+      <li><strong>ACC1</strong> — symétrique : le plateau sature seulement à la phase de <strong>décélération</strong> (indice 1) ; la montée reste triangulaire.</li>
+      <li><strong>NONE</strong> — <em>aucun</em> plateau : l'accélération est purement triangulaire, ni <span class="math-inline">aₘₐₓ</span> ni <span class="math-inline">vₘₐₓ</span> ne sont atteints. C'est le plus petit déplacement.</li>
+    </ul>
+    <p>Les indices <code>0</code> et <code>1</code> désignent respectivement le premier bloc (accélération) et le second bloc (décélération). Ainsi le nom encode exactement <em>où</em> l'accélération sature : <code>ACC0</code> = bloc 0 saturé, <code>ACC0_ACC1</code> = les deux, <code>VEL</code> = en plus, la vitesse sature.</p>
+
+    <div class="callout math">
+      <p>∑ Chaque famille correspond à un système d'équations <em>différent</em> : dès qu'une phase disparaît, sa durée <span class="math-inline">tᵢ = 0</span> est fixée, et il reste moins d'inconnues. Le profil complet a sept <span class="math-inline">tᵢ</span> ; NONE n'en a plus que quatre non nuls. Chaque famille se résout donc par une <strong>formule fermée</strong> qui lui est propre.</p>
+    </div>
+
+    <h2>3. Deux directions de jerk : UDDU et UDUD</h2>
+    <p>Tant que l'axe part du <strong>repos</strong> (<span class="math-inline">v₀ = 0</span>, <span class="math-inline">a₀ = 0</span>), l'ordre des signes de jerk est naturel : on accélère (jerk +), on relâche (jerk −), on freine (jerk −), on relâche (jerk +). Mais lorsque l'état initial n'est <em>pas</em> au repos — <span class="math-inline">v₀ ≠ 0</span> ou <span class="math-inline">a₀ ≠ 0</span> — la situation se complique.</p>
+    <p>Imaginez un axe qui file déjà trop vite vers sa cible : il faut d'abord <strong>ralentir</strong>, quitte à inverser l'accélération, avant de pouvoir se recaler. Ou une accélération initiale du «&nbsp;mauvais&nbsp;» signe qu'il faut d'abord résorber. Selon les cas, l'<strong>ordonnancement des signes de jerk</strong> à appliquer n'est pas le même — d'où deux candidats à essayer, notés par la séquence des signes :</p>
+    <div class="math">UDDU  :  Up — Down — Down — Up          UDUD  :  Up — Down — Up — Down</div>
+    <p>Concrètement, ce sont deux <strong>ordres de signes</strong> possibles pour les phases de jerk. Pour un déplacement donné, l'un des deux mène à une solution valide et l'autre non (ou à une solution plus lente). Le solveur ne le sait pas d'avance : il essaie les deux.</p>
+
+    <div class="callout astuce">
+      <p>💡 Intuition : la <em>famille</em> répond à «&nbsp;combien de phases survivent&nbsp;?&nbsp;», la <em>direction</em> répond à «&nbsp;dans quel ordre attaquer les signes de jerk pour partir de cet état initial biscornu&nbsp;?&nbsp;». Deux questions indépendantes.</p>
+    </div>
+
+    <h2>4. La stratégie du solveur</h2>
+    <p>Comment trouver, parmi toutes ces possibilités, la trajectoire temps-optimale d'un seul axe&nbsp;? Ruckig ne cherche pas «&nbsp;intelligemment&nbsp;» : il <strong>énumère</strong>. Pour un axe :</p>
+    <ol>
+      <li>parcourir toutes les combinaisons <strong>familles × 2 directions</strong> de jerk ;</li>
+      <li>calculer chaque candidat en <strong>forme fermée</strong> (pas d'itération) grâce aux équations propres à sa famille ;</li>
+      <li><strong>écarter</strong> les candidats infaisables : ceux qui violeraient une limite (<span class="math-inline">vₘₐₓ</span>, <span class="math-inline">aₘₐₓ</span>) ou qui donnent des durées de phase <strong>négatives</strong> (physiquement impossibles) ;</li>
+      <li>parmi les survivants, <strong>garder le profil de durée minimale</strong>.</li>
+    </ol>
+    <p>C'est exactement ce que fait le <strong>Step 1</strong> détaillé au <a href="chapitre-05.html">chapitre suivant</a> : la solution temps-optimale d'un axe isolé. Comme chaque candidat se calcule directement, l'énumération complète reste très rapide — parfaitement compatible avec un cycle temps réel.</p>
+
+    <div class="callout piege">
+      <p>⚠️ Ne confondez pas la <strong>famille</strong> (quelles phases existent : NONE, ACC0, ACC1, ACC0_ACC1, VEL) et la <strong>direction</strong> (l'ordre des signes de jerk : UDDU ou UDUD). Ce sont <em>deux axes de recherche indépendants</em> : le solveur explore leur <strong>produit</strong>, pas l'un ou l'autre. Un même profil est identifié par le couple (famille, direction).</p>
+    </div>
+
+    <h2>5. Dans ruckig-scl</h2>
+    <div class="callout plc">
+      <p>🔧 La FC <code>ComputeProfile1Axis</code> est le solveur temps-optimal 1-DoF : elle <strong>énumère</strong> les familles × 2 directions de jerk, calcule chacune en forme fermée, <strong>rejette</strong> les candidats infaisables, et conserve celui de <strong>durée minimale</strong>. La FC <code>SolveDirection</code> traite, elle, toutes les familles pour <em>une seule</em> direction de jerk.</p>
+      <p>Les familles portent des noms explicites : <code>NONE</code>, <code>ACC0</code>, <code>ACC1</code>, <code>ACC0_ACC1</code>, <code>VEL</code> ; les deux directions sont <code>UDDU</code> et <code>UDUD</code>. Pour les états initiaux pathologiques, il existe des familles de repli «&nbsp;<em>two-step</em>&nbsp;» — <code>TwoStepNone</code>, <code>TwoStepAcc0</code>, <code>TwoStepVel</code>, <code>TwoStepAcc1Vel</code> — qui rattrapent les cas où l'énumération standard échoue.</p>
+    </div>
+    <pre><code class="language-pascal">// SCL — schéma du solveur 1-DoF (pseudo-structure)
+FOR dir := UDDU TO UDUD DO           // 2 directions de jerk
+    #ok := "SolveDirection"(dir, ...); // essaie toutes les familles
+    IF #ok AND (#cand.duration &lt; #best.duration) THEN
+        #best := #cand;              // garde le plus court FAISABLE
+    END_IF;
+END_FOR;</code></pre>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Selon le déplacement et les limites, des phases du profil à 7 segments ont une durée nulle : chaque combinaison survivante est une <strong>famille</strong>.</li>
+        <li>Cinq familles : <strong>VEL</strong> (croisière, <span class="math-inline">vₘₐₓ</span> atteinte) → <strong>ACC0_ACC1</strong> (deux plateaux d'accél, pas de croisière) → <strong>ACC0</strong> / <strong>ACC1</strong> (un seul plateau) → <strong>NONE</strong> (accél triangulaire). Le nom encode les saturations atteintes.</li>
+        <li>Deux <strong>directions</strong> de jerk, <strong>UDDU</strong> et <strong>UDUD</strong> : ordres de signes différents, nécessaires quand l'état initial n'est pas au repos.</li>
+        <li>Famille et direction sont des <strong>axes de recherche indépendants</strong> ; le solveur explore leur produit.</li>
+        <li>Stratégie : <strong>énumérer</strong> familles × directions, calculer en <strong>forme fermée</strong>, <strong>écarter</strong> les infaisables et durées négatives, <strong>garder le plus court</strong> — c'est le Step 1.</li>
+        <li>Dans <code>ruckig-scl</code> : <code>ComputeProfile1Axis</code> énumère et sélectionne ; <code>SolveDirection</code> par direction ; familles nommées + repli «&nbsp;two-step&nbsp;».</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>Anatomie du profil à 7 segments</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Step 1 — la solution temps-optimale</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

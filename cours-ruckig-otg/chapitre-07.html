@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — Multi-axes &amp; synchronisation</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>Multi-axes &amp; synchronisation</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre pourquoi plusieurs axes indépendants finissent leur mouvement à des instants différents.</li>
+        <li>Maîtriser la <strong>synchronisation temporelle</strong> (Time) : une durée commune <span class="math-inline">t_sync</span>, obtenue par re-cadencement de tous les axes.</li>
+        <li>Distinguer la <strong>synchronisation de phase</strong> (Phase) — mouvement en ligne droite dans l'espace articulaire — de la simple synchro temporelle.</li>
+        <li>Connaître les modes de synchronisation offerts par ruckig-scl (SYNC_TIME, Phase, No, per-DoF, TimeIfNecessary, Discrete).</li>
+      </ul>
+    </div>
+
+    <h2>1. Le problème multi-axes</h2>
+    <p>Jusqu'ici nous avons résolu la trajectoire d'un <strong>seul</strong> axe. Un robot ou une machine en pilote plusieurs — dans <code>ruckig-scl</code>, jusqu'à <strong>4 degrés de liberté (DoF)</strong>. Chaque axe possède ses propres limites (<span class="math-inline">vₘₐₓ</span>, <span class="math-inline">aₘₐₓ</span>, <span class="math-inline">jₘₐₓ</span>) et son propre déplacement à parcourir. Le Step&nbsp;1 (<a href="chapitre-05.html">chapitre&nbsp;5</a>) donne pour chaque axe <span class="math-inline">d</span> sa durée temps-optimale <span class="math-inline">t_min,d</span>.</p>
+    <p>Or ces durées n'ont aucune raison d'être égales : un axe qui parcourt un grand angle mettra plus longtemps qu'un axe qui bouge à peine. Sans coordination, <strong>chaque axe atteint sa cible à un instant différent</strong> — le mouvement d'ensemble semble désordonné, et le chemin suivi dans l'espace articulaire est imprévisible.</p>
+
+    <figure class="fig">
+      <img src="figures/fig-sync-time.svg" alt="À gauche : deux courbes de position dans le temps, l'axe 1 (bleu) atteint sa cible tôt, l'axe 2 (orange) plus tard ; les deux fins de mouvement ne coïncident pas. À droite : les mêmes deux axes re-cadencés à une durée commune t_sync ; l'axe 1 rapide a été ralenti pour finir exactement en même temps que l'axe 2 lent.">
+      <figcaption><b>Figure 7.1.</b> À <b>gauche</b>, deux axes indépendants : l'axe&nbsp;1 (<span style="color:#2f7ed8">bleu</span>) atteint sa cible bien avant l'axe&nbsp;2 (<span style="color:#e8912d">orange</span>). À <b>droite</b>, après synchronisation temporelle : l'axe rapide est <em>ralenti</em> pour arriver à la même durée commune <span class="math-inline">t_sync</span> que l'axe limitant.</figcaption>
+    </figure>
+
+    <h2>2. Synchronisation temporelle (Time)</h2>
+    <p>C'est le mode <strong>par défaut</strong>. L'idée : imposer à tous les axes une <strong>durée commune</strong> <span class="math-inline">t_sync</span>, puis re-cadencer chaque axe pour qu'il consomme exactement cette durée. On applique alors à chaque axe le <strong>Step&nbsp;2</strong> (<a href="chapitre-06.html">chapitre&nbsp;6</a>), qui recalcule un profil limité en jerk s'exécutant en une durée imposée.</p>
+    <p>La durée commune ne peut évidemment pas être plus courte que le plus lent des axes : celui-ci est déjà à son temps-optimal et ne peut pas aller plus vite. On l'appelle l'<strong>axe limitant</strong>, et c'est lui qui fixe <span class="math-inline">t_sync</span>. Tous les autres, plus rapides, sont ralentis jusqu'à cette durée — c'est ce que montre le panneau droit de la figure&nbsp;7.1 : l'axe&nbsp;1, qui finissait tôt, adopte un profil plus doux et arrive désormais en même temps que l'axe&nbsp;2.</p>
+    <p>Un détail crucial vient du Step&nbsp;2 : rappelons qu'un axe possède des <strong>intervalles de durée bloqués</strong> (<a href="chapitre-05.html">chapitre&nbsp;5</a>) — des durées irréalisables pour ses limites de jerk. La durée commune doit donc être valide <em>pour tous les axes à la fois</em> : on prend le maximum des <span class="math-inline">t_min</span>, mais en <strong>évitant les intervalles bloqués</strong> de chaque axe.</p>
+
+    <div class="callout math">
+      <p>∑ La durée de synchronisation satisfait&nbsp;:</p>
+      <div class="math">t_sync ≥ max_d ( t_min,d )   ,   t_sync ∉ ⋃_d Bloqué_d</div>
+      <p>On part de <span class="math-inline">max_d(t_min,d)</span> ; si cette valeur tombe dans un intervalle bloqué d'un axe, on l'augmente jusqu'à la première durée réalisable par <strong>tous</strong> les axes. Chaque axe est ensuite re-cadencé à ce <span class="math-inline">t_sync</span> par le Step&nbsp;2.</p>
+    </div>
+
+    <div class="callout astuce">
+      <p>💡 Intuition : <strong>synchroniser, c'est ralentir les axes rapides pour attendre le plus lent — jamais accélérer le plus lent au-delà de son temps-optimal</strong>. L'axe limitant donne le tempo ; les autres s'alignent sur lui.</p>
+    </div>
+
+    <h2>3. Synchronisation de phase (Phase)</h2>
+    <p>La synchro temporelle garantit que tous les axes <em>arrivent ensemble</em>, mais pas qu'ils suivent la <em>même forme</em> de mouvement : entre le départ et l'arrivée, le chemin dans l'espace articulaire peut se courber. Pour certaines applications — chemins prévisibles, absence de dépassement de trajectoire — on préfère un mouvement en <strong>ligne droite</strong> dans l'espace articulaire.</p>
+    <p>C'est possible lorsque les <strong>déplacements de tous les axes sont colinéaires</strong> : leurs vecteurs d'écart d'état pointent dans la même direction (à un facteur d'échelle près). Dans ce cas, tous les axes suivent <strong>le même profil temporel</strong> — celui de l'axe limitant — simplement mis à l'échelle par le <strong>ratio de déplacement</strong> de chaque axe. Comme leurs positions restent proportionnelles à chaque instant, la trajectoire résultante est une droite.</p>
+
+    <figure class="fig">
+      <img src="figures/fig-sync-phase.svg" alt="Plan des deux axes : position de l'axe 1 en abscisse, position de l'axe 2 en ordonnée. Une trajectoire Phase relie le point de départ au point d'arrivée par une ligne droite. Une trajectoire Time relie les mêmes points par une courbe qui s'écarte de la droite.">
+      <figcaption><b>Figure 7.2.</b> Dans le plan des deux axes, la synchro <b>Phase</b> trace une <em>ligne droite</em> du départ à la cible, alors que la synchro <b>Time</b> — qui garantit seulement l'arrivée simultanée — suit un chemin <em>courbe</em>. Même point de départ, même point d'arrivée, même durée : seul le chemin diffère.</figcaption>
+    </figure>
+
+    <p>Concrètement, chaque axe reçoit le timing de l'axe limitant, et son <strong>jerk est mis à l'échelle</strong> par le ratio de son déplacement à celui de l'axe limitant. Les profils sont ainsi des copies homothétiques : mêmes instants de commutation, amplitudes proportionnelles.</p>
+    <p>Si la condition de colinéarité <strong>n'est pas remplie</strong> — les axes doivent partir dans des directions incompatibles — la phase est impossible et Ruckig <strong>se replie automatiquement sur la synchro Time</strong>. On ne perd donc jamais l'arrivée simultanée ; on renonce seulement à la ligne droite.</p>
+
+    <h2>4. Pas de synchronisation, et les autres modes</h2>
+    <p>Le mode <strong>No</strong> renonce à toute coordination : chaque axe court à son propre <span class="math-inline">t_min</span>, indépendamment des autres. La durée de la trajectoire globale vaut alors simplement le <span class="math-inline">max</span> des durées d'axe, mais les axes rapides atteignent leur cible <em>en avance</em> et y restent immobiles en attendant les autres.</p>
+    <p>Ruckig propose encore quelques variantes&nbsp;:</p>
+    <ul>
+      <li><strong>per-DoF</strong> — chaque axe se voit attribuer <em>son propre</em> mode de synchronisation, au lieu d'un mode global unique.</li>
+      <li><strong>TimeIfNecessary</strong> — synchronisation temporelle appliquée <em>seulement si la cible bouge</em> ; un axe déjà à destination n'impose rien.</li>
+      <li><strong>Discrete</strong> — <span class="math-inline">t_sync</span> est arrondi au <strong>multiple supérieur du temps de cycle</strong>, pour caler les arrivées sur la grille temporelle de l'automate.</li>
+    </ul>
+
+    <div class="callout temps">
+      <p>⏱️ La synchronisation ne coûte pas d'itération : une fois <span class="math-inline">t_sync</span> déterminé, chaque axe est traité par le Step&nbsp;2 en forme fermée. Le surcoût par cycle reste borné et proportionnel au nombre de DoF (≤&nbsp;4) — parfaitement compatible avec un cycle temps réel.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>🔧 Dans <code>ruckig-scl</code>, la FC <code>Synchronize</code> calcule la durée commune <span class="math-inline">t_sync</span> ≥ <span class="math-inline">max(t_min)</span> en <strong>évitant les intervalles bloqués</strong> de chaque axe (d'où le <code>Block</code> introduit au chapitre&nbsp;5), puis <strong>re-cadence</strong> chaque axe par le Step&nbsp;2. La FC <code>PhaseSynchronize</code> gère la synchro «&nbsp;Phase&nbsp;» : elle teste la <strong>colinéarité</strong> des écarts d'état par axe ; si colinéaires, chaque axe suit le timing de l'axe limitant avec le <strong>jerk mis à l'échelle par le ratio de déplacement</strong> (mouvement en ligne droite dans l'espace articulaire) ; sinon elle se replie sur Time.</p>
+      <p>Les modes sont des constantes <code>INT</code> dans le DB <code>dbRuckigConst</code> : <code>SYNC_TIME</code> (défaut, tous arrivent ensemble), <code>Phase</code>, <code>No</code> (chaque axe indépendant à son <span class="math-inline">t_min</span>), plus <code>per-DoF</code> (chaque axe son propre mode), <code>TimeIfNecessary</code> (synchronisé seulement si la cible bouge) et <code>Discrete</code> (<span class="math-inline">t_sync</span> arrondi au multiple supérieur de <code>cycleTime</code>). Le tout est limité à <strong>4 DoF</strong>.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Plusieurs axes (≤&nbsp;4 DoF) ont chacun leur <span class="math-inline">t_min</span> : sans coordination, ils finissent à des instants différents.</li>
+        <li><strong>Time</strong> (défaut) : durée commune <span class="math-inline">t_sync = max_d(t_min,d)</span>, choisie <em>hors des intervalles bloqués</em> de tous les axes, puis <strong>Step&nbsp;2</strong> sur chaque axe → arrivée simultanée. L'axe limitant impose le tempo.</li>
+        <li><strong>Phase</strong> : si les déplacements sont <strong>colinéaires</strong>, tous les axes suivent le profil de l'axe limitant, jerk mis à l'échelle par le ratio de déplacement → <strong>ligne droite</strong> dans l'espace articulaire. Sinon, repli sur Time.</li>
+        <li><strong>No</strong> : chaque axe à son <span class="math-inline">t_min</span>, durée globale = le max. Variantes : <strong>per-DoF</strong>, <strong>TimeIfNecessary</strong>, <strong>Discrete</strong>.</li>
+        <li>Principe : synchroniser = <strong>ralentir les rapides</strong>, jamais forcer le plus lent au-delà de son temps-optimal.</li>
+        <li>Dans <code>ruckig-scl</code> : <code>Synchronize</code>, <code>PhaseSynchronize</code>, constantes dans <code>dbRuckigConst</code>.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Step 2 — ré-cadencer à une durée imposée</a>
+    <a class="next" href="chapitre-08.html"><span class="lbl">Suivant →</span>En ligne : freinage, re-ciblage, temps réel</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

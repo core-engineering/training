@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 08 — En ligne : freinage, re-ciblage, temps réel</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 08</span><br>En ligne : freinage, re-ciblage, temps réel</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre le <b>re-ciblage à la volée</b> : changer de cible à chaque cycle sans rompre la continuité.</li>
+        <li>Voir pourquoi replanifier depuis l'<b>état courant</b> garantit une continuité <b>C²</b> — aucun saut de consigne.</li>
+        <li>Saisir le rôle de la <b>pré-phase de freinage</b> quand l'état initial est hors limites.</li>
+        <li>Découvrir l'<b>interface vitesse</b> et les contraintes du <b>temps réel</b> sur automate (WCET borné).</li>
+      </ul>
+    </div>
+
+    <h2>1. Re-ciblage à la volée</h2>
+    <p>
+      C'est ici que le « <b>O</b> » d'OTG (<i>Online Trajectory Generation</i>) prend tout son sens. Jusqu'ici on a
+      calculé <i>une</i> trajectoire vers <i>une</i> cible. Mais en fonctionnement réel, la cible peut <b>changer à
+      n'importe quel cycle</b> : nouvelle consigne opérateur, retour capteur, correction de l'automate maître. Ruckig ne
+      cherche pas à raccorder deux trajectoires anciennes : à chaque cycle, il <b>replanifie intégralement depuis l'état
+      courant</b> <span class="math-inline">(p, v, a)</span> vers la cible du moment.
+    </p>
+    <p>
+      La conséquence est décisive. Comme la nouvelle trajectoire <b>démarre exactement là où l'axe se trouve</b> — même
+      position, même vitesse, même accélération — la consigne reste continue en position, en vitesse <b>et</b> en
+      accélération. C'est la continuité <b>C²</b> : <b>aucun saut</b> de consigne, donc aucun à-coup de jerk, même si la
+      cible bascule brutalement d'un cycle à l'autre.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-retarget.svg" alt="Deux graphes v(t) et p(t) : un plan initial en pointillés fantôme vers une cible 1, et le mouvement réel qui, à l'instant de re-ciblage, bifurque de manière lisse vers une cible 2 sans discontinuité">
+      <figcaption><b>Figure 8.1.</b> Un <b>plan initial</b> (en fantôme, pointillés) visait la <b>cible 1</b>. À l'instant du re-ciblage, la cible devient la <b>cible 2</b> : le mouvement réel <b>bifurque</b> vers la nouvelle consigne. Comme la replanification part de l'état courant <span class="math-inline">(p, v, a)</span>, la vitesse (vert) et la position (bleu) restent <b>lisses</b> — pas de discontinuité, pas de saut. La trajectoire abandonnée n'est jamais « exécutée » : elle n'existe qu'un cycle.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        💡 <b>Intuition.</b> Un GPS qui recalcule l'itinéraire quand vous ratez une sortie ne vous téléporte pas au bon
+        endroit : il repart <i>d'où vous êtes</i>. Ruckig fait pareil à chaque cycle. La trajectoire n'est jamais figée ;
+        elle n'est qu'un <b>plan valable jusqu'au prochain cycle</b>, systématiquement réévalué depuis l'état réel.
+      </p>
+    </div>
+
+    <div class="callout plc">
+      <p>
+        🔧 <b>Dans ruckig-scl.</b> Le mécanisme repose sur <code>pass_to_input</code> : à la fin de chaque cycle, il
+        <b>recopie l'état de sortie</b> (position, vitesse, accélération atteintes) <b>vers l'entrée du cycle suivant</b>.
+        Le calcul suivant part donc de l'état réellement atteint, jamais d'une consigne théorique — c'est ce qui autorise
+        le re-ciblage à la volée avec continuité C², sans le moindre saut de consigne.
+      </p>
+    </div>
+
+    <h2>2. La pré-phase de freinage</h2>
+    <p>
+      Un profil normal suppose un état de départ <b>dans le domaine faisable</b> : <span class="math-inline">|v₀| ≤ vₘₐₓ</span>
+      et <span class="math-inline">|a₀| ≤ aₘₐₓ</span>. Or il arrive que ce ne soit pas le cas — typiquement au
+      <b>premier enable alors que l'axe bouge déjà</b> plus vite que <span class="math-inline">vₘₐₓ</span>, ou avec une
+      accélération excédentaire. On ne peut pas démarrer un profil standard depuis un tel point : il faudrait déjà violer
+      les bornes.
+    </p>
+    <p>
+      Ruckig insère alors une <b>pré-phase de freinage</b> : un sous-profil qui, en respectant <span class="math-inline">jₘₐₓ</span>,
+      <b>ramène l'état dans le domaine faisable</b> (retour sous <span class="math-inline">vₘₐₓ</span> et
+      <span class="math-inline">aₘₐₓ</span>). Une fois l'état redevenu admissible, on <b>enchaîne</b> avec le profil
+      normal vers la cible. La trajectoire complète est donc « freinage → profil à 7 segments ».
+    </p>
+    <div class="callout piege">
+      <p>
+        ⚠️ <b>Piège.</b> Ne pas confondre cette pré-phase avec un simple arrêt d'urgence. Elle ne stoppe pas l'axe : elle
+        le <b>rend gouvernable</b> avant de reprendre la planification. Oublier ce cas, c'est risquer un profil calculé
+        depuis un état interdit — donc infaisable dès le premier segment. En <b>multi-axes</b>, le freinage se calcule
+        <b>par axe</b>, avant la synchronisation : chaque axe doit d'abord rentrer dans son domaine faisable, ensuite
+        seulement on cherche une durée commune.
+      </p>
+    </div>
+
+    <h2>3. L'interface vitesse</h2>
+    <p>
+      Toutes les cibles ne sont pas des positions. Pour du <b>jog</b> (déplacement manuel continu) ou du <b>suivi de
+      vitesse</b>, on veut atteindre et tenir une <b>vitesse cible</b>, sans point d'arrivée en position. C'est le rôle de
+      l'<b>interface vitesse</b> (<code>IFACE_VELOCITY</code>) : le profil vise <span class="math-inline">v_f</span> plutôt
+      que <span class="math-inline">p_f</span>, toujours en limitant le jerk pour une transition douce.
+    </p>
+    <div class="callout math">
+      <p>
+        ∑ <b>Le calcul.</b> Le problème est plus simple qu'en mode position : la contrainte sur <span class="math-inline">p_f</span>
+        disparaît. Il ne reste qu'à amener la vitesse à sa cible avec la bonne accélération finale, sous jerk borné —
+        un sous-ensemble du profil en S, sans le segment qui « consomme » la distance restante.
+      </p>
+    </div>
+
+    <h2>4. Le temps réel sur automate</h2>
+    <p>
+      Un OTG doit boucler <b>à chaque cycle</b> de l'OB cyclique. Ce n'est utilisable que si son <b>pire temps
+      d'exécution (WCET)</b> est <b>borné et prévisible</b>. Toute l'architecture de Ruckig vise cet objectif :
+      <b>forme fermée</b> (Cardano, Ferrari — pas d'itération non bornée), <b>pas d'allocation dynamique</b>, accès
+      mémoire optimisés. Le coût n'est jamais « en moyenne rapide » : il est <b>borné dans tous les cas</b>.
+    </p>
+    <div class="callout temps">
+      <p>
+        ⏱️ <b>Temps de cycle.</b> En <b>régime établi</b> (sans re-ciblage), un cycle coûte environ <b>30 appels FC</b> et
+        <b>0 racine carrée</b>. Le <b>pire cas</b> — re-ciblage complet sur <b>4 axes</b> — monte à <b>368 appels FC</b> et
+        <b>150 racines carrées</b>. La cible de performance est <b>&lt; 2 ms</b> sur PLCSIM Advanced FW V3.0+. L'important
+        n'est pas le chiffre moyen mais le <b>plafond</b> : dans un OB cyclique, c'est le pire cas qui doit tenir dans le
+        budget de temps, sans quoi le cycle déborde.
+      </p>
+    </div>
+
+    <div class="callout plc">
+      <p>
+        🔧 <b>Dans ruckig-scl.</b> Le re-ciblage repose sur <code>pass_to_input</code> ; la pré-phase de freinage sur
+        <code>ComputeBrakeProfile</code> (déclenchée quand <span class="math-inline">|v₀| &gt; vₘₐₓ</span> ou
+        <span class="math-inline">|a₀| &gt; aₘₐₓ</span>, par axe avant synchronisation) ; le mode vitesse sur
+        <code>IFACE_VELOCITY</code> (via <code>ComputeVelBlock1Axis</code> / <code>ComputeVelProfileTimed</code>). Le tout
+        s'expose derrière une <b>interface PLCopen</b> à enable continu : <code>enable / valid / busy / done / error</code>,
+        avec un <code>status</code> détaillé (codes <code>DA014</code>). La forme fermée garantit un coût borné et
+        déterministe, sans allocation dynamique.
+      </p>
+    </div>
+    <pre><code class="language-pascal">// SCL — boucle en ligne, appelée à chaque cycle
+IF enable THEN
+    ComputeBrakeProfile(input);   // pré-phase si état hors limites
+    Update(input, output);        // replanifie depuis l'état courant
+    pass_to_input(output, input); // sortie -> entrée du prochain cycle
+END_IF;</code></pre>
+
+    <h2>Récapitulatif du chapitre</h2>
+    <div class="callout note">
+      <ul>
+        <li>Ruckig <b>replanifie depuis l'état courant</b> à chaque cycle : re-ciblage à la volée, continuité <b>C²</b>, aucun saut de consigne (<code>pass_to_input</code>).</li>
+        <li>Une <b>pré-phase de freinage</b> ramène un état initial hors limites dans le domaine faisable avant le profil normal (<code>ComputeBrakeProfile</code>, par axe en multi-axes).</li>
+        <li>L'<b>interface vitesse</b> (<code>IFACE_VELOCITY</code>) vise une vitesse cible : jog, suivi de vitesse.</li>
+        <li>Le <b>WCET borné</b> (forme fermée, pas d'allocation) rend l'algo compatible d'un OB cyclique : ~30 FC en régime établi, 368 FC / 150 sqrt au pire cas 4-DoF, cible &lt; 2 ms.</li>
+      </ul>
+    </div>
+
+    <h2>Le fil rouge du cours</h2>
+    <div class="callout note">
+      <ul>
+        <li><b>Pourquoi limiter le jerk</b> : un profil trapézoïdal impose des sauts d'accélération (jerk infini) → chocs, usure, oscillations. Borner le jerk lisse le mouvement.</li>
+        <li><b>Le profil en S à 7 segments</b> : jerk constant par morceaux (±jₘₐₓ, 0), qui donne un profil d'accélération trapézoïdal et une vitesse en S.</li>
+        <li><b>Les familles</b> : selon que les plateaux d'accélération et de vitesse sont atteints ou non, le profil prend différentes formes canoniques.</li>
+        <li><b>Step 1 — temps-optimal</b> : pour un axe, durée minimale <span class="math-inline">t_min</span> par résolution en forme fermée, et le <b>Block</b> (t_min + intervalles bloqués).</li>
+        <li><b>Step 2 — durée imposée</b> : ré-cadencer un axe pour qu'il dure exactement une durée cible.</li>
+        <li><b>Synchronisation multi-axes</b> : choisir une <b>durée commune</b> qui évite les intervalles bloqués de chaque axe, puis ré-cadencer chacun (Step 2).</li>
+        <li><b>Exécution en ligne</b> : re-ciblage continu, pré-phase de freinage, et un WCET borné qui rend le tout <b>temps réel</b> sur automate.</li>
+      </ul>
+    </div>
+
+    <p>
+      Ce cours accompagne le dépôt <b>ruckig-scl</b> : un portage <b>SCL fidèle</b> de l'algorithme, <b>validé
+      numériquement</b> contre le vrai Ruckig — pour exécuter une génération de trajectoire limitée en jerk directement
+      sur un automate Siemens.
+    </p>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-07.html"><span class="lbl">← Précédent</span>Multi-axes &amp; synchronisation</a>
+    <a class="next" href="index.html"><span class="lbl">Suivant →</span>Retour au sommaire</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

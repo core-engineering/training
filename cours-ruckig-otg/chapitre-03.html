@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — Anatomie du profil à 7 segments</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>Anatomie du profil à 7 segments</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Décomposer un profil limité en jerk en ses 7 phases et lire le motif des signes de jerk (« UDDU »).</li>
+        <li>Distinguer les deux saturations : le plateau d'accélération (aₘₐₓ) et le plateau de vitesse (vₘₐₓ).</li>
+        <li>Comprendre quand certaines phases disparaissent, et pourquoi le profil est C² (continuité de p, v, a).</li>
+      </ul>
+    </div>
+
+    <h2>1. Les sept phases et le motif du jerk</h2>
+    <p>Au chapitre précédent, nous avons vu qu'un mouvement borné en jerk se construit à partir de créneaux de jerk. Dans le cas général — départ et arrivée à l'arrêt — le mouvement complet se compose de <b>sept segments</b> de durées <span class="math-inline">t₁, t₂, …, t₇</span>. Sur chaque segment, le jerk est <b>constant</b> et vaut l'une de trois valeurs seulement : <span class="math-inline">+jₘₐₓ</span>, <span class="math-inline">0</span>, ou <span class="math-inline">−jₘₐₓ</span>. La figure ci-dessous les annote tous.</p>
+
+    <figure class="fig">
+      <img src="figures/fig-7segments.svg" alt="Profil d'accélération trapézoïdal annoté t1 à t7 avec les signes de jerk +j, 0, −j, lignes plus et moins a max, et en dessous la courbe de vitesse en S avec la ligne v max, surmontés des bandeaux accélération, croisière, décélération">
+      <figcaption><b>Figure 3.1.</b> En haut : l'accélération, en trapèze, avec ses plateaux à ±aₘₐₓ et le signe du jerk sur chaque segment. En bas : la vitesse en S, plafonnée à vₘₐₓ pendant la croisière. Les bandeaux séparent les trois blocs accélération / croisière / décélération.</figcaption>
+    </figure>
+
+    <p>Le signe du jerk suit toujours le même enchaînement :</p>
+    <div class="math">+j , 0 , −j ,  0 ,  −j , 0 , +j</div>
+    <p>C'est le motif <b>« UDDU »</b> (<i>Up-Down-Down-Up</i>), qui décrit la façon dont l'accélération monte puis redescend : elle croît (+j), plafonne (0), redescend vers zéro (−j) ; on traverse la croisière ; puis elle décroît sous zéro (−j), plafonne à −aₘₐₓ (0), et remonte vers zéro (+j).</p>
+
+    <div class="callout astuce">
+      <p>Ne mémorisez pas sept segments : mémorisez <b>un trapèze d'accélération</b>. Ses trois pentes montantes/plates/descendantes, répétées à l'envers pour freiner, donnent naturellement les sept phases. Le jerk n'est que la pente de ce trapèze.</p>
+    </div>
+
+    <h2>2. Trois blocs : accélérer, croiser, décélérer</h2>
+    <p>Les sept phases se regroupent en trois blocs lisibles sur la figure 3.1 :</p>
+    <ul>
+      <li><b>Phases 1–3 — accélération.</b> t₁ : le jerk est <span class="math-inline">+jₘₐₓ</span>, l'accélération monte de 0 à aₘₐₓ. t₂ : jerk nul, l'accélération reste au plateau aₘₐₓ. t₃ : jerk <span class="math-inline">−jₘₐₓ</span>, l'accélération redescend à 0. À la fin de ce bloc, la vitesse a atteint son maximum.</li>
+      <li><b>Phase 4 — croisière.</b> Jerk nul, accélération nulle : la vitesse reste <b>constante</b> à vₘₐₓ. C'est le seul segment où l'on avance « à régime établi ».</li>
+      <li><b>Phases 5–7 — décélération.</b> Image miroir du premier bloc : t₅ fait plonger l'accélération sous zéro (−j), t₆ la maintient à −aₘₐₓ, t₇ la ramène à zéro (+j) pile à l'arrivée.</li>
+    </ul>
+
+    <h2>3. Deux saturations, deux plateaux</h2>
+    <p>Un profil complet fait apparaître deux limites qui se traduisent chacune par un plateau visible sur les courbes.</p>
+    <p>Le <b>plateau d'accélération</b> correspond aux segments t₂ et t₆ : l'accélération y est bloquée à ±aₘₐₓ, le jerk est nul. Le <b>plateau de vitesse</b> correspond au segment t₄ : la vitesse y plafonne à vₘₐₓ, accélération nulle. Le lien entre les deux passe par la durée des créneaux de jerk.</p>
+
+    <div class="callout math">
+      <p>Pendant une phase de jerk constant de durée <span class="math-inline">t_j</span>, l'accélération varie linéairement de <span class="math-inline">jₘₐₓ · t_j</span>. Si le plateau d'accélération est atteint, c'est que la phase de montée a duré assez longtemps pour saturer :</p>
+      <div class="math">aₘₐₓ = jₘₐₓ · t_j    ⟹    t_j = aₘₐₓ / jₘₐₓ</div>
+      <p>t₁ (et t₃, t₅, t₇) valent donc au moins <span class="math-inline">aₘₐₓ / jₘₐₓ</span> dès que aₘₐₓ est réellement atteinte.</p>
+    </div>
+
+    <div class="callout temps">
+      <p>Sur automate, ces durées sont figées à la conception du profil, jamais recalculées dans la boucle temps réel. À chaque cycle, on ne fait qu'<i>évaluer</i> le profil déjà planifié — voir l'encart ruckig-scl plus bas.</p>
+    </div>
+
+    <h2>4. Quand des phases s'annulent</h2>
+    <p>Les sept phases ne sont pas toujours présentes. Selon la distance à parcourir, certaines durées tombent à zéro.</p>
+    <ul>
+      <li><b>Déplacement court → pas de croisière.</b> Si la distance ne permet pas d'atteindre vₘₐₓ, la vitesse n'a pas le temps de plafonner : <span class="math-inline">t₄ = 0</span>. On accélère puis on décélère immédiatement, sans palier de vitesse.</li>
+      <li><b>Déplacement encore plus court → plateaux d'accél nuls.</b> Si l'on n'atteint même plus aₘₐₓ, les paliers d'accélération disparaissent : <span class="math-inline">t₂ = t₆ = 0</span>. Le trapèze d'accélération devient un simple <b>triangle</b> : montée puis descente immédiate du jerk.</li>
+    </ul>
+    <p>Ces disparitions ne sont pas des cas pathologiques : ce sont les différentes <b>familles de profil</b> que le planificateur doit reconnaître et calculer. Nous les étudierons systématiquement au chapitre 4.</p>
+
+    <div class="callout piege">
+      <p>Une durée nulle ne veut pas dire « segment absent » dans le code : le segment existe toujours, avec <span class="math-inline">t = 0</span>. Les formules d'intégration restent valides sans branchement particulier — c'est ce qui rend l'évaluation robuste.</p>
+    </div>
+
+    <h2>5. Un profil de classe C²</h2>
+    <p>Comme le jerk est fini partout, l'accélération est continue (elle est l'intégrale d'un signal borné), la vitesse l'est aussi, et la position également. Le profil est donc <b>C²</b> : position, vitesse et accélération sont toutes continues. Seul le <b>jerk est discontinu</b> — il saute entre +jₘₐₓ, 0 et −jₘₐₓ aux frontières de segments — mais il reste <b>borné</b>.</p>
+
+    <div class="callout astuce">
+      <p>La continuité C² compte pour l'asservissement : une accélération continue signifie un <b>couple/effort continu</b> côté actionneur. Pas de à-coup instantané, moins d'excitation des modes mécaniques, moins d'usure et de bruit. C'est tout l'intérêt de limiter le jerk plutôt que l'accélération seule.</p>
+    </div>
+
+    <h2>6. Durée totale du mouvement</h2>
+    <p>La durée totale est simplement la somme des sept segments :</p>
+    <div class="callout math">
+      <div class="math">t_f = t₁ + t₂ + t₃ + t₄ + t₅ + t₆ + t₇</div>
+      <p>Cette valeur sert de référence pour la synchronisation multi-axes (chapitre 5) : tous les axes visent une même t_f.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>Dans ruckig-scl, un profil est stocké dans l'UDT <code>typeProfile</code>, qui contient le tableau des durées <code>t[]</code> des 7 segments et le jerk <code>j[]</code> appliqué sur chacun. La fonction <code>StateAtTime</code> évalue le triplet (p, v, a) à un instant donné en intégrant les segments jusqu'à cet instant, tandis que <code>IntegrateProfileStates</code> remplit les états intermédiaires du profil.</p>
+    </div>
+
+    <pre><code class="language-pascal">// SCL — durée totale d'un profil
+tf := 0.0;
+FOR i := 0 TO 6 DO
+    tf := tf + prof.t[i];
+END_FOR;</code></pre>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Un profil borné en jerk complet a <b>7 segments</b> ; le jerk suit le motif <b>UDDU</b> : +j, 0, −j, 0, −j, 0, +j.</li>
+        <li>Trois blocs : <b>accélération</b> (1–3), <b>croisière</b> à v constante (4), <b>décélération</b> symétrique (5–7).</li>
+        <li>Deux saturations : <b>plateau d'accélération</b> (t₂, t₆ à ±aₘₐₓ) et <b>plateau de vitesse</b> (t₄ à vₘₐₓ). Sur une phase de jerk, <span class="math-inline">Δa = jₘₐₓ · t_j</span>.</li>
+        <li>Trajet court → <span class="math-inline">t₄ = 0</span> ; plus court → <span class="math-inline">t₂ = t₆ = 0</span> (accélération triangulaire) : ce sont les <b>familles</b> du chapitre 4.</li>
+        <li>Profil <b>C²</b> (p, v, a continues), jerk discontinu mais borné : couple continu à l'actionneur.</li>
+        <li>Dans ruckig-scl : <code>typeProfile</code> (t[], j[]) ; <code>StateAtTime</code> pour évaluer (p, v, a).</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>Jerk, accélération, et le profil en S</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>Les familles de profil</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

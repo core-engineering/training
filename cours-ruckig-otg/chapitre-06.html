@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — Step 2 : ré-cadencer à une durée imposée</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>Step 2 — ré-cadencer à une durée imposée</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre pourquoi l'on veut parfois un mouvement <b>plus lent</b> que le temps-optimal, d'une durée <span class="math-inline">t_f</span> imposée.</li>
+        <li>Saisir que ré-cadencer un profil est un <b>problème inverse</b> sous contrainte de durée, pas une simple dilatation du temps.</li>
+        <li>Découvrir comment ruckig-scl résout ce problème : familles « timed », solveur de racines robuste, validation.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le besoin : imposer une durée, pas la minimiser</h2>
+    <p>Au chapitre précédent, le <b>Step 1</b> nous a donné la solution <b>temps-optimale</b> : la durée minimale <span class="math-inline">t_min</span> pour aller d'un état à l'autre sans violer vₘₐₓ, aₘₐₓ, jₘₐₓ. Mais aller le plus vite possible n'est pas toujours ce que l'on veut. Il arrive qu'on veuille un mouvement d'une durée <b>exactement imposée</b> <span class="math-inline">t_f &gt; t_min</span>.</p>
+    <p>Deux raisons principales :</p>
+    <ul>
+      <li><b>La synchronisation multi-axes</b> (chapitre 7). Chaque axe a sa propre durée minimale ; le plus lent fixe la cadence commune. Les axes rapides doivent alors <b>attendre</b> le plus lent pour arriver tous ensemble à la même <span class="math-inline">t_f</span>. Il faut donc savoir <i>ralentir</i> un axe rapide sur une durée choisie.</li>
+      <li><b>Un plancher de durée demandé</b> (<code>minimumDuration</code>). L'application peut exiger qu'un mouvement ne descende jamais sous une durée donnée — par exemple pour lisser une cadence, ménager un processus, ou coordonner avec un autre équipement.</li>
+    </ul>
+
+    <h2>2. Le problème inverse : un profil valide de durée <span class="math-inline">t_f</span></h2>
+    <p>Le Step 2 résout donc la question inverse du Step 1 : au lieu de <i>« quelle est la plus petite durée ? »</i>, on demande <i>« construis-moi un profil valide dont la durée totale vaut exactement <span class="math-inline">t_f</span> »</i>, tout en respectant les mêmes bornes vₘₐₓ, aₘₐₓ, jₘₐₓ.</p>
+
+    <figure class="fig">
+      <img src="figures/fig-step2.svg" alt="Deux profils pour le même déplacement : en trait plein le profil temps-optimal, dont la vitesse et la position atteignent la cible tôt à l'instant t min ; en pointillé le profil ré-cadencé, plus lent, avec une vitesse plus basse qui n'atteint pas v max, et qui atteint la cible plus tard à l'instant t f. Marqueurs verticaux sur t min et t f.">
+      <figcaption><b>Figure 6.1.</b> Même déplacement, deux cadences. En trait plein, le profil <b>temps-optimal</b> : la vitesse (vert) monte haut, la position (bleu) atteint la cible dès <span class="math-inline">t_min</span>. En pointillé, le profil <b>ré-cadencé</b> : il « traîne » plus bas, la vitesse maximale n'est plus atteinte, et la cible n'est touchée qu'à <span class="math-inline">t_f</span>.</figcaption>
+    </figure>
+
+    <p>La figure le rend visible : pour aller moins vite sans dépasser les limites, le profil ré-cadencé étale son parcours. Sa vitesse de croisière est <b>plus basse</b> — typiquement vₘₐₓ n'est plus atteinte du tout — et l'accélération sollicite moins ses plateaux. Le mouvement reste doux et borné en jerk, simplement il occupe toute la fenêtre <span class="math-inline">t_f</span>.</p>
+
+    <div class="callout astuce">
+      <p>Un profil ré-cadencé n'est <b>pas</b> une homothétie temporelle du profil temps-optimal. On ne peut pas juste « étirer l'axe du temps » d'un facteur <span class="math-inline">t_f / t_min</span> : cela diviserait le jerk et l'accélération, mais les <b>limites cinématiques restent les mêmes</b>. Ralentir en gardant vₘₐₓ, aₘₐₓ, jₘₐₓ inchangés impose une <b>nouvelle résolution</b> sous contrainte de durée, avec un profil de forme différente.</p>
+    </div>
+
+    <h2>3. La résolution : re-résoudre les familles pour <span class="math-inline">t_f</span> fixé</h2>
+    <p>Comme au Step 1, on ne connaît pas d'avance quelle famille de profil convient. On re-parcourt donc les familles, mais cette fois avec la durée <span class="math-inline">t_f</span> <b>imposée comme donnée</b>. Ajouter cette contrainte change la nature des équations : elle relie entre elles toutes les durées de segment, et fait grimper le degré du polynôme à résoudre.</p>
+
+    <div class="callout math">
+      <p>Au Step 1, on cherchait la durée qui rend le déplacement égal à la cible. Au Step 2, on ajoute une équation supplémentaire : la somme des durées de segment doit valoir <span class="math-inline">t_f</span>.</p>
+      <div class="math">p(t_f) = p_cible    <b>et</b>    ∑ tᵢ = t_f</div>
+      <p>Cette contrainte de durée en plus, couplée aux conditions de continuité, conduit à des équations de <b>degré 5 ou 6</b>. À ce degré, il n'existe plus de <b>forme fermée</b> pure fiable pour toutes les familles : on résout numériquement.</p>
+    </div>
+
+    <p>Le solveur employé n'est pas une simple itération de Newton lâchée à l'aveugle — trop fragile près des racines multiples. On procède en deux temps : on <b>encadre</b> d'abord une racine dans un intervalle sûr, puis on la raffine par un <b>Newton sécurisé</b> qui reste toujours dans cet encadrement. Chaque évaluation du polynôme se fait par le schéma de Horner. On atteint ainsi une précision de racine <span class="math-inline">≤ 1e-9</span>, sans les divergences d'un Newton nu.</p>
+
+    <div class="callout piege">
+      <p>Toutes les durées <span class="math-inline">t_f</span> ne sont pas atteignables. D'abord, <span class="math-inline">t_f &lt; t_min</span> est <b>infaisable</b> par définition : on ne peut pas aller plus vite que le temps-optimal. Ensuite — et c'est plus subtil — certaines durées tombent dans un <b>intervalle bloqué</b> (le <i>Block</i> du chapitre 5) : à cause des états initiaux/finaux de vitesse et d'accélération, aucune durée dans cet intervalle ne correspond à un profil valide. La durée imposée doit donc être <b>réalisable</b> ; c'est précisément le rôle du Block que de délimiter les durées valides avant d'appeler le Step 2.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>Dans ruckig-scl, le Step 2 est porté par <code>ComputeProfile1AxisTimed</code>. Il tente les <b>8 familles « timed »</b> — <code>SolveTimedNone</code>, <code>SolveTimedAcc0</code>, <code>SolveTimedAcc1</code>, <code>SolveTimedAcc0Acc1</code>, <code>SolveTimedVel</code>, <code>SolveTimedAcc0Vel</code>, <code>SolveTimedAcc1Vel</code>, <code>SolveTimedAcc0Acc1Vel</code> — chacune dans les <b>2 directions</b> de motif (UDDU / UDUD). Les racines de degré 5–6 passent par <code>PolyEval</code> (évaluation de Horner) et <code>ShrinkInterval</code> (bracketing puis Newton sécurisé). Chaque candidat est validé par <code>CheckProfile</code>, qui ré-intègre le profil pour confirmer qu'il atteint bien la cible sans violer les bornes. Le paramètre d'entrée <code>minimumDuration</code> permet d'imposer un plancher de durée.</p>
+    </div>
+
+    <div class="callout temps">
+      <p>Le Step 2 s'exécute lors de la <b>replanification</b> (à chaque nouvelle consigne, ou à chaque cycle en mode online), pas dans l'évaluation cycle-à-cycle du profil déjà figé. C'est du calcul en nombre borné d'opérations : 8 familles × 2 directions, chacune résolue à <span class="math-inline">≤ 1e-9</span> — dimensionné pour tenir dans un temps de cycle automate.</p>
+    </div>
+
+    <pre><code class="language-pascal">// SCL — ré-cadencer un axe sur une durée imposée
+// tFixed doit être ≥ tMin (Step 1) et réalisable (hors Block)
+IF tFixed &gt;= tMin THEN
+    ok := ComputeProfile1AxisTimed(inp, tFixed, prof);
+END_IF;</code></pre>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><b>Step 1</b> trouve la durée minimale <span class="math-inline">t_min</span> (temps-optimal) ; <b>Step 2</b> construit un profil valide obéissant à une durée imposée <span class="math-inline">t_f ≥ t_min</span>.</li>
+        <li>Ré-cadencer n'est <b>pas</b> une dilatation du temps : les limites vₘₐₓ/aₘₐₓ/jₘₐₓ restent fixes, c'est une nouvelle résolution — le profil « traîne » plus bas et n'atteint souvent plus vₘₐₓ.</li>
+        <li>Imposer <span class="math-inline">∑ tᵢ = t_f</span> élève le degré à 5–6 → pas de forme fermée pure : <b>encadrement + Newton sécurisé</b>, précision <span class="math-inline">≤ 1e-9</span>.</li>
+        <li>Pièges : <span class="math-inline">t_f &lt; t_min</span> infaisable, et durées dans un <b>intervalle bloqué</b> ; le Block choisit les durées valides.</li>
+        <li>Dans ruckig-scl : <code>ComputeProfile1AxisTimed</code> ; 8 familles <code>SolveTimed*</code> × 2 directions ; <code>PolyEval</code> + <code>ShrinkInterval</code> ; <code>CheckProfile</code> ; <code>minimumDuration</code>.</li>
+        <li>Ces deux briques — trouver <span class="math-inline">t_min</span>, obéir à <span class="math-inline">t_f</span> — sont exactement ce qu'il faut pour la <b>synchronisation multi-axes</b> du chapitre 7.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Step 1 — la solution temps-optimale</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>Multi-axes &amp; synchronisation</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

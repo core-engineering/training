@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — Jerk, accélération, et le profil en S</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>Jerk, accélération, et le profil en S</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Revoir la chaîne des dérivées cinématiques et situer le <b>jerk</b> parmi elles.</li>
+        <li>Comprendre comment on intègre un mouvement quand le jerk est constant par morceaux.</li>
+        <li>Voir pourquoi un profil trapézoïdal en vitesse « fait mal » à la mécanique.</li>
+        <li>Découvrir le <b>profil en S à 7 segments</b> que Ruckig produit, et l'idée de commande <i>bang-bang</i> du jerk.</li>
+      </ul>
+    </div>
+
+    <h2>1. La chaîne des dérivées cinématiques</h2>
+    <p>
+      Un mouvement se décrit d'abord par sa <b>position</b> <span class="math-inline">p(t)</span>. En dérivant, on obtient
+      la <b>vitesse</b>, puis l'<b>accélération</b>, puis le <b>jerk</b> — chaque grandeur mesure la vitesse de variation
+      de la précédente :
+    </p>
+    <div class="math">v = ṗ&nbsp;&nbsp;·&nbsp;&nbsp;a = v̇ = p̈&nbsp;&nbsp;·&nbsp;&nbsp;j = ȧ = ⃛p</div>
+    <p>
+      Côté unités (en SI, pour un axe linéaire) : la position est en <span class="math-inline">m</span>, la vitesse en
+      <span class="math-inline">m/s</span>, l'accélération en <span class="math-inline">m/s²</span> et le jerk en
+      <span class="math-inline">m/s³</span>. Pour un axe rotatif, on remplace les mètres par des radians.
+    </p>
+    <div class="callout astuce">
+      <p>
+        💡 <b>Intuition.</b> Le jerk, c'est l'« à-coup ». En voiture, l'accélération vous plaque au siège ; le jerk, c'est
+        le moment où cette poussée <i>change</i> brutalement — la secousse ressentie quand le conducteur enfonce ou relâche
+        d'un coup la pédale. Un mouvement doux, c'est un mouvement où le jerk reste borné.
+      </p>
+    </div>
+
+    <h2>2. Intégrer dans l'autre sens : jerk constant</h2>
+    <p>
+      Ruckig construit ses trajectoires en imposant un <b>jerk constant sur chaque intervalle</b>. C'est le choix qui
+      simplifie tout : si <span class="math-inline">j</span> est constant sur un segment, alors l'accélération varie
+      linéairement, la vitesse suit une parabole, et la position un polynôme cubique. On intègre simplement, une couche
+      après l'autre.
+    </p>
+    <div class="callout math">
+      <p>∑ <b>Le calcul.</b> Sur un intervalle de durée <span class="math-inline">t</span> où le jerk <span class="math-inline">j</span> est constant, en partant de <span class="math-inline">(p₀, v₀, a₀)</span> :</p>
+      <div class="math">a(t) = a₀ + j·t</div>
+      <div class="math">v(t) = v₀ + a₀·t + ½·j·t²</div>
+      <div class="math">p(t) = p₀ + v₀·t + ½·a₀·t² + ⅙·j·t³</div>
+    </div>
+    <p>
+      Ces trois formules sont le moteur de calcul de toute la suite. Un profil complet n'est rien d'autre qu'une
+      succession d'intervalles à jerk constant : on prend l'état final d'un segment comme état initial du suivant, et
+      on recolle le tout.
+    </p>
+
+    <h2>3. Pourquoi limiter le jerk ?</h2>
+    <p>
+      Le profil classique en automatisme est le <b>profil trapézoïdal en vitesse</b> : on accélère à taux constant, on
+      roule à vitesse constante, on décélère à taux constant. Élégant sur le papier — mais son accélération est un
+      <b>créneau</b> : elle saute instantanément de 0 à <span class="math-inline">aₘₐₓ</span>, puis à 0, puis à
+      <span class="math-inline">−aₘₐₓ</span>. Or un saut instantané d'accélération, c'est un <b>jerk infini</b>.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-jerk-vs-trap.svg" alt="Comparaison entre profil trapézoïdal en vitesse (accélération en créneau, jerk infini) et profil jerk-limité (accélération trapézoïdale, vitesse en S)">
+      <figcaption><b>Figure 2.1.</b> À gauche, le profil trapézoïdal en vitesse : l'accélération est un créneau, ses transitions correspondent à des pics de jerk infinis. À droite, le profil jerk-limité : l'accélération monte et descend en rampe (trapèze), et la vitesse prend une forme en « S ». C'est le prix à payer — un peu plus de temps — pour un mouvement sans à-coup.</figcaption>
+    </figure>
+
+    <p>
+      Dans la réalité, aucun moteur ne peut délivrer un jerk infini : la commande est écrêtée par les drives, et l'énergie
+      de ces transitions brutales part dans la structure. Concrètement, un jerk non borné provoque :
+    </p>
+    <ul>
+      <li>des <b>vibrations</b> et des oscillations résiduelles à l'arrêt (l'axe « rebondit » autour de la consigne) ;</li>
+      <li>une <b>usure accélérée</b> des réducteurs, courroies et accouplements, sollicités par les à-coups ;</li>
+      <li>le <b>glissement de la charge</b> (une pièce mal fixée, un liquide qui déborde) ;</li>
+      <li>une <b>sollicitation excessive des drives</b> et des pointes de courant.</li>
+    </ul>
+    <div class="callout piege">
+      <p>
+        ⚠️ <b>Piège.</b> Limiter le jerk ne consiste pas à « adoucir » a posteriori une trajectoire trapézoïdale avec un
+        filtre. Un filtre déforme la trajectoire et ajoute du retard, sans garantir les bornes. Ruckig, lui,
+        <b>construit d'emblée</b> un profil dont le jerk est borné par conception.
+      </p>
+    </div>
+
+    <h2>4. La commande <i>bang-bang</i> du jerk</h2>
+    <p>
+      Comment aller d'un point à un autre le plus vite possible, tout en respectant des bornes sur la vitesse,
+      l'accélération <b>et</b> le jerk ? La théorie de la commande optimale (temps minimal sous contraintes) donne une
+      réponse remarquablement simple : la commande optimale <b>sature</b>. Le jerk ne prend que trois valeurs :
+    </p>
+    <div class="math">j(t) ∈ { +jₘₐₓ,&nbsp; 0,&nbsp; −jₘₐₓ }</div>
+    <p>
+      C'est une commande <b>« tout ou rien »</b> (<i>bang-bang</i>) : on pousse le jerk à fond dans un sens, on le coupe,
+      on le pousse à fond dans l'autre. Sans entrer dans le principe du maximum de Pontryagin, retenez l'idée : pour
+      aller vite, on utilise à chaque instant toute la marge disponible sur la grandeur la moins dérivée qui n'est pas
+      encore saturée.
+    </p>
+
+    <h2>5. Le profil en S à 7 segments</h2>
+    <p>
+      Enchaîner ces phases de jerk donne le profil emblématique de Ruckig : <b>sept segments</b>. La figure 2.2 empile
+      les quatre grandeurs, du jerk (dérivée la plus haute) à la position.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-scurve.svg" alt="Quatre panneaux empilés — jerk, accélération, vitesse, position — d'un profil complet à 7 phases en S">
+      <figcaption><b>Figure 2.2.</b> Le profil en S complet à 7 segments. De haut en bas : le jerk (rouge) en créneaux ±jₘₐₓ/0, l'accélération (orange) trapézoïdale, la vitesse (vert) en « S », et la position (bleu) parfaitement lisse. Chaque changement de niveau du jerk marque une frontière de segment.</figcaption>
+    </figure>
+
+    <p>Lecture des courbes, de haut en bas — c'est un jeu d'emboîtement :</p>
+    <ul>
+      <li><b>Jerk (rouge)</b> : une suite de créneaux <span class="math-inline">+jₘₐₓ</span>, 0, <span class="math-inline">−jₘₐₓ</span>. Il est <b>borné mais discontinu</b> — il saute d'un niveau à l'autre.</li>
+      <li><b>Accélération (orange)</b> : intégrale du jerk, elle est donc <b>trapézoïdale</b>. Elle monte en rampe (jerk +), reste au plateau (jerk 0), redescend (jerk −).</li>
+      <li><b>Vitesse (vert)</b> : intégrale de l'accélération trapézoïdale, elle dessine le fameux « S » à chaque phase.</li>
+      <li><b>Position (bleu)</b> : intégrale de la vitesse, courbe lisse sans aucune cassure visible.</li>
+    </ul>
+    <div class="callout note">
+      <p>
+        📝 <b>À retenir.</b> Seul le jerk est discontinu ; l'accélération, la vitesse et la position sont
+        <b>continues</b>. La position est même de classe C² (continue jusqu'à sa dérivée seconde, l'accélération). C'est
+        exactement ce qui rend le mouvement doux pour la mécanique.
+      </p>
+    </div>
+
+    <div class="callout plc">
+      <p>
+        🔧 <b>Dans ruckig-scl.</b> L'intégration des états d'un profil est réalisée par la FC
+        <code>IntegrateProfileStates</code> : à partir des durées et du jerk de chaque segment, plus l'état initial
+        <span class="math-inline">(p₀, v₀, a₀)</span>, elle remplit les valeurs d'accélération, de vitesse et de position
+        segment par segment — en appliquant exactement les trois formules de la section 2. Tout est calculé en
+        <code>LREAL</code> (l'équivalent du <code>double</code> C++), pour préserver la précision sur les cumuls.
+      </p>
+    </div>
+    <pre><code class="language-pascal">// SCL — principe de l'intégration segment par segment
+FOR i := 0 TO 6 DO
+    a := a + j[i] * t[i];
+    v := v + a0 * t[i] + 0.5 * j[i] * t[i] * t[i];
+    // … idem pour p, puis état final = état initial du segment suivant
+END_FOR;</code></pre>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Chaîne des dérivées : position → vitesse → accélération → <b>jerk</b> (m, m/s, m/s², m/s³).</li>
+        <li>Sur un intervalle à jerk constant : <span class="math-inline">a</span> linéaire, <span class="math-inline">v</span> parabolique, <span class="math-inline">p</span> cubique — trois formules qui suffisent à tout intégrer.</li>
+        <li>Le profil trapézoïdal en vitesse impose un jerk infini → vibrations, usure, glissement. Borner le jerk supprime ces à-coups.</li>
+        <li>La commande temps-optimal sature le jerk : <span class="math-inline">j ∈ {+jₘₐₓ, 0, −jₘₐₓ}</span> (<i>bang-bang</i>).</li>
+        <li>Il en résulte un <b>profil en S à 7 segments</b> : jerk borné mais discontinu, a/v/p continues (position C²).</li>
+        <li>Ces sept segments ont des durées <span class="math-inline">t₁ … t₇</span> — c'est l'objet du <b>chapitre 3</b>.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Générer une trajectoire… en ligne</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>Anatomie du profil à 7 segments</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

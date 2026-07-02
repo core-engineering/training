@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Générer une trajectoire… en ligne</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Générer une trajectoire… en ligne</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Poser le problème : conduire un ou plusieurs axes d'un état courant à un état cible, en douceur et sous contraintes cinématiques.</li>
+        <li>Distinguer la planification <em>hors-ligne</em> de la génération <em>en ligne</em> (OTG) et comprendre pourquoi l'en-ligne réagit à chaque instant.</li>
+        <li>Identifier les entrées / sorties d'un générateur de trajectoire en ligne et sa boucle d'exécution cyclique.</li>
+        <li>Comprendre la garantie de temps-optimalité et le rôle central du jerk.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le problème</h2>
+    <p>Un axe se trouve dans un certain <strong>état courant</strong> : une position <span class="math-inline">p</span>, une vitesse <span class="math-inline">v</span>, une accélération <span class="math-inline">a</span>. On veut l'amener vers un <strong>état cible</strong> — typiquement une nouvelle position, éventuellement avec une vitesse et une accélération d'arrivée imposées. Le tout doit se faire de façon <em>fluide</em>, sans à-coups qui usent la mécanique ou font vibrer la charge, et en respectant des <strong>limites cinématiques</strong> : vitesse maximale <span class="math-inline">vₘₐₓ</span>, accélération maximale <span class="math-inline">aₘₐₓ</span>, jerk maximal <span class="math-inline">jₘₐₓ</span> (la dérivée de l'accélération).</p>
+    <p>La difficulté n'est pas de trouver <em>une</em> trajectoire, mais d'en trouver une qui satisfasse ces limites <strong>en permanence</strong>, et surtout de pouvoir la reconsidérer si les conditions changent : nouvelle cible, obstacle détecté, perturbation sur l'axe. Sur une machine réelle, la consigne n'est jamais figée une fois pour toutes.</p>
+
+    <div class="callout astuce">
+      <p>💡 Pensez à un ascenseur : il ne se contente pas d'aller du 2ᵉ au 5ᵉ étage. Il démarre en douceur, atteint une vitesse de croisière, puis freine progressivement — et si vous appelez un nouvel étage en cours de route, il recalcule tout sans s'arrêter brutalement. C'est exactement ce que fait un générateur de trajectoire en ligne.</p>
+    </div>
+
+    <h2>2. Hors-ligne ou en ligne&nbsp;?</h2>
+    <p>Il existe deux grandes familles de générateurs.</p>
+    <p>Une planification <strong>hors-ligne</strong> calcule la trajectoire complète <em>à l'avance</em>, du départ jusqu'à l'arrivée. On obtient une courbe figée que l'on se contente ensuite de lire, échantillon après échantillon. C'est parfait quand tout est connu et immuable — mais dès qu'un événement survient (la cible bouge, un capteur déclenche), il faut relancer un calcul complet, ce qui prend du temps et introduit une latence.</p>
+    <p>Un générateur <strong>en ligne</strong> (OTG, <em>Online Trajectory Generation</em>) fait l'inverse : il <strong>recalcule la trajectoire à chaque cycle</strong>, en partant de l'état courant réel. À chaque tour, il ne produit qu'un pas — le prochain état — mais il le fait en tenant compte de la cible et des limites <em>du moment</em>.</p>
+
+    <div class="callout astuce">
+      <p>💡 L'avantage décisif de l'en-ligne : la <strong>réaction instantanée</strong>. Une nouvelle cible ou une valeur de capteur qui change au cycle N est prise en compte dès le cycle N+1, sans replanification globale. C'est ce qui rend l'axe robuste aux perturbations et adaptable en temps réel.</p>
+    </div>
+
+    <h2>3. Entrées et sorties</h2>
+    <p>À chaque cycle, le générateur reçoit trois blocs d'information et produit un état.</p>
+    <ul>
+      <li><strong>État courant</strong> : <span class="math-inline">p</span>, <span class="math-inline">v</span>, <span class="math-inline">a</span> (mesurés ou estimés).</li>
+      <li><strong>État cible</strong> : <span class="math-inline">p_target</span>, <span class="math-inline">v_target</span>, <span class="math-inline">a_target</span>.</li>
+      <li><strong>Limites</strong> : <span class="math-inline">vₘₐₓ</span>, <span class="math-inline">aₘₐₓ</span>, <span class="math-inline">jₘₐₓ</span>.</li>
+    </ul>
+    <p>En sortie, un seul objet : le <strong>prochain état</strong> <span class="math-inline">(p, v, a)</span> à l'instant <span class="math-inline">t + Δt</span>, où <span class="math-inline">Δt</span> est la période du cycle. C'est cette nouvelle position qui devient la consigne envoyée à l'axe.</p>
+
+    <div class="math">update( état_courant, cible, limites )  →  état(t + Δt)</div>
+
+    <figure class="fig">
+      <img src="figures/fig-control-loop.svg" alt="Boucle cyclique : l'état courant (p, v, a) entre dans update(), qui produit un nouvel état (p, v, a) à t+Δt ; une boîte Limites (vmax, amax, jmax, cible) alimente update() ; le nouvel état part vers la consigne du drive, et pass_to_input() le renvoie comme état courant du cycle suivant.">
+      <figcaption><b>Figure 1.1.</b> La boucle de génération en ligne. À chaque cycle, <code>update()</code> combine l'état courant et les limites pour produire le prochain état ; celui-ci alimente le drive et, via <code>pass_to_input()</code>, redevient l'état courant du cycle suivant.</figcaption>
+    </figure>
+
+    <h2>4. La boucle</h2>
+    <p>Le fonctionnement est fondamentalement cyclique. À chaque tour :</p>
+    <ol>
+      <li>on appelle <code>update(input)</code>, qui renvoie <code>output</code> — le prochain état ;</li>
+      <li>on transmet <code>output.newPosition</code> (et éventuellement <span class="math-inline">v</span>, <span class="math-inline">a</span>) à l'axe ;</li>
+      <li>on exécute <strong>pass_to_input</strong> : l'état d'arrivée de ce cycle devient l'état courant du cycle suivant.</li>
+    </ol>
+    <p>Cette dernière étape est le cœur de la boucle : elle « avance » d'un pas dans le temps. Comme le montre la Figure 1.1, la sortie reboucle sur l'entrée. Tant que la cible n'est pas atteinte, <code>update()</code> retourne un résultat <strong>Working</strong> ; une fois l'état cible atteint dans les limites, il retourne <strong>Finished</strong>. On sait ainsi précisément quand le mouvement est terminé.</p>
+
+    <div class="callout piege">
+      <p>⚠️ Le <code>pass_to_input</code> doit repartir de l'état <strong>calculé</strong> par le générateur, pas de la position mesurée brute — sinon le bruit de mesure se réinjecte à chaque cycle et la trajectoire se met à trembler. On ne remplace l'état courant par la mesure que délibérément (recalage), pas par défaut.</p>
+    </div>
+
+    <h2>5. La garantie : temps-optimale</h2>
+    <p>Pour un mouvement <strong>état-à-état</strong> (d'un état courant vers un état cible, sans waypoints intermédiaires imposés), Ruckig ne se contente pas de fournir une trajectoire admissible : il fournit la trajectoire de <strong>durée minimale</strong> compatible avec les limites. C'est la propriété de <em>temps-optimalité</em>. Autrement dit, aucune autre trajectoire respectant <span class="math-inline">vₘₐₓ</span>, <span class="math-inline">aₘₐₓ</span> et <span class="math-inline">jₘₐₓ</span> n'atteint la cible plus vite.</p>
+
+    <div class="callout math">
+      <p>∑ La durée totale d'un mouvement est la somme des durées de ses phases. Nous verrons au chapitre suivant qu'un profil limité en jerk se décompose en sept segments&nbsp;:</p>
+      <div class="math">T = t₁ + t₂ + t₃ + t₄ + t₅ + t₆ + t₇</div>
+      <p>Ruckig cherche l'ensemble des <span class="math-inline">tᵢ</span> qui minimise <span class="math-inline">T</span> sous les contraintes cinématiques.</p>
+    </div>
+
+    <p>La clé de la fluidité tient en un mot : le <strong>jerk</strong>. En bornant la dérivée de l'accélération, on interdit les variations brutales de couple, on réduit les vibrations et on ménage la mécanique. C'est ce que nous détaillerons au <a href="chapitre-02.html">chapitre 2</a> avec le profil en S.</p>
+
+    <h2>6. Dans ruckig-scl</h2>
+    <div class="callout plc">
+      <p>🔧 Dans <code>ruckig-scl</code>, toute la boucle est encapsulée dans un bloc fonctionnel à état, <code>RuckigOtg</code>, appelé <strong>une seule fois par cycle</strong> depuis un OB rapide (par exemple un OB à interruption cyclique). À chaque appel, il valide l'entrée, détecte un changement de cible, recalcule si besoin, avance d'un pas et évalue le résultat (Working / Finished).</p>
+      <p>Les données transitent par les UDT <code>typeRuckigInput</code> et <code>typeRuckigOutput</code>, en <code>LREAL</code> (équivalent du <code>double</code> C++) et en <code>ARRAY[0..DOF_MAX-1]</code> pour gérer plusieurs axes. La sortie <code>output.newPosition[]</code> devient la consigne du drive.</p>
+    </div>
+    <pre><code class="language-pascal">// SCL — appel typique dans un OB cyclique rapide
+"RuckigOtg_DB"(
+    input     := #trajInput,      // p, v, a courants + cible + limites
+    cycleTime := #dt,             // période de l'OB (s)
+    output    => #trajOutput);    // prochain état à t + dt
+
+// La nouvelle position part vers l'axe
+#axisSetpoint := #trajOutput.newPosition[0];</code></pre>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Le problème : amener un ou plusieurs axes d'un état courant <span class="math-inline">(p, v, a)</span> à une cible, en douceur, sous les limites <span class="math-inline">vₘₐₓ / aₘₐₓ / jₘₐₓ</span>.</li>
+        <li>Hors-ligne = trajectoire figée calculée à l'avance ; en ligne (OTG) = trajectoire <strong>recalculée à chaque cycle</strong> depuis l'état courant → réaction instantanée et robustesse.</li>
+        <li>Entrée = état courant + état cible + limites ; sortie = le <strong>prochain état</strong> à <span class="math-inline">t + Δt</span>.</li>
+        <li>La boucle : <code>update()</code> → nouvel état → <code>pass_to_input</code>. Résultat <strong>Working</strong> tant que la cible n'est pas atteinte, <strong>Finished</strong> ensuite.</li>
+        <li>Pour un mouvement état-à-état, la solution est <strong>temps-optimale</strong> ; la fluidité vient de la limitation du <strong>jerk</strong> (chapitre 2).</li>
+        <li>Dans <code>ruckig-scl</code> : le FB <code>RuckigOtg</code> appelé 1×/cycle dans un OB rapide, <code>newPosition[]</code> → drive.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="index.html"><span class="lbl">← Précédent</span>Sommaire</a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>Jerk, accélération, et le profil en S</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

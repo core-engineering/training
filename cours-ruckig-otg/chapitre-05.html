@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Step 1 : la solution temps-optimale</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Step 1 — la solution temps-optimale</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre ce que calcule le <b>Step 1</b> : la trajectoire de <b>durée minimale</b> pour un axe.</li>
+        <li>Voir comment les durées de phase inconnues se ramènent à une <b>équation polynomiale</b>.</li>
+        <li>Saisir pourquoi la résolution en <b>forme fermée</b> (Cardano, Ferrari) est décisive pour le temps réel.</li>
+        <li>Découvrir le <b>Block</b> et ses <b>intervalles bloqués</b>, indispensables à la synchronisation multi-axes.</li>
+      </ul>
+    </div>
+
+    <h2>1. Ce que calcule le Step 1</h2>
+    <p>
+      Le Step 1 traite <b>un seul axe à la fois</b>. Son objectif est net : trouver la trajectoire qui atteint la cible
+      <span class="math-inline">(p_f, v_f, a_f)</span> depuis l'état courant <span class="math-inline">(p₀, v₀, a₀)</span>
+      dans la <b>durée minimale</b> <span class="math-inline">t_min</span>, tout en respectant les bornes
+      <span class="math-inline">vₘₐₓ</span>, <span class="math-inline">aₘₐₓ</span> et <span class="math-inline">jₘₐₓ</span>.
+      C'est le sens de « temps-optimale » : aucune trajectoire admissible ne va plus vite.
+    </p>
+    <div class="callout astuce">
+      <p>
+        💡 <b>Intuition.</b> Chaque axe court d'abord « sa » course la plus rapide, sans se soucier des autres. Le Step 1
+        répond à la question « <i>en combien de temps, au mieux, cet axe peut-il arriver ?</i> ». La coordination entre
+        axes viendra ensuite (chapitre 7) ; ici, on cherche le record de vitesse individuel.
+      </p>
+    </div>
+
+    <h2>2. Des durées de phase à une équation polynomiale</h2>
+    <p>
+      On sait déjà (chapitres 3 et 4) que la trajectoire est un profil à sept segments, décrit par une <b>famille</b> et
+      une <b>direction</b>. Ce qui reste inconnu, ce sont les <b>durées de phase</b> <span class="math-inline">t₁ … t₇</span>.
+      Pour chaque candidat (famille × direction), la continuité entre segments et les <b>conditions à la cible</b>
+      (position, vitesse et accélération finales imposées) fournissent juste assez d'équations pour fixer ces durées.
+    </p>
+    <p>
+      En reportant les intégrations à jerk constant dans ces conditions, le système se réduit à <b>une équation
+      polynomiale</b> en une durée inconnue — le plus souvent une <b>cubique</b> ou une <b>quartique</b>, selon la famille.
+    </p>
+    <div class="callout math">
+      <p>
+        ∑ <b>Le calcul.</b> Prenons le cas le plus simple : un profil <b>« NONE »</b> <i>rest-to-rest</i> (départ et arrivée
+        à l'arrêt), où l'accélération ne fait qu'un aller-retour triangulaire — le jerk seul sculpte le mouvement, sans
+        plateau d'accélération ni de vitesse. Chaque phase de jerk dure <span class="math-inline">t_j</span>, avec
+        <span class="math-inline">j = ±jₘₐₓ</span>. Sur une phase à jerk constant partant de l'arrêt :
+      </p>
+      <div class="math">a(t_j) = jₘₐₓ·t_j&nbsp;&nbsp;·&nbsp;&nbsp;v(t_j) = ½·jₘₐₓ·t_j²&nbsp;&nbsp;·&nbsp;&nbsp;p(t_j) = ⅙·jₘₐₓ·t_j³</div>
+      <p>
+        Par symétrie du triangle d'accélération (4 phases de jerk égales pour repartir et revenir à
+        <span class="math-inline">a = 0</span> et <span class="math-inline">v = 0</span>), le déplacement total s'écrit
+      </p>
+      <div class="math">Δp = jₘₐₓ·t_j³</div>
+      <p>
+        Isoler <span class="math-inline">t_j</span> revient donc à résoudre une équation <b>cubique</b> en
+        <span class="math-inline">t_j</span> : <span class="math-inline">t_j = (Δp / jₘₐₓ)^{1/3}</span>. Voilà d'où sort
+        le polynôme — et dès que <span class="math-inline">v₀</span>, <span class="math-inline">a₀</span> ou un plateau
+        entrent en jeu, il monte au degré 4.
+      </p>
+    </div>
+
+    <h2>3. La forme fermée : Cardano et Ferrari</h2>
+    <p>
+      Ces polynômes, Ruckig ne les résout pas par itération. Il applique les <b>formules exactes</b> : méthode de
+      <b>Cardano</b> pour les cubiques, méthode de <b>Ferrari</b> pour les quartiques. Ces méthodes donnent toutes les
+      racines en un <b>nombre borné d'opérations arithmétiques</b> — quelques racines carrées et cubiques, pas de boucle.
+    </p>
+    <div class="callout temps">
+      <p>
+        ⏱️ <b>Temps de cycle.</b> Une résolution <b>itérative</b> (Newton-Raphson, dichotomie) converge en un nombre de
+        pas <i>variable</i> selon le point de départ et la tolérance : son pire temps d'exécution (WCET) est difficile à
+        garantir. La forme fermée, elle, coûte <b>toujours le même nombre d'opérations</b> : le WCET est connu d'avance.
+        Sur un automate qui doit boucler à chaque cycle, c'est cette prévisibilité qui rend l'algorithme utilisable.
+      </p>
+    </div>
+
+    <h2>4. Sélectionner le meilleur candidat</h2>
+    <p>
+      Le Step 1 évalue toutes les combinaisons famille × direction. Chaque candidat livre un jeu de durées
+      <span class="math-inline">t₁ … t₇</span>. On <b>écarte</b> aussitôt les candidats <b>infaisables</b> : durée
+      négative, ou profil qui violerait une borne (<span class="math-inline">vₘₐₓ</span>, <span class="math-inline">aₘₐₓ</span>).
+      Parmi les candidats faisables restants, on retient celui de <b>durée totale la plus courte</b> :
+      c'est lui qui définit <span class="math-inline">t_min</span>.
+    </p>
+    <div class="callout piege">
+      <p>
+        ⚠️ <b>Piège.</b> « Faisable » ne se décide pas à l'œil. Un candidat peut donner des durées positives et sembler
+        valide, tout en dépassant une limite en cours de route. C'est pourquoi chaque profil retenu est <b>re-vérifié par
+        intégration</b> avant d'être accepté (voir l'encart ruckig-scl).
+      </p>
+    </div>
+
+    <h2>5. Le « Block » et les intervalles bloqués</h2>
+    <p>
+      Le Step 1 ne produit pas seulement <span class="math-inline">t_min</span>. Il renvoie un <b>Block</b> : une
+      description de <b>toutes les durées réalisables</b> pour cet axe. Et c'est là qu'apparaît un fait contre-intuitif :
+      <b>au-delà de <span class="math-inline">t_min</span>, toutes les durées ne sont pas atteignables</b>. Il existe des
+      <b>intervalles bloqués</b> — des plages de durées pour lesquelles <i>aucun</i> profil valide n'existe.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-block.svg" alt="Axe des durées possibles t_f : une zone impossible avant t_min, le marqueur t_min, des régions réalisables en vert, et un intervalle bloqué en rouge où aucun profil valide n'existe">
+      <figcaption><b>Figure 5.1.</b> L'axe des durées finales <span class="math-inline">t_f</span> pour un axe. À gauche de <span class="math-inline">t_min</span>, la zone est <b>impossible</b> (on ne peut pas aller plus vite que l'optimum). À partir de <span class="math-inline">t_min</span>, les durées sont <b>réalisables</b> (vert) — sauf dans un <b>intervalle bloqué</b> (rouge) où aucun profil admissible ne recolle l'état initial à la cible. Le Block est précisément cette carte : <span class="math-inline">t_min</span> + la liste des trous.</figcaption>
+    </figure>
+
+    <p>
+      Pourquoi ces trous ? Parce que ralentir un profil n'est pas continu : passer d'un profil à un autre peut exiger de
+      changer de famille, et entre les deux, certaines durées ne correspondent à aucune solution respectant les bornes.
+      Cette information est <b>cruciale</b> pour la suite : lors de la <b>synchronisation multi-axes</b> (chapitre 7),
+      Ruckig doit choisir une <b>durée commune</b> à tous les axes. Cette durée commune devra <b>éviter les intervalles
+      bloqués</b> de chaque axe — sans quoi la trajectoire synchronisée serait tout simplement infaisable.
+    </p>
+
+    <h2>6. Les familles de repli « two-step »</h2>
+    <p>
+      Les trois familles principales couvrent l'immense majorité des cas. Mais certains <b>états initiaux pathologiques</b>
+      — par exemple une accélération de départ déjà au-delà de ce qu'un profil standard peut absorber — les font toutes
+      échouer. Ruckig dispose alors de familles de <b>repli « two-step »</b>
+      (<code>TwoStepNone</code>, <code>TwoStepAcc0</code>, <code>TwoStepVel</code>, <code>TwoStepAcc1Vel</code>) qui
+      décomposent le problème autrement et garantissent qu'une solution est toujours trouvée.
+    </p>
+
+    <div class="callout plc">
+      <p>
+        🔧 <b>Dans ruckig-scl.</b> Le Step 1 est réalisé par <code>ComputeBlock1Axis</code>, qui remplit un UDT
+        <code>typeBlock</code> : la durée minimale <span class="math-inline">t_min</span> et les éventuels intervalles
+        bloqués. Les racines des équations de phase sont obtenues en forme fermée par <code>SolveCubic</code> (Cardano) et
+        <code>SolveQuartic</code> (Ferrari) — coût déterministe, pas d'itération non bornée. Chaque profil candidat est
+        validé par <code>CheckProfile</code>, qui le ré-intègre pour confirmer qu'il respecte les bornes et atteint bien
+        la cible. Les familles <code>TwoStep*</code> servent de repli. L'implémentation est validée contre le vrai Ruckig
+        à <span class="math-inline">≈ 1e-15</span> (cas statique 1-DoF).
+      </p>
+    </div>
+    <pre><code class="language-pascal">// SCL — principe du Step 1 pour un axe
+ComputeBlock1Axis(input, block);   // -> typeBlock : t_min + intervalles bloqués
+// en interne : pour chaque candidat famille × direction
+//   racines via SolveCubic / SolveQuartic (forme fermée)
+//   CheckProfile(profil) valide par intégration
+//   on garde le profil valide de durée minimale</code></pre>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Le <b>Step 1</b> calcule, pour un axe, la trajectoire de <b>durée minimale</b> <span class="math-inline">t_min</span> respectant <span class="math-inline">vₘₐₓ, aₘₐₓ, jₘₐₓ</span>.</li>
+        <li>Les durées de phase inconnues se ramènent à une <b>équation polynomiale</b> (cubique ou quartique) issue de la continuité et des conditions à la cible.</li>
+        <li>Cette équation est résolue en <b>forme fermée</b> (Cardano, Ferrari) : nombre d'opérations borné → <b>WCET connu</b>, compatible temps réel.</li>
+        <li>On <b>écarte</b> les candidats infaisables et on garde le plus court ; chaque profil retenu est <b>vérifié par intégration</b>.</li>
+        <li>Le résultat est un <b>Block</b> : <span class="math-inline">t_min</span> + les <b>intervalles bloqués</b>, à éviter lors de la synchronisation multi-axes (chapitre 7).</li>
+        <li>Des familles de repli <b>« two-step »</b> couvrent les états initiaux pathologiques.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>Les familles de profil</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>Step 2 — ré-cadencer à une durée imposée</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne 📈
+  </footer>
+</body>
+</html>

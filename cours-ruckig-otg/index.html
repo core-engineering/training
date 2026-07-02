@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ruckig — génération de trajectoire en ligne — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">📈 Ruckig <span>· génération de trajectoire en ligne</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Ruckig — génération de trajectoire en ligne</h1>
+      <p class="sub">Comprendre <em>en profondeur</em> le fonctionnement de l'algorithme de
+      génération de trajectoire temps réel, limitée en jerk : le profil en S à 7 segments,
+      les familles de profil, le solveur temps-optimal, la synchronisation multi-axes et le
+      re-ciblage à la volée. 8 chapitres en français, orientés théorie et <strong>illustrés
+      par des graphiques cinématiquement exacts</strong>. Sans exercices.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Comment lire ce cours ?</strong> Les chapitres se suivent : chacun introduit une
+      idée et l'illustre par une figure (les courbes <span class="math-inline">j / a / v / p</span>
+      sont réellement calculées, pas dessinées à main levée). Les encarts « 💡 Intuition »,
+      « ∑ Le calcul », « ⚠️ Piège » et « ⏱️ Temps de cycle » balisent le texte. Les encarts
+      « 🔧 Dans ruckig-scl » relient chaque concept à l'implémentation SCL correspondante
+      (le portage Siemens de Ruckig). Aucune connaissance préalable de Ruckig n'est requise.
+    </div>
+
+    <ul class="klegend" aria-hidden="true">
+      <li><span class="sw sw-jrk"></span> jerk <span class="math-inline">j(t)</span></li>
+      <li><span class="sw sw-acc"></span> accélération <span class="math-inline">a(t)</span></li>
+      <li><span class="sw sw-vel"></span> vitesse <span class="math-inline">v(t)</span></li>
+      <li><span class="sw sw-pos"></span> position <span class="math-inline">p(t)</span></li>
+    </ul>
+
+    <div class="part-title">Partie A — Le problème &amp; les fondations</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html"><span class="num">01</span><span><strong>Générer une trajectoire… en ligne</strong><span class="desc">génération hors-ligne vs en ligne, entrées/sorties, la boucle cyclique <code>update()</code>, optimalité temps-optimal</span></span></a></li>
+      <li><a href="chapitre-02.html"><span class="num">02</span><span><strong>Jerk, accélération, et le profil en S</strong><span class="desc">dérivées cinématiques, pourquoi limiter le jerk, jerk bang-bang, la figure phare <span class="math-inline">j/a/v/p</span></span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie B — La forme d'un mouvement</div>
+    <ul class="toc">
+      <li><a href="chapitre-03.html"><span class="num">03</span><span><strong>Anatomie du profil à 7 segments</strong><span class="desc">les 7 phases <span class="math-inline">t₁…t₇</span>, plateaux <span class="math-inline">aₘₐₓ</span> et <span class="math-inline">vₘₐₓ</span>, accélération / croisière / décélération</span></span></a></li>
+      <li><a href="chapitre-04.html"><span class="num">04</span><span><strong>Les familles de profil</strong><span class="desc">NONE, ACC0, ACC1, ACC0_ACC1, VEL ; les deux directions de jerk UDDU / UDUD ; énumérer et choisir</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie C — Le solveur</div>
+    <ul class="toc">
+      <li><a href="chapitre-05.html"><span class="num">05</span><span><strong>Step 1 — la solution temps-optimale</strong><span class="desc">trouver <span class="math-inline">t_min</span>, la résolution en forme fermée (cubique/quartique), le <em>Block</em> et les intervalles bloqués</span></span></a></li>
+      <li><a href="chapitre-06.html"><span class="num">06</span><span><strong>Step 2 — ré-cadencer à une durée imposée</strong><span class="desc">pourquoi imposer <span class="math-inline">t_f ≥ t_min</span>, re-résoudre les familles pour une durée donnée, le lien avec la synchronisation</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie D — Plusieurs axes &amp; en ligne</div>
+    <ul class="toc">
+      <li><a href="chapitre-07.html"><span class="num">07</span><span><strong>Multi-axes &amp; synchronisation</strong><span class="desc">Time (arriver ensemble), Phase (ligne droite), No (indépendant) ; le <span class="math-inline">t_sync</span> commun et l'axe limitant</span></span></a></li>
+      <li><a href="chapitre-08.html"><span class="num">08</span><span><strong>En ligne : freinage, re-ciblage, temps réel</strong><span class="desc">phase de freinage hors-limites, <code>pass_to_input</code> et continuité C², re-ciblage sans à-coup, coût déterministe sur PLC</span></span></a></li>
+    </ul>
+
+    <div class="callout plc">
+      Ce cours accompagne le dépôt <strong>ruckig-scl</strong> — un portage fidèle de
+      <a href="https://github.com/pantor/ruckig">Ruckig</a> en SCL (Structured Text) pour
+      automates Siemens S7-1500. La théorie vaut pour n'importe quelle implémentation ; les
+      encarts « Dans ruckig-scl » montrent comment elle se traduit en blocs FC/FB.
+    </div>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Ruckig, génération de trajectoire en ligne · à suivre dans l'ordre 📈
+  </footer>
+</body>
+</html>
