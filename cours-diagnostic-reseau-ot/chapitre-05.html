@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Ports &amp; services</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Ports &amp; services</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Voir d'abord ce que <strong>ton propre poste</strong> expose sur le réseau avec <code>ss -tulpn</code>, et distinguer un socket <em>en écoute</em> d'une connexion <em>établie</em>.</li>
+        <li>Connaître par cœur les <strong>ports OT caractéristiques</strong> — 102 (S7comm), 4840 (OPC-UA), 161 (SNMP), 34962-34964 (Profinet acyclique)…</li>
+        <li>Cartographier les services actifs de la cellule : <strong>découverte d'hôtes</strong> non-intrusive puis <strong>scan de ports ciblé</strong> avec <code>nmap</code>.</li>
+        <li>Déduire le <strong>rôle</strong> d'un équipement de son profil de ports ouverts — tout en gardant conscience qu'un scan actif peut perturber un automate fragile.</li>
+      </ul>
+    </div>
+
+    <h2>1. Commencer chez soi : les sockets locaux</h2>
+    <p>Avant de scruter le réseau, regarde ce que <strong>ton poste</strong> — ton laptop WSL ou l'edge de
+    l'armoire — écoute et connecte. C'est gratuit, immédiat, et sans aucun risque : rien ne part sur le fil.
+    L'outil moderne est <code>ss</code> (le successeur de <code>netstat</code>), fourni par
+    <code>iproute2</code>.</p>
+
+    <pre><code class="language-bash"># -t TCP   -u UDP   -l en écoute (listening)   -p PID/programme   -n numérique (pas de résolution DNS)
+sudo ss -tulpn</code></pre>
+
+    <pre class="term"><code><span class="prompt">#</span> ss -tulpn
+Netid State   Local Address:Port   Peer Address:Port  Process
+tcp   LISTEN  0.0.0.0:<span class="hi">22</span>          0.0.0.0:*          users:(("sshd",pid=641,fd=3))
+tcp   LISTEN  127.0.0.1:631        0.0.0.0:*          users:(("cupsd",pid=712,fd=7))
+tcp   LISTEN  0.0.0.0:<span class="hi">4840</span>        0.0.0.0:*          users:(("opcua-server",pid=980,fd=9))
+udp   LISTEN  0.0.0.0:<span class="hi">161</span>         0.0.0.0:*          users:(("snmpd",pid=655,fd=6))</code></pre>
+
+    <p>Lecture&nbsp;: chaque ligne <code>LISTEN</code> est un <strong>service qui attend des clients</strong>.
+    L'adresse locale dit <em>sur quelle interface</em> il écoute&nbsp;: <code>0.0.0.0</code> = toutes les
+    interfaces (donc joignable depuis le réseau machine), <code>127.0.0.1</code> = boucle locale uniquement
+    (invisible de l'extérieur). Ici notre edge expose un serveur OPC-UA (4840), un agent SNMP (161) et SSH
+    (22) au réseau ; le service d'impression (631) reste confiné en local.</p>
+
+    <div class="callout shell">
+      <p>Utilise <code>ss -tulpn</code> pour savoir ce que <strong>ton edge expose</strong> au réseau OT avant
+      de te demander ce que font les autres. Un edge de diagnostic qui écoute sur <code>0.0.0.0</code> des
+      services inutiles, c'est une surface d'attaque ajoutée à ta cellule. La colonne <em>Process</em> (grâce
+      à <code>-p</code>, qui exige <code>sudo</code>) te dit quel binaire fermer.</p>
+    </div>
+
+    <p>Pour voir non pas les écoutes mais les <strong>connexions établies</strong> — les échanges TCP en
+    cours — on filtre par état&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ss -tan state established
+Recv-Q Send-Q   Local Address:Port      Peer Address:Port
+0      0        192.168.0.71:52344      <span class="hi">192.168.0.1:102</span>
+0      0        192.168.0.71:22         192.168.0.240:51002</code></pre>
+
+    <p>Cette sortie est déjà un mini-diagnostic&nbsp;: notre poste <code>.71</code> a une session TCP ouverte
+    vers <code>192.168.0.1:102</code> — c'est-à-dire une <strong>communication S7 vers le CPU</strong> (port
+    102, on y vient) — et il reçoit une session SSH depuis le Scalance <code>.240</code>. On lit le rôle des
+    machines rien qu'à leurs échanges. (<code>-a</code> = tous, <code>-n</code> = numérique&nbsp;; le filtre
+    <code>state established</code> ne garde que les sessions actives.)</p>
+
+    <h2>2. Les ports OT à connaître</h2>
+    <p>La couche&nbsp;4 (transport) identifie un service par un <strong>numéro de port</strong>. En
+    bureautique on connaît 80, 443, 22. En OT s'ajoute une famille de ports très parlants&nbsp;: les
+    reconnaître, c'est lire le rôle d'un équipement sans rien deviner. Voici ceux qui reviennent sur une
+    cellule Siemens.</p>
+
+    <table>
+      <thead>
+        <tr><th>Port</th><th>Proto</th><th>Service</th><th>À quoi ça sert / qui l'ouvre</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>102</code></td><td>TCP</td><td>S7comm / ISO-on-TCP (RFC&nbsp;1006)</td><td>Communication S7 avec un CPU (TIA, HMI, IHM, driver S7). <strong>Le port le plus caractéristique d'un automate Siemens.</strong></td></tr>
+        <tr><td><code>4840</code></td><td>TCP</td><td>OPC-UA (<code>opc.tcp</code>)</td><td>Serveur OPC-UA : supervision, échanges IT/OT normalisés. Un CPU S7-1500 peut l'exposer, comme un serveur dédié.</td></tr>
+        <tr><td><code>80 / 443</code></td><td>TCP</td><td>HTTP / HTTPS</td><td>Serveur web embarqué du CPU (diagnostic web) ou d'un switch managé (configuration).</td></tr>
+        <tr><td><code>161 / 162</code></td><td>UDP</td><td>SNMP / SNMP-trap</td><td>Supervision d'équipement&nbsp;: switches Scalance, CPU. 161 = requêtes, 162 = traps émis par l'équipement.</td></tr>
+        <tr><td><code>34962-34964</code></td><td>UDP</td><td>Profinet acyclique (DCP / RPC)</td><td>Contexte RPC et services acycliques Profinet (identification, paramétrage). Signature d'un nœud Profinet.</td></tr>
+        <tr><td><code>502</code></td><td>TCP</td><td>Modbus/TCP</td><td>Passerelles, capteurs, variateurs tiers. Pas systématique sur une cellule Siemens pure, mais fréquent en environnement mixte.</td></tr>
+        <tr><td><code>22 / 23</code></td><td>TCP</td><td>SSH / Telnet</td><td>Administration en ligne de commande d'un switch managé ou d'un edge. Telnet (23) = ancien, en clair, à bannir si possible.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout plc">
+      <p>Le port <strong>102</strong> est le cœur de la communication S7&nbsp;: c'est par lui que TIA Portal
+      charge un programme, qu'une IHM lit des variables, qu'un driver S7 dialogue avec le CPU. Le voir ouvert,
+      c'est voir <em>un automate Siemens qui parle S7comm</em>. Le port <strong>4840</strong>, lui, révèle que
+      le CPU expose un <strong>serveur OPC-UA</strong> — une fonction qu'on active explicitement dans la
+      configuration du S7-1500, pour ouvrir la donnée au monde IT.</p>
+    </div>
+
+    <h2>3. Découverte d'hôtes : qui est vivant&nbsp;?</h2>
+    <p>Avant de scanner des ports, on établit la <strong>liste des machines présentes</strong> sur le segment.
+    Le balayage le plus léger est le <em>ping sweep</em> de <code>nmap</code> avec l'option
+    <code>-sn</code> (<em>no port scan</em>)&nbsp;: il ne touche à aucun port applicatif, il se contente de
+    déterminer quels hôtes répondent.</p>
+
+    <pre><code class="language-bash"># -sn : découverte d'hôtes seule, aucun scan de port
+nmap -sn 192.168.0.0/24</code></pre>
+
+    <pre class="term"><code><span class="prompt">$</span> nmap -sn 192.168.0.0/24
+Starting Nmap 7.94 ( https://nmap.org )
+Nmap scan report for <span class="hi">192.168.0.1</span>
+Host is up (0.00042s latency).
+MAC Address: 28:63:36:1A:2B:3C (Siemens)
+Nmap scan report for 192.168.0.20
+Host is up (0.00051s latency).
+MAC Address: 28:63:36:4D:5E:6F (Siemens)
+Nmap scan report for 192.168.0.21
+Host is up (0.00049s latency).
+MAC Address: 28:63:36:7A:8B:9C (Siemens)
+Nmap scan report for 192.168.0.240
+Host is up (0.00038s latency).
+MAC Address: 20:87:56:11:22:33 (Siemens)
+Nmap scan report for 192.168.0.71
+Host is up.
+Nmap done: 256 IP addresses (5 hosts up) scanned in 2.14 seconds</code></pre>
+
+    <p>En quelques secondes, on tient l'inventaire vivant&nbsp;: le CPU <code>.1</code>, deux ET&nbsp;200SP
+    (<code>.20</code> et <code>.21</code>), un Scalance <code>.240</code> et notre poste <code>.71</code>.
+    Bonus précieux&nbsp;: sur le segment local, <code>nmap</code> lit la <strong>MAC</strong> (via ARP) et en
+    déduit le <strong>constructeur</strong> — ici « Siemens » sur presque tout, ce qui confirme qu'on est bien
+    dans une cellule Siemens. C'est déjà de l'information de rôle avant même de toucher un port.</p>
+
+    <div class="callout astuce">
+      <p>Le <em>ping sweep</em> <code>-sn</code> est le geste de reconnaissance le moins agressif&nbsp;: sur le
+      réseau local il s'appuie surtout sur des requêtes ARP, que tout équipement gère nativement. C'est
+      pourquoi c'est <strong>toujours par là qu'on commence</strong>, y compris en production.</p>
+    </div>
+
+    <h2>4. Scan de ports ciblé</h2>
+    <p>Une fois les hôtes connus, on demande à chacun <em>quels services il expose</em>. Plutôt que de balayer
+    les 65&nbsp;535 ports (long et bruyant), on cible d'abord la <strong>liste OT</strong> du §2 avec
+    <code>-p</code>&nbsp;:</p>
+
+    <pre><code class="language-bash"># Scan des ports OT sur tout le sous-réseau (sudo → scan SYN, plus propre)
+sudo nmap -p 102,4840,80,443,161,502 192.168.0.0/24</code></pre>
+
+    <p>Sortie sur le <strong>CPU</strong> <code>192.168.0.1</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo nmap -p 102,4840,80,443,161,502 192.168.0.1
+Nmap scan report for cpu1500 (192.168.0.1)
+Host is up (0.00040s latency).
+
+PORT     STATE  SERVICE
+80/tcp   <span class="hi">open</span>   http
+102/tcp  <span class="hi">open</span>   iso-tsap
+443/tcp  <span class="hi">open</span>   https
+4840/tcp <span class="hi">open</span>   opcua
+161/tcp  closed snmp
+502/tcp  closed mbap
+MAC Address: 28:63:36:1A:2B:3C (Siemens)</code></pre>
+
+    <p>Le profil parle de lui-même&nbsp;: <strong>102 + 80 + 443 + 4840</strong> = un CPU S7-1500 qui parle
+    S7comm (102), expose son serveur web de diagnostic (80/443) et un serveur OPC-UA (4840). Le port SNMP est
+    fermé sur ce CPU, Modbus aussi&nbsp;: cohérent pour un automate Siemens pur. (<code>iso-tsap</code> est le
+    nom que <code>nmap</code> donne au port 102&nbsp;; <code>opcua</code> au 4840.)</p>
+
+    <p>Sortie sur un <strong>Scalance</strong> <code>192.168.0.240</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo nmap -p 22,80,161,443 192.168.0.240
+Nmap scan report for 192.168.0.240
+Host is up (0.00036s latency).
+
+PORT    STATE  SERVICE
+22/tcp  <span class="hi">open</span>   ssh
+80/tcp  <span class="hi">open</span>   http
+161/tcp <span class="hi">open</span>   snmp
+443/tcp <span class="hi">open</span>   https
+MAC Address: 20:87:56:11:22:33 (Siemens)</code></pre>
+
+    <p>Ici pas de 102 ni de 4840, mais <strong>22 + 80 + 443 + 161</strong>&nbsp;: administration en ligne
+    (SSH), configuration web, et supervision SNMP. C'est la carte d'identité d'un <strong>switch
+    managé</strong>, pas d'un automate.</p>
+
+    <p>Pour lever un doute sur un hôte précis, on peut faire un <strong>scan complet</strong> des 65&nbsp;535
+    ports&nbsp;— utile quand un service tourne sur un port non standard&nbsp;:</p>
+
+    <pre><code class="language-bash"># -p- : scan de tous les ports TCP (long ; à réserver à un hôte, pas à un /24)
+nmap -p- 192.168.0.1</code></pre>
+
+    <p>Enfin, <code>-sV</code> tente d'identifier la <strong>version</strong> du service en dialoguant avec
+    lui (bannière, sondes)&nbsp;:</p>
+
+    <pre><code class="language-bash"># Détection de version — informatif mais plus intrusif, à manier avec prudence en prod
+sudo nmap -sV -p 102,4840,443 192.168.0.1</code></pre>
+
+    <div class="callout ot">
+      <p>Un <strong>scan actif</strong> — surtout <code>-sV</code> et les scripts NSE — envoie du trafic
+      inattendu vers l'automate. Un vieux device Profinet, un coupleur bas de gamme ou une pile TCP fragile
+      peuvent <strong>décrocher</strong> (perte de connexion Profinet, redémarrage, arrêt de la
+      communication). Sur un <strong>banc de test</strong>&nbsp;: aucun problème, scanne largement. En
+      <strong>production</strong>&nbsp;: commence par <code>-sn</code>, cible des ports connus, évite
+      <code>-sV</code> et les scripts, ralentis (§6), et ne scanne jamais une ligne en marche sans accord.</p>
+    </div>
+
+    <h2>5. Déduire le rôle d'un profil de ports</h2>
+    <p>La force de la méthode&nbsp;: le <strong>profil de ports ouverts</strong> d'un hôte trahit sa fonction,
+    sans avoir à interroger la documentation. On associe un profil à un rôle&nbsp;:</p>
+
+    <table>
+      <thead>
+        <tr><th>Ports ouverts (typiques)</th><th>Rôle déduit</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>102</code> + <code>80/443</code> + <code>4840</code></td><td><strong>CPU S7-1500</strong> — S7comm, web de diagnostic, serveur OPC-UA</td></tr>
+        <tr><td><code>102</code> + <code>34962-34964</code> (UDP), pas de 4840</td><td><strong>IO-device</strong> (ET&nbsp;200SP) — parle Profinet, éventuellement un peu de S7/DCP, pas de serveur OPC-UA</td></tr>
+        <tr><td><code>161</code> + <code>443</code> + <code>22</code> (+ 80)</td><td><strong>Switch managé</strong> (Scalance) — SNMP, config web, admin SSH</td></tr>
+        <tr><td><code>4840</code> seul (+ 22)</td><td><strong>Serveur OPC-UA</strong> dédié / edge — expose la donnée, pas de S7comm ni de SNMP d'équipement</td></tr>
+      </tbody>
+    </table>
+
+    <p>En croisant la découverte d'hôtes (§3) et les scans ciblés (§4), on construit un
+    <strong>inventaire hôte→rôle</strong> de la cellule&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># Inventaire de la cellule 192.168.0.0/24 (construit au scan)</span>
+192.168.0.1     cpu1500     CPU S7-1500     (102, 80, 443, 4840)
+192.168.0.20    et200sp-a   IO-device       (102, Profinet)
+192.168.0.21    et200sp-b   IO-device       (102, Profinet)
+192.168.0.240   scalance-1  Switch managé   (22, 80, 443, 161)
+192.168.0.241   scalance-2  Switch managé   (22, 80, 443, 161)
+192.168.0.71    poste-diag  Poste diagnostic (rien exposé, ou 22)</code></pre>
+
+    <div class="callout astuce">
+      <p>Retiens le raccourci&nbsp;: <strong>le port 102 dit «&nbsp;automate&nbsp;», le port 161 dit
+      «&nbsp;équipement managé&nbsp;», le port 4840 dit «&nbsp;donnée exposée en OPC-UA&nbsp;»</strong>. Un
+      hôte qui cumule 102 et 4840 est presque toujours un CPU moderne. Le profil de ports te donne le rôle
+      avant même d'ouvrir un navigateur ou TIA Portal.</p>
+    </div>
+
+    <h2>6. Timing et prudence : les templates <code>-T</code></h2>
+    <p><code>nmap</code> règle son agressivité — cadence d'envoi, parallélisme, délais — via six
+    <strong>templates de timing</strong>, de <code>-T0</code> (paranoïaque, très lent) à <code>-T5</code>
+    (<em>insane</em>, très rapide). Par défaut, <code>nmap</code> est en <code>-T3</code>.</p>
+
+    <table>
+      <thead>
+        <tr><th>Template</th><th>Cadence</th><th>Quand l'utiliser</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>-T0</code> / <code>-T1</code></td><td>Très lent, un paquet à la fois</td><td>Réseau très fragile, ou pour rester discret. Peut durer des heures.</td></tr>
+        <tr><td><code>-T2</code></td><td>Lent, ménagé</td><td>Prod sensible&nbsp;: ralentir sans être extrême.</td></tr>
+        <tr><td><code>-T3</code></td><td>Normal (défaut)</td><td>Point de départ raisonnable.</td></tr>
+        <tr><td><code>-T4</code></td><td>Rapide, agressif</td><td><strong>Banc de test</strong> sur réseau fiable&nbsp;: gain de temps net.</td></tr>
+        <tr><td><code>-T5</code></td><td>Très rapide (risque de rater des ports)</td><td>Rarement conseillé&nbsp;; peut saturer des devices fragiles.</td></tr>
+      </tbody>
+    </table>
+
+    <pre><code class="language-bash"># Sur banc de test : on peut pousser la cadence
+sudo nmap -T4 -p 102,4840,80,443,161 192.168.0.0/24
+
+# En prod, sur un device suspecté fragile : on ralentit franchement
+sudo nmap -T2 -p 102 192.168.0.20</code></pre>
+
+    <p>La règle de conduite du chapitre&nbsp;1 s'applique ici pleinement&nbsp;: <strong>en production, on
+    commence par <code>-sn</code></strong>, on cible des ports connus, on évite <code>-sV</code> et les
+    scripts NSE intrusifs sur des devices fragiles, et on ralentit avec <code>-T2</code> voire moins. Un scan
+    <code>-T5</code> lancé à l'aveugle sur un vieux nœud Profinet peut suffire à le faire décrocher — et à
+    provoquer un défaut sur la ligne. Sur banc&nbsp;: liberté totale.</p>
+
+    <div class="callout note">
+      <p>Le scan de ports n'est qu'une <em>vue couche 4</em>&nbsp;: il dit quels services écoutent, pas s'ils
+      sont sains ni ce qu'ils échangent réellement. Pour voir le trafic Profinet temps réel sur le fil, c'est
+      la capture (chapitres suivants) qu'il faut&nbsp;— pas <code>nmap</code>. Les deux se complètent&nbsp;:
+      <code>nmap</code> pour <em>l'inventaire des services</em>, la capture pour <em>la réalité des
+      échanges</em>.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>On commence <strong>chez soi</strong>&nbsp;: <code>ss -tulpn</code> montre ce que ton edge expose
+        (écoute TCP/UDP + PID)&nbsp;; <code>ss -tan state established</code> montre les sessions en cours.</li>
+        <li><strong>Ports OT clés</strong>&nbsp;: 102 (S7comm), 4840 (OPC-UA), 80/443 (web), 161/162 (SNMP),
+        34962-34964 (Profinet acyclique), 502 (Modbus), 22/23 (SSH/Telnet).</li>
+        <li>Découverte d'hôtes non-intrusive&nbsp;: <code>nmap -sn 192.168.0.0/24</code> → IP vivantes +
+        MAC/constructeur.</li>
+        <li>Scan ciblé&nbsp;: <code>sudo nmap -p 102,4840,80,443,161 …</code>&nbsp;; scan complet
+        <code>nmap -p- &lt;hôte&gt;</code>&nbsp;; version <code>-sV</code> (avec prudence).</li>
+        <li><strong>Le profil de ports révèle le rôle</strong>&nbsp;: 102+80+4840 = CPU&nbsp;; 161+443+22 =
+        switch managé&nbsp;; 4840 seul = serveur OPC-UA.</li>
+        <li><strong>Prudence OT</strong>&nbsp;: en prod, <code>-sn</code> d'abord, ports connus, pas de
+        <code>-sV</code>/NSE sur devices fragiles, <code>-T2</code> pour ralentir. Sur banc&nbsp;: <code>-T4</code>
+        sans souci.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Balayer la cellule</h3>
+      <p>Depuis ton poste, fais un balayage non-intrusif du sous-réseau <code>192.168.0.0/24</code> et dresse
+      la liste des hôtes vivants. Quelle option utilises-tu pour <strong>ne pas</strong> scanner de ports, et
+      quelle information bonus obtiens-tu sur le réseau local&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> nmap -sn 192.168.0.0/24
+Nmap scan report for 192.168.0.1
+Host is up ... MAC Address: 28:63:36:1A:2B:3C (Siemens)
+Nmap scan report for 192.168.0.20   ... (Siemens)
+Nmap scan report for 192.168.0.21   ... (Siemens)
+Nmap scan report for 192.168.0.240  ... (Siemens)
+Nmap scan report for 192.168.0.71
+Nmap done: 256 IP addresses (5 hosts up) scanned in 2.14 seconds</code></pre>
+        <p>L'option <code>-sn</code> (<em>no port scan</em>) fait un simple <em>ping sweep</em>&nbsp;: aucun
+        port applicatif n'est touché, c'est le geste le plus léger. Sur le <strong>segment local</strong>,
+        <code>nmap</code> résout en prime la <strong>MAC</strong> par ARP et affiche le
+        <strong>constructeur</strong> (« Siemens »), ce qui identifie déjà la nature des équipements. On tient
+        cinq hôtes vivants&nbsp;: CPU, deux ET&nbsp;200SP, un Scalance et le poste.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Scanner le CPU et interpréter</h3>
+      <p>Scanne le CPU <code>192.168.0.1</code> sur les ports OT (102, 4840, 80, 443, 161, 502). Quels services
+      trouves-tu ouverts, et qu'en déduis-tu sur le rôle et les fonctions activées de cet équipement&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> sudo nmap -p 102,4840,80,443,161,502 192.168.0.1
+PORT     STATE  SERVICE
+80/tcp   open   http
+102/tcp  open   iso-tsap
+443/tcp  open   https
+4840/tcp open   opcua
+161/tcp  closed snmp
+502/tcp  closed mbap</code></pre>
+        <p>Quatre ports ouverts&nbsp;: <strong>102</strong> (S7comm — le CPU parle bien S7),
+        <strong>80/443</strong> (son serveur web de diagnostic est actif), <strong>4840</strong> (le
+        <strong>serveur OPC-UA du CPU est activé</strong> dans la configuration TIA). SNMP et Modbus fermés.
+        Conclusion&nbsp;: c'est un <strong>CPU S7-1500</strong> qui expose à la fois S7comm, le web et OPC-UA
+        — donc un automate ouvert au monde IT via OPC-UA. Le profil <code>102 + 80 + 4840</code> est la
+        signature typique d'un CPU moderne.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Attribuer le rôle à partir du profil</h3>
+      <p>On te donne trois hôtes découverts sur la cellule, avec leurs ports ouverts. Attribue à chacun un
+      rôle parmi&nbsp;: <em>CPU S7-1500</em>, <em>switch managé</em>, <em>IO-device</em>,
+      <em>serveur OPC-UA dédié</em> — et justifie.</p>
+      <ul>
+        <li><strong>Hôte A</strong> — <code>192.168.0.1</code>&nbsp;: TCP 102, 80, 443, 4840 ouverts.</li>
+        <li><strong>Hôte B</strong> — <code>192.168.0.241</code>&nbsp;: TCP 22, 80, 443, UDP 161 ouverts.</li>
+        <li><strong>Hôte C</strong> — <code>192.168.0.20</code>&nbsp;: TCP 102 ouvert, UDP 34962-34964 actifs,
+        pas de 4840 ni de 161.</li>
+      </ul>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Hôte A = CPU S7-1500.</strong> Le trio <code>102 + 80/443 + 4840</code> ne laisse pas de
+        doute&nbsp;: S7comm (102) pour la communication automate, web de diagnostic (80/443), et serveur
+        OPC-UA (4840). C'est un contrôleur moderne qui expose sa donnée.</p>
+        <p><strong>Hôte B = switch managé (Scalance).</strong> <code>161</code> (SNMP) trahit un équipement
+        d'infrastructure supervisable&nbsp;; <code>22</code> (SSH) l'administration en ligne&nbsp;;
+        <code>80/443</code> l'interface de configuration. Aucun 102&nbsp;: ce n'est pas un automate. Profil
+        classique d'un switch managé.</p>
+        <p><strong>Hôte C = IO-device (ET&nbsp;200SP).</strong> Il parle S7/Profinet (102 et les ports
+        acycliques <code>34962-34964</code>) mais n'expose <em>ni serveur OPC-UA</em> (pas de 4840)
+        <em>ni SNMP</em> (pas de 161). C'est un périphérique décentralisé piloté par le CPU, pas un contrôleur
+        ni un équipement managé.</p>
+        <p>Méthode générale&nbsp;: on cherche d'abord <strong>102</strong> (automate&nbsp;? oui/non), puis on
+        distingue CPU (a du 4840) d'un IO-device (n'en a pas)&nbsp;; l'absence de 102 avec du
+        <strong>161</strong> pointe vers un équipement managé.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>Adressage, ARP, routage</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>Anatomie d'une trame Profinet</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 11 — Méthodologie de diagnostic</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 11</span><br>Méthodologie de diagnostic</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Assembler les dix chapitres précédents en une <strong>démarche</strong> — ne plus lancer des
+        commandes au hasard mais suivre un fil conducteur.</li>
+        <li>Choisir entre stratégie <strong>ascendante</strong> (des couches basses vers l'application) et
+        <strong>descendante</strong> (du symptôme applicatif vers le fil), et savoir quand employer l'une ou l'autre.</li>
+        <li>Établir une <strong>base de référence</strong> saine, dérouler un <strong>cas complet</strong> de bout
+        en bout, et suivre un <strong>arbre de décision</strong>.</li>
+        <li>Repartir avec une <strong>checklist réutilisable</strong> « symptôme → couche → commande » à emporter sur le terrain.</li>
+      </ul>
+    </div>
+
+    <h2>1. Deux stratégies : ascendante et descendante</h2>
+    <p>Tout ce qui précède — la couche physique du <a href="chapitre-02.html">chapitre&nbsp;2</a>, la découverte
+    L2 du <a href="chapitre-03.html">chapitre&nbsp;3</a>, l'IP du <a href="chapitre-04.html">chapitre&nbsp;4</a>,
+    les ports du <a href="chapitre-05.html">chapitre&nbsp;5</a>, le Profinet des
+    <a href="chapitre-06.html">chapitres&nbsp;6-7</a>, le MRP du <a href="chapitre-08.html">chapitre&nbsp;8</a>,
+    l'OPC-UA du <a href="chapitre-09.html">chapitre&nbsp;9</a> et la supervision du
+    <a href="chapitre-10.html">chapitre&nbsp;10</a> — n'est utile que si l'on sait <em>dans quel ordre</em>
+    l'employer. Il existe deux manières d'ordonner ces outils, et elles répondent à des situations différentes.</p>
+
+    <h3>Ascendante (bottom-up) : partir du fil et monter</h3>
+    <p>On commence par la <strong>couche physique</strong> et on remonte le modèle en couches, une à la fois&nbsp;:</p>
+    <ol>
+      <li><strong>L1 — lien &amp; erreurs</strong> (<a href="chapitre-02.html">ch.&nbsp;2</a>) : le port est-il
+      <em>up</em>&nbsp;? bon débit, bon duplex&nbsp;? les compteurs d'erreurs montent-ils&nbsp;?</li>
+      <li><strong>L2 — découverte</strong> (<a href="chapitre-03.html">ch.&nbsp;3</a>) : le voisin est-il vu en
+      LLDP&nbsp;? répond-il en DCP&nbsp;? porte-t-il le bon nom de station&nbsp;?</li>
+      <li><strong>L3 — IP</strong> (<a href="chapitre-04.html">ch.&nbsp;4</a>) : joignable en <code>ping</code>&nbsp;?
+      pas de doublon d'adresse&nbsp;?</li>
+      <li><strong>L4 — ports</strong> (<a href="chapitre-05.html">ch.&nbsp;5</a>) : les services attendus sont-ils ouverts&nbsp;?</li>
+      <li><strong>Protocole</strong> (<a href="chapitre-06.html">ch.&nbsp;6-9</a>) : le cyclique Profinet tourne-t-il&nbsp;?
+      l'anneau MRP est-il fermé&nbsp;? la session OPC-UA s'établit-elle&nbsp;?</li>
+      <li><strong>Supervision</strong> (<a href="chapitre-10.html">ch.&nbsp;10</a>) : que dit le switch de son côté&nbsp;?</li>
+    </ol>
+    <p>Cette stratégie est <strong>fiable quand on ne sait rien</strong> : on ne présume d'aucune cause, on
+    valide chaque couche avant de croire à la suivante. Elle est un peu plus longue, mais elle ne saute jamais
+    l'étape qui, précisément, cachait le problème.</p>
+
+    <h3>Descendante (top-down) : partir du symptôme et redescendre</h3>
+    <p>On part de la <strong>plainte applicative</strong> — « la station décroche », « le SCADA perd la valeur »,
+    « l'axe vibre » — et on redescend vers les couches basses jusqu'à trouver l'endroit qui ne tient pas. Plus
+    rapide <strong>quand on a déjà une hypothèse</strong> ou un historique (« ça arrive toujours sur ce
+    variateur », « depuis qu'on a rebranché le câble du port&nbsp;3 »).</p>
+
+    <div class="callout piege">
+      <p>Le réflexe le plus coûteux, c'est de <strong>sauter les couches basses</strong> parce que le symptôme
+      est applicatif. On veut ouvrir Wireshark et décoder du Profinet alors que le vrai problème est un câble ou
+      un duplex mal négocié (<a href="chapitre-02.html">ch.&nbsp;2</a>). Sur le terrain, une large part des
+      « pannes Profinet » signalées sont en réalité des défauts de <strong>couche&nbsp;1</strong> : connecteur
+      RJ45 abîmé, verrou cassé, câble écrasé, auto-négociation partie en <em>half-duplex</em>. En cas de doute,
+      redescends d'un cran.</p>
+    </div>
+
+    <div class="callout note">
+      <p>Les deux stratégies convergent vers le même diagnostic ; elles diffèrent seulement par le point de
+      départ. En pratique on fait souvent un mélange : on démarre <em>descendant</em> (on a un symptôme), mais
+      dès qu'une couche est douteuse on bascule en <em>ascendant</em> à partir d'elle pour ne rien présumer.</p>
+    </div>
+
+    <h2>2. Établir une base de référence (baseline)</h2>
+    <p>On ne diagnostique bien que ce qu'on connaît sain. La plupart des indicateurs du cours ne veulent rien
+    dire <em>dans l'absolu</em> — ils prennent leur sens par <strong>comparaison</strong> avec l'état normal.
+    Un compteur <code>ethtool -S</code> à 4&nbsp;200 erreurs est-il grave&nbsp;? Impossible de répondre si l'on
+    ne sait pas s'il était à 4&nbsp;198 hier. Un temps de cycle de 2&nbsp;ms est-il bon&nbsp;? Seulement si la
+    machine a été configurée pour 2&nbsp;ms.</p>
+    <p>La parade est de <strong>relever l'état quand tout va bien</strong>, une fois la mise en service terminée,
+    et de l'archiver. C'est cinq minutes de travail qui font gagner des heures le jour de la panne&nbsp;:</p>
+
+    <pre><code class="language-bash"># Baseline « installation saine » — à ranger avec la doc de la machine
+mkdir -p ~/baseline &amp;&amp; cd ~/baseline
+
+# L1 : état des liens et compteurs d'erreurs (attendus à 0 ou stables)
+ethtool eth0            &gt; link.txt
+ethtool -S eth0         &gt; l1-counters.txt
+
+# L2 : topologie LLDP — qui est le voisin de chaque port
+lldpctl                 &gt; topologie.txt
+
+# L3 : inventaire des équipements présents sur le segment
+sudo arp-scan --interface=eth0 192.168.0.0/24 &gt; inventaire.txt
+
+# Protocole : endpoints OPC-UA publiés par le serveur
+python3 -c "import asyncio,asyncua; ..."       &gt; opcua-endpoints.txt
+
+# Switch : compteurs et état d'anneau via SNMP
+snmpwalk -v2c -c public 192.168.0.240 IF-MIB::ifOperStatus &gt; switch-ports.txt</code></pre>
+
+    <div class="callout astuce">
+      <p>Ta meilleure référence de comparaison, c'est <strong>toi-même, hier</strong>. Garde une baseline saine
+      par machine — temps de cycle, compteurs d'erreurs à 0, topologie LLDP, endpoints OPC-UA, anneau fermé.
+      Le jour de la panne, un simple <code>diff</code> entre la baseline et la mesure du moment pointe souvent
+      la couche fautive en quelques secondes.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>La baseline shell complète la vue TIA Portal, elle ne la remplace pas. TIA te donne la
+      <strong>configuration attendue</strong> (topologie planifiée, temps de cycle paramétré, noms de station) ;
+      le shell te donne la <strong>réalité mesurée sur le fil</strong>. Le diagnostic naît du
+      <em>croisement</em> des deux : quand l'attendu et le réel divergent, tu tiens un bout du problème.</p>
+    </div>
+
+    <h2>3. Cas complet de bout en bout</h2>
+    <p>Mettons la démarche ascendante à l'épreuve d'un cas réaliste.</p>
+    <blockquote>
+      <p><strong>Symptôme.</strong> La station <code>et200sp-2</code> (<code>192.168.0.21</code>) ne répond plus.
+      Le CPU <code>cpu1500</code> (<code>192.168.0.1</code>) signale une <em>défaillance de station</em> ; les
+      E/S décentralisées de cette station sont figées.</p>
+    </blockquote>
+    <p>On ne présume rien. On part du fil et on monte, couche par couche, en notant à chaque étape la commande
+    et son interprétation.</p>
+
+    <h3>Étape L1 — le lien physique (<a href="chapitre-02.html">ch.&nbsp;2</a>)</h3>
+    <p>Le port de l'edge (ou du switch) qui mène vers la station est-il <em>up</em>&nbsp;? au bon débit&nbsp;? les compteurs montent-ils&nbsp;?</p>
+    <pre class="term"><code><span class="prompt">$</span> ethtool eth0
+        Speed: <span class="hi">Unknown!</span>
+        Duplex: <span class="hi">Unknown!</span>
+        <span class="cmt"># ...</span>
+        Link detected: <span class="hi">no</span></code></pre>
+    <p>Verdict immédiat : <strong>lien down</strong>. Le débit et le duplex sont <code>Unknown</code>, aucune
+    porteuse. Inutile de monter plus haut avant d'avoir compris pourquoi — mais on continue le tour pour
+    corroborer, car un edge peut être branché ailleurs que sur le port fautif.</p>
+    <pre class="term"><code><span class="prompt">$</span> ethtool -S eth0 | grep -Ei 'err|crc|carrier'
+     rx_crc_errors: <span class="hi">1832</span>
+     rx_errors: 1832
+     carrier_changes: <span class="hi">47</span></code></pre>
+    <p>Des <strong>CRC</strong> par milliers et des <em>carrier changes</em> qui grimpent : la couche&nbsp;1 est
+    malade — câble, connecteur ou duplex. Signature classique d'un lien qui « bat » (up/down répété).</p>
+
+    <h3>Étape L2 — découverte (<a href="chapitre-03.html">ch.&nbsp;3</a>)</h3>
+    <p>Le voisin est-il encore vu en LLDP&nbsp;? répond-il à un DCP&nbsp;Identify&nbsp;?</p>
+    <pre class="term"><code><span class="prompt">$</span> lldpctl | grep -A2 et200sp-2
+<span class="cmt"># ... aucune sortie : le voisin a disparu de la table LLDP</span>
+
+<span class="prompt">$</span> sudo python3 -m pnio_dcp identify-all -i eth0
+<span class="cmt"># cpu1500        192.168.0.1</span>
+<span class="cmt"># et200sp-3      192.168.0.22</span>
+<span class="cmt"># (et200sp-2 : pas de réponse)</span></code></pre>
+    <p>La station ne répond <strong>ni en LLDP ni en DCP</strong> — deux mécanismes de couche&nbsp;2, donc
+    indépendants de l'IP. Cela confirme que le device est coupé <em>en dessous</em> de la couche réseau, et non
+    à cause d'un problème d'adressage. Les autres stations, elles, répondent : le segment vit toujours.</p>
+
+    <h3>Étape L3 — IP (<a href="chapitre-04.html">ch.&nbsp;4</a>)</h3>
+    <pre class="term"><code><span class="prompt">$</span> ping -c3 192.168.0.21
+3 packets transmitted, <span class="hi">0 received</span>, 100% packet loss
+
+<span class="prompt">$</span> sudo arping -c3 -I eth0 192.168.0.21
+<span class="cmt"># 0 réponses — l'adresse MAC ne répond plus à l'ARP</span></code></pre>
+    <p>Injoignable en IP <em>et</em> en ARP. Le <code>arping</code> est ici précieux : s'il avait vu
+    <strong>deux</strong> MAC différentes répondre, on aurait un <em>doublon d'IP</em> (autre panne classique).
+    Ici, zéro réponse — cohérent avec un device physiquement déconnecté, pas un conflit d'adresse.</p>
+
+    <h3>Étape L4 — ports (<a href="chapitre-05.html">ch.&nbsp;5</a>)</h3>
+    <pre class="term"><code><span class="prompt">$</span> nmap -Pn -p 102,4840 192.168.0.21
+Host is <span class="hi">down</span> (ou tous les ports filtered)</code></pre>
+    <p>Sans surprise après L3, mais on le note : le port <code>102</code> (S7/Profinet contexte) et
+    <code>4840</code> (OPC-UA) sont inaccessibles. Cohérent avec un hôte absent.</p>
+
+    <h3>Étape Profinet — la capture (<a href="chapitre-06.html">ch.&nbsp;6-7</a>)</h3>
+    <pre class="term"><code><span class="prompt">$</span> sudo tshark -i eth0 -f 'ether host 00:1c:06:xx:xx:xx' -a duration:5
+<span class="cmt"># ... plus aucune trame RT vers/depuis la station : cyclique arrêté</span></code></pre>
+    <p>Le trafic cyclique vers <code>et200sp-2</code> est <strong>tombé</strong> : plus de trames RT, le
+    <em>CycleCounter</em> ne progresse plus et le CPU a levé une alarme de retrait. Le <em>DataStatus</em> des
+    autres stations reste bon (bit <em>Provider State = Run</em>) — la panne est bien localisée à cette station.</p>
+
+    <h3>Étape MRP — l'anneau (<a href="chapitre-08.html">ch.&nbsp;8</a>)</h3>
+    <pre class="term"><code><span class="prompt">$</span> sudo tshark -i eth0 -Y 'mrp' -a duration:3
+  0.000  MRP_Test  Ring state: <span class="hi">OPEN</span>
+  0.020  MRP_TopologyChange
+<span class="cmt"># le manager a détecté une coupure et rerouté</span></code></pre>
+    <p>L'anneau est passé <strong>OPEN</strong> : le <em>Media Redundancy Manager</em> a vu une rupture et a
+    ouvert son port de secours pour rerouter. La redondance a fait son travail (la ligne n'est pas tombée), mais
+    elle nous <em>signale</em> qu'un lien physique a lâché — exactement là où <code>ethtool</code> voyait le lien down.</p>
+
+    <h3>Étape Switch — SNMP (<a href="chapitre-10.html">ch.&nbsp;10</a>)</h3>
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 IF-MIB::ifOperStatus
+IF-MIB::ifOperStatus.3 = INTEGER: <span class="hi">down(2)</span>
+IF-MIB::ifOperStatus.4 = INTEGER: up(1)
+
+<span class="prompt">$</span> snmpget -v2c -c public 192.168.0.240 IF-MIB::ifInErrors.3
+IF-MIB::ifInErrors.3 = Counter32: <span class="hi">1832</span></code></pre>
+    <p>Le switch <code>scalance</code> (<code>192.168.0.240</code>) le confirme depuis <em>son</em> point de vue :
+    le <strong>port&nbsp;3</strong> est <code>ifOperStatus down</code>, avec exactement le même compte d'erreurs
+    d'entrée que côté edge. Toutes les mesures pointent le même endroit.</p>
+
+    <div class="callout note">
+      <p><strong>Diagnostic.</strong> Le <strong>câble du port&nbsp;3</strong> du switch (celui qui dessert
+      <code>et200sp-2</code>) est défectueux. Faisceau de preuves convergent : <code>ethtool</code> montre le
+      lien <em>down</em> + CRC ; DCP/ARP ne voient plus la station ; <code>nmap</code> la donne <em>down</em> ;
+      le cyclique Profinet s'est arrêté ; <strong>MRP a rerouté</strong> (anneau OPEN) ; et le switch rapporte
+      <code>ifOperStatus down</code> sur le port&nbsp;3 avec les mêmes erreurs. <strong>Correction&nbsp;:</strong>
+      remplacer le cordon du port&nbsp;3 (ou re-sertir le connecteur). Après échange, on revérifie de bas en
+      haut : lien up, DCP répond, cyclique repart, anneau se referme (<em>CLOSED</em>).</p>
+    </div>
+
+    <h2>4. L'arbre de décision</h2>
+    <p>La démarche ascendante se résume à une poignée de questions binaires. Tant qu'on répond « oui », on monte
+    d'une couche ; le premier « non » désigne la couche à investiguer — et donne la panne la plus probable.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 760 620" role="img" aria-label="Arbre de décision du diagnostic. On enchaîne cinq questions binaires de la couche physique vers l'application : le lien est-il up, le device répond-il en DCP, est-il joignable en IP, le cyclique Profinet est-il présent, l'anneau MRP est-il fermé. À chaque 'non', une bulle indique la panne la plus probable et le chapitre concerné ; le dernier 'oui' conclut que le réseau est sain.">
+        <!-- fil vertical des questions -->
+        <line class="link" x1="250" y1="52"  x2="250" y2="92"  style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="250" y1="144" x2="250" y2="184" style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="250" y1="236" x2="250" y2="276" style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="250" y1="328" x2="250" y2="368" style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="250" y1="420" x2="250" y2="460" style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="250" y1="512" x2="250" y2="552" style="stroke:var(--l2);stroke-width:2.5"/>
+        <!-- branches "non" vers les bulles de panne -->
+        <line class="link-hot" x1="440" y1="30"  x2="560" y2="30"/>
+        <line class="link-hot" x1="440" y1="122" x2="560" y2="122"/>
+        <line class="link-hot" x1="440" y1="214" x2="560" y2="214"/>
+        <line class="link-hot" x1="440" y1="306" x2="560" y2="306"/>
+        <line class="link-hot" x1="440" y1="398" x2="560" y2="398"/>
+
+        <!-- Q1 -->
+        <rect class="node" x="60" y="8" width="380" height="44" rx="7" style="stroke:var(--l1)"/>
+        <text class="lbl" x="250" y="28" text-anchor="middle">L1 · le lien est-il up (débit/duplex OK, 0 erreur) ?</text>
+        <text class="lbl-s" x="250" y="43" text-anchor="middle" style="fill:var(--l1)">ethtool / ethtool -S — ch. 2</text>
+        <text class="lbl-s" x="252" y="78" text-anchor="middle" style="fill:var(--ok)">▼ oui</text>
+
+        <!-- Q2 -->
+        <rect class="node" x="60" y="100" width="380" height="44" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="250" y="120" text-anchor="middle">L2 · le device répond-il en DCP / est-il vu en LLDP ?</text>
+        <text class="lbl-s" x="250" y="135" text-anchor="middle" style="fill:var(--l2)">pnio-dcp / lldpctl — ch. 3</text>
+        <text class="lbl-s" x="252" y="170" text-anchor="middle" style="fill:var(--ok)">▼ oui</text>
+
+        <!-- Q3 -->
+        <rect class="node" x="60" y="192" width="380" height="44" rx="7" style="stroke:var(--l3)"/>
+        <text class="lbl" x="250" y="212" text-anchor="middle">L3 · joignable en IP, sans doublon d'adresse ?</text>
+        <text class="lbl-s" x="250" y="227" text-anchor="middle" style="fill:var(--l3)">ping / arping — ch. 4</text>
+        <text class="lbl-s" x="252" y="262" text-anchor="middle" style="fill:var(--ok)">▼ oui</text>
+
+        <!-- Q4 -->
+        <rect class="node" x="60" y="284" width="380" height="44" rx="7" style="stroke:var(--l7)"/>
+        <text class="lbl" x="250" y="304" text-anchor="middle">Proto · le cyclique Profinet est-il présent ?</text>
+        <text class="lbl-s" x="250" y="319" text-anchor="middle" style="fill:var(--l7)">tshark / nmap — ch. 5-7</text>
+        <text class="lbl-s" x="252" y="354" text-anchor="middle" style="fill:var(--ok)">▼ oui</text>
+
+        <!-- Q5 -->
+        <rect class="node" x="60" y="376" width="380" height="44" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="250" y="396" text-anchor="middle">MRP · l'anneau est-il fermé (CLOSED) ?</text>
+        <text class="lbl-s" x="250" y="411" text-anchor="middle" style="fill:var(--l2)">tshark 0x88E3 / SNMP — ch. 8, 10</text>
+        <text class="lbl-s" x="252" y="446" text-anchor="middle" style="fill:var(--ok)">▼ oui</text>
+
+        <!-- conclusion saine -->
+        <rect class="node" x="60" y="468" width="380" height="44" rx="7" style="stroke:var(--ok)"/>
+        <text class="lbl" x="250" y="488" text-anchor="middle" style="fill:var(--ok)">Réseau sain — le problème est applicatif</text>
+        <text class="lbl-s" x="250" y="503" text-anchor="middle">→ OPC-UA / logique CPU — ch. 9</text>
+
+        <!-- bulles "non" -->
+        <rect class="node" x="560" y="10" width="180" height="40" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl-s" x="650" y="28" text-anchor="middle" style="fill:var(--danger)">câble / duplex</text>
+        <text class="lbl-s" x="650" y="42" text-anchor="middle">RJ45, SFP, half-duplex</text>
+
+        <rect class="node" x="560" y="102" width="180" height="40" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl-s" x="650" y="120" text-anchor="middle" style="fill:var(--danger)">device HS / mauvais nom</text>
+        <text class="lbl-s" x="650" y="134" text-anchor="middle">station retirée, DCP nok</text>
+
+        <rect class="node" x="560" y="194" width="180" height="40" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl-s" x="650" y="212" text-anchor="middle" style="fill:var(--danger)">IP / doublon</text>
+        <text class="lbl-s" x="650" y="226" text-anchor="middle">conflit, mauvais masque</text>
+
+        <rect class="node" x="560" y="286" width="180" height="40" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl-s" x="650" y="304" text-anchor="middle" style="fill:var(--danger)">appairage / alarme</text>
+        <text class="lbl-s" x="650" y="318" text-anchor="middle">AR non établi, module KO</text>
+
+        <rect class="node" x="560" y="378" width="180" height="40" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl-s" x="650" y="396" text-anchor="middle" style="fill:var(--danger)">anneau ouvert</text>
+        <text class="lbl-s" x="650" y="410" text-anchor="middle">1 lien coupé, reroutage</text>
+
+        <text class="lbl-s" x="500" y="26"  text-anchor="middle" style="fill:var(--danger)">non ▶</text>
+        <text class="lbl-s" x="500" y="118" text-anchor="middle" style="fill:var(--danger)">non ▶</text>
+        <text class="lbl-s" x="500" y="210" text-anchor="middle" style="fill:var(--danger)">non ▶</text>
+        <text class="lbl-s" x="500" y="302" text-anchor="middle" style="fill:var(--danger)">non ▶</text>
+        <text class="lbl-s" x="500" y="394" text-anchor="middle" style="fill:var(--danger)">non ▶</text>
+      </svg>
+      <figcaption><b>Figure 11.1.</b> L'arbre de décision de la démarche ascendante. Chaque « oui » (vert) fait
+      monter d'une couche ; le premier « non » (rouge) désigne la couche fautive et la panne la plus probable,
+      avec le chapitre et la commande de vérification. Un « oui » jusqu'en bas innocente le réseau : le problème
+      est alors <em>applicatif</em> (OPC-UA, logique CPU, <a href="chapitre-09.html">ch.&nbsp;9</a>).</figcaption>
+    </figure>
+
+    <h2>5. Journaliser proprement</h2>
+    <p>Une panne intermittente ne se laisse pas capturer à la demande : le jour où elle survient, on n'est
+    jamais devant l'écran. La parade est de laisser une <strong>capture qui tourne en continu</strong> vers des
+    fichiers <strong>horodatés</strong> et en <strong>rotation</strong>, pour ne jamais saturer le disque.</p>
+
+    <pre><code class="language-bash"># tcpdump : un fichier par heure, on garde les 24 derniers (= 1 journée glissante)
+sudo tcpdump -i eth0 -w /var/log/pn-%Y%m%d-%H%M%S.pcap -G 3600 -W 24</code></pre>
+    <ul>
+      <li><code>-w …%Y%m%d-%H%M%S.pcap</code> : le nom du fichier contient la date/heure (via <code>strftime</code>), donc chaque tranche est repérable.</li>
+      <li><code>-G 3600</code> : on ferme et rouvre un fichier toutes les <strong>3600&nbsp;s</strong> (une heure).</li>
+      <li><code>-W 24</code> : on limite à <strong>24 fichiers</strong> en anneau — le 25<sup>e</sup> écrase le plus ancien. Le disque est borné.</li>
+    </ul>
+    <p>Variante avec <code>dumpcap</code> (du paquet Wireshark), qui borne par la <em>taille</em> plutôt que par le temps&nbsp;:</p>
+    <pre><code class="language-bash"># dumpcap : fichiers de ~100 Mo, on en garde 20 (≈ 2 Go au total)
+dumpcap -i eth0 -b filesize:100000 -b files:20 -w /var/log/pn.pcap</code></pre>
+    <p>Quand la panne survient, on ne garde que la tranche horaire concernée pour l'analyser à froid avec
+    <code>tshark -r</code> — sans jamais avoir eu besoin d'être présent au bon moment.</p>
+
+    <div class="callout ot">
+      <p>Sur le terrain, trois règles tiennent tout le reste ensemble. <strong>Passif d'abord</strong> :
+      capture, LLDP et lecture SNMP avant tout scan ou écriture DCP. <strong>Une action à la fois</strong> :
+      on ne change qu'une chose, puis on re-mesure — sinon on ne saura jamais laquelle a agi. <strong>Tracer
+      ce qu'on fait</strong> : noter l'heure et la commande de chaque intervention, pour pouvoir revenir en
+      arrière et pour que le collègue de la prochaine équipe comprenne l'état laissé.</p>
+    </div>
+
+    <h2>6. La checklist réutilisable</h2>
+    <p>Voici le livrable à emporter. Pour chaque symptôme courant, la couche visée, la commande de vérification
+    et ce qu'on cherche dans sa sortie. C'est la traduction, en une page, de tout le cours.</p>
+
+    <table>
+      <thead>
+        <tr><th>Symptôme</th><th>Couche</th><th>Commande de vérification</th><th>Ce qu'on cherche</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Pas de lien / port mort</td>
+          <td>L1 (<a href="chapitre-02.html">ch.&nbsp;2</a>)</td>
+          <td><code>ethtool eth0</code></td>
+          <td><code>Link detected: no</code>, débit/duplex <code>Unknown</code> → câble, connecteur, SFP.</td>
+        </tr>
+        <tr>
+          <td>Erreurs qui montent, débit dégradé</td>
+          <td>L1 (<a href="chapitre-02.html">ch.&nbsp;2</a>)</td>
+          <td><code>ethtool -S eth0 | grep -i err</code></td>
+          <td><code>rx_crc_errors</code>/<code>carrier_changes</code> qui grimpent, ou <em>half-duplex</em> non voulu.</td>
+        </tr>
+        <tr>
+          <td>Station introuvable / mauvais nom</td>
+          <td>L2 (<a href="chapitre-03.html">ch.&nbsp;3</a>)</td>
+          <td><code>lldpctl</code> · <code>pnio-dcp identify-all</code></td>
+          <td>Voisin absent de LLDP, pas de réponse DCP, ou nom de station ≠ celui planifié dans TIA.</td>
+        </tr>
+        <tr>
+          <td>Équipement injoignable</td>
+          <td>L3 (<a href="chapitre-04.html">ch.&nbsp;4</a>)</td>
+          <td><code>ping</code> · <code>arping -I eth0 &lt;ip&gt;</code></td>
+          <td>0 réponse ICMP mais éventuellement ARP présent → filtrage/route ; 0 ARP → device absent.</td>
+        </tr>
+        <tr>
+          <td>Doublon d'adresse IP</td>
+          <td>L3 (<a href="chapitre-04.html">ch.&nbsp;4</a>)</td>
+          <td><code>arping -D -I eth0 &lt;ip&gt;</code></td>
+          <td>Deux adresses MAC différentes qui répondent pour la même IP.</td>
+        </tr>
+        <tr>
+          <td>Service applicatif absent</td>
+          <td>L4 (<a href="chapitre-05.html">ch.&nbsp;5</a>)</td>
+          <td><code>nmap -Pn -p 102,4840 &lt;ip&gt;</code></td>
+          <td>Port attendu <code>closed</code>/<code>filtered</code> → service arrêté ou pare-feu.</td>
+        </tr>
+        <tr>
+          <td>Station qui décroche (défaillance)</td>
+          <td>Profinet (<a href="chapitre-06.html">ch.&nbsp;6-7</a>)</td>
+          <td><code>tshark -i eth0 -Y pn_io</code></td>
+          <td>Cyclique arrêté, <em>CycleCounter</em> figé, alarme de retrait, <em>DataStatus</em> mauvais.</td>
+        </tr>
+        <tr>
+          <td>Jitter / à-coups sur un axe</td>
+          <td>Profinet (<a href="chapitre-07.html">ch.&nbsp;7</a>)</td>
+          <td><code>tshark -i eth0 -Y pn_rt -T fields -e frame.time_delta</code></td>
+          <td>Écarts inter-trames irréguliers (le Δt s'éloigne du temps de cycle) → surcharge, boucle, duplex.</td>
+        </tr>
+        <tr>
+          <td>Anneau ouvert / redondance perdue</td>
+          <td>MRP (<a href="chapitre-08.html">ch.&nbsp;8</a>)</td>
+          <td><code>tshark -i eth0 -Y mrp</code></td>
+          <td>Trames <code>0x88E3</code> annonçant <em>Ring state: OPEN</em> + <em>TopologyChange</em> → un lien coupé.</td>
+        </tr>
+        <tr>
+          <td>Session OPC-UA refusée</td>
+          <td>Appli (<a href="chapitre-09.html">ch.&nbsp;9</a>)</td>
+          <td><code>asyncua</code> / lecture des endpoints</td>
+          <td><code>BadSecurityPolicyRejected</code>, certificat/hôte non approuvé, endpoint absent.</td>
+        </tr>
+        <tr>
+          <td>Doute sur l'état côté switch</td>
+          <td>Supervision (<a href="chapitre-10.html">ch.&nbsp;10</a>)</td>
+          <td><code>snmpwalk … IF-MIB::ifOperStatus</code></td>
+          <td><code>ifOperStatus down</code> sur un port, <code>ifInErrors</code> qui monte, état d'anneau.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Deux stratégies : <strong>ascendante</strong> (du fil vers l'appli, fiable quand on ne sait rien) et
+        <strong>descendante</strong> (du symptôme vers le fil, rapide quand on a une hypothèse). On mélange souvent les deux.</li>
+        <li><strong>Baseline saine</strong> : relever L1/L2/L3/proto/switch quand tout va bien pour comparer par
+        <code>diff</code> le jour de la panne. « On ne diagnostique bien que ce qu'on connaît sain. »</li>
+        <li><strong>Cas de bout en bout</strong> : on monte couche par couche jusqu'à un <em>faisceau de preuves
+        convergent</em> — ici un câble de port défectueux, corroboré par ethtool, DCP, MRP et SNMP.</li>
+        <li><strong>Arbre de décision</strong> : lien up&nbsp;? → DCP répond&nbsp;? → joignable IP&nbsp;? →
+        cyclique présent&nbsp;? → anneau fermé&nbsp;? Le premier « non » désigne la panne.</li>
+        <li><strong>Journalisation</strong> : capture horodatée en rotation (<code>tcpdump -G 3600 -W 24</code>
+        ou <code>dumpcap -b</code>) pour attraper l'intermittent sans saturer le disque.</li>
+        <li><strong>Checklist</strong> symptôme → couche → commande → interprétation : le livrable à garder sous la main.</li>
+        <li>Piège numéro&nbsp;un : sauter les couches basses. Beaucoup de « pannes Profinet » sont des câbles/duplex du <a href="chapitre-02.html">ch.&nbsp;2</a>.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Ordonner le diagnostic d'un jitter</h3>
+      <p>On te signale un <strong>jitter sur un axe</strong> : le mouvement a des à-coups, la boucle de position
+      « broute ». Le symptôme est applicatif. Ordonne les étapes de diagnostic (stratégie de ton choix) et donne
+      la commande de chacune. Justifie ton point de départ.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Un jitter est d'abord une affaire de <strong>régularité temporelle</strong> — donc on soupçonne la
+        couche&nbsp;1 et le cyclique, pas l'IP. On peut partir <em>descendant</em> (mesurer d'abord le jitter là
+        où il se voit) puis basculer <em>ascendant</em> dès qu'une couche est douteuse&nbsp;:</p>
+        <ol>
+          <li><strong>Mesurer le jitter</strong> (proto) — confirmer le symptôme sur le fil&nbsp;:<br>
+          <code>tshark -i eth0 -Y pn_rt -T fields -e frame.time_delta</code> → le Δt inter-trames doit coller
+          au temps de cycle ; s'il varie, le jitter est réel.</li>
+          <li><strong>L1</strong> — la cause la plus fréquente&nbsp;: <code>ethtool eth0</code> (duplex&nbsp;!) puis
+          <code>ethtool -S eth0 | grep -i err</code> → un <em>half-duplex</em> ou des CRC expliquent des retards erratiques.</li>
+          <li><strong>MRP</strong> — un anneau qui <em>flappe</em> reroute et introduit du jitter&nbsp;:
+          <code>tshark -i eth0 -Y mrp</code> → chercher des <em>TopologyChange</em> répétés.</li>
+          <li><strong>Charge / switch</strong> — une tempête ou un port saturé&nbsp;:
+          <code>snmpwalk … ifInErrors</code> / <code>ifInOctets</code> pour repérer une surcharge.</li>
+        </ol>
+        <p>On <strong>ne commence pas</strong> par <code>ping</code> ou <code>nmap</code> : un axe qui bouge est,
+        par définition, joignable. Attaquer par L3/L4 ferait perdre du temps sur des couches déjà saines.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — La one-liner de capture horodatée en rotation</h3>
+      <p>Écris la commande <code>tcpdump</code> qui capture en continu sur <code>eth0</code> vers des fichiers
+      <strong>horodatés</strong>, un <strong>par heure</strong>, en gardant les <strong>24 derniers</strong>.
+      Explique chaque option.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-bash">sudo tcpdump -i eth0 -w /var/log/pn-%Y%m%d-%H%M%S.pcap -G 3600 -W 24</code></pre>
+        <ul>
+          <li><code>-i eth0</code> : l'interface à écouter (celle sur le segment machine — attention au piège WSL du <a href="chapitre-01.html">ch.&nbsp;1</a>).</li>
+          <li><code>-w …%Y%m%d-%H%M%S.pcap</code> : le nom du fichier est construit avec <code>strftime</code>, donc daté et unique.</li>
+          <li><code>-G 3600</code> : bascule de fichier toutes les 3600&nbsp;s = 1&nbsp;heure.</li>
+          <li><code>-W 24</code> : borne à 24 fichiers en anneau (le plus ancien est écrasé) → une journée glissante, disque borné.</li>
+        </ul>
+        <p>Pour borner par la taille plutôt que par le temps&nbsp;:
+        <code>dumpcap -i eth0 -b filesize:100000 -b files:20 -w /var/log/pn.pcap</code> (20 fichiers de ~100&nbsp;Mo).
+        On analyse ensuite à froid la tranche voulue avec <code>tshark -r /var/log/pn-....pcap</code>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Lire la checklist et justifier la couche</h3>
+      <p>Pour chacun de ces deux symptômes, donne la <strong>couche visée</strong>, la <strong>commande</strong>
+      de vérification et <strong>pourquoi</strong> cette couche&nbsp;: (a) « le SCADA affiche une valeur figée sur
+      une variable OPC-UA alors que la machine tourne » ; (b) « depuis un orage, un device Profinet décroche par
+      intermittence ».</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>(a) Valeur OPC-UA figée, machine OK.</strong> La machine <em>tourne</em> : le Profinet cyclique
+        est donc sain, la panne est plus <strong>haut</strong>. Couche <strong>applicative</strong>
+        (<a href="chapitre-09.html">ch.&nbsp;9</a>). On vérifie la session et l'abonnement OPC-UA&nbsp;:
+        <code>asyncua</code> (lecture directe du nœud, état de la <em>subscription</em>). Si la lecture directe
+        donne la bonne valeur mais que le SCADA reste figé, c'est l'<em>abonnement</em> côté SCADA qui est mort,
+        pas le réseau. On ne redescend en L1 que si même la lecture directe échoue.</p>
+        <p><strong>(b) Device qui décroche par intermittence depuis un orage.</strong> « Intermittent » +
+        « depuis un orage » fleure la <strong>couche&nbsp;1</strong> (<a href="chapitre-02.html">ch.&nbsp;2</a>) :
+        connecteur ou port fragilisé, blindage. On laisse tourner une <strong>capture en rotation</strong>
+        (exercice&nbsp;2) et on surveille <code>ethtool -S eth0</code> / <code>snmp … ifInErrors</code> dans le
+        temps. Un décrochage corrélé à une montée de CRC ou à un <em>carrier change</em> confirme le L1 ; on
+        croisera avec <code>tshark -Y mrp</code> pour voir si l'anneau reroute à chaque décrochage. On
+        <em>ne</em> part <em>pas</em> du protocole&nbsp;: l'intermittence et l'historique physique orientent d'emblée vers le bas.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-10.html"><span class="lbl">← Précédent</span>SNMP &amp; le switch managé</a>
+    <a class="next" href="index.html"><span class="lbl">Suivant →</span>Retour au sommaire</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

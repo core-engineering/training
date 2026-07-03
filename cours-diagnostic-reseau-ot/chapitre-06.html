@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — Anatomie d'une trame Profinet</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>Anatomie d'une trame Profinet</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Distinguer les <strong>trois classes de trafic</strong> Profinet — acyclique, cyclique temps réel (RT) et isochrone (IRT) — et comprendre pourquoi le RT circule en <strong>Ethernet brut</strong>, sans IP.</li>
+        <li>Lire la <strong>structure d'une trame RT</strong> champ par champ : FrameID, données process, CycleCounter, DataStatus.</li>
+        <li>Se servir du <strong>FrameID</strong> comme clé de lecture instantanée du type de trame.</li>
+        <li>Capturer et disséquer le trafic Profinet avec <code>tshark</code> — filtres BPF de couche&nbsp;2 et filtres d'affichage <code>pn_*</code>.</li>
+      </ul>
+    </div>
+
+    <h2>1. Profinet : trois classes de trafic</h2>
+    <p>Avant de plonger dans les octets, il faut voir Profinet comme une <strong>superposition de flux</strong>
+    qui n'ont ni le même rôle, ni la même urgence, ni même la même façon de circuler sur le fil. On en
+    distingue trois grandes familles.</p>
+    <ul>
+      <li><strong>Le trafic acyclique</strong> — tout ce qui n'est pas rythmé : la découverte et le nommage des
+      stations (<strong>DCP</strong>), l'établissement de la connexion applicative (<em>Application Relation</em>,
+      via des appels <strong>RPC</strong> sur UDP), la lecture/écriture de paramètres, les alarmes. C'est le
+      « hors-bande » : ça arrive quand il faut, pas à cadence fixe.</li>
+      <li><strong>Le trafic cyclique temps réel (RT)</strong> — l'échange d'entrées/sorties qui se répète comme
+      un métronome, typiquement <strong>toutes les 1 à 4&nbsp;ms</strong> (classes <em>RT_CLASS_1/2</em>). C'est
+      le cœur du bus : le contrôleur envoie ses sorties, chaque device renvoie ses entrées, sans arrêt.</li>
+      <li><strong>Le trafic isochrone (IRT)</strong> — la variante <em>RT_CLASS_3</em>, planifiée à la
+      microseconde près par les switches, réservée aux applications qui exigent une synchronisation dure
+      (axes coordonnés, mouvement). On ne fait que la mentionner ici&nbsp;; elle sort du cadre de ce cours.</li>
+    </ul>
+    <p>Le point <strong>décisif pour le diagnostic</strong> : les trames RT ne sont <em>pas</em> des paquets IP.
+    Ce sont des <strong>trames Ethernet brutes</strong>, identifiées par l'EtherType <code>0x8892</code>
+    (« PROFINET »). Pas d'en-tête IP, pas de port TCP/UDP&nbsp;: rien à router. Elles vivent uniquement en
+    <strong>couche&nbsp;2</strong>, à l'intérieur du domaine de diffusion. C'est pour cela qu'un outil qui ne
+    regarde que l'IP est aveugle au temps réel — on y revient au §5.</p>
+
+    <div class="callout ot">
+      <p>Le trafic cyclique est vital : c'est lui qui maintient les E/S à jour. On l'<strong>observe</strong>
+      volontiers (capture passive), mais on ne le <strong>perturbe</strong> jamais sur une installation en
+      production. Ici on travaille sur banc de test&nbsp;: capture et dissection sans conséquence.</p>
+    </div>
+
+    <h2>2. Structure d'une trame RT</h2>
+    <p>Une trame RT cyclique est étonnamment simple une fois qu'on connaît ses champs. Après les deux adresses
+    MAC et un éventuel tag VLAN, tout tient dans une charge utile Profinet encadrée par un
+    <strong>FrameID</strong> en tête et une poignée d'octets d'état en queue.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 820 210" role="img" aria-label="Structure d'une trame Profinet RT : de gauche à droite, MAC destination, MAC source, tag VLAN 802.1Q optionnel, EtherType 0x8892, FrameID sur 2 octets, données process IO, CycleCounter, DataStatus sur 1 octet, TransferStatus.">
+        <!-- En-tête Ethernet -->
+        <rect class="node" x="10"  y="40" width="95"  height="52" rx="7"/>
+        <text class="lbl" x="57"  y="63" text-anchor="middle">@MAC dest</text>
+        <text class="lbl-s" x="57"  y="80" text-anchor="middle">6 o.</text>
+
+        <rect class="node" x="110" y="40" width="95"  height="52" rx="7"/>
+        <text class="lbl" x="157" y="63" text-anchor="middle">@MAC src</text>
+        <text class="lbl-s" x="157" y="80" text-anchor="middle">6 o.</text>
+
+        <rect class="node" x="210" y="40" width="105" height="52" rx="7" style="stroke:var(--l4);stroke-dasharray:5 4"/>
+        <text class="lbl" x="262" y="60" text-anchor="middle">tag 802.1Q</text>
+        <text class="lbl-s" x="262" y="80" text-anchor="middle">VLAN+PCP · opt.</text>
+
+        <rect class="node" x="320" y="40" width="95"  height="52" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="367" y="60" text-anchor="middle">EtherType</text>
+        <text class="lbl-s" x="367" y="80" text-anchor="middle" style="fill:var(--l2)">0x8892</text>
+
+        <!-- Charge utile Profinet -->
+        <rect class="node" x="420" y="40" width="95"  height="52" rx="7" style="stroke:var(--accent-2)"/>
+        <text class="lbl" x="467" y="60" text-anchor="middle">FrameID</text>
+        <text class="lbl-s" x="467" y="80" text-anchor="middle" style="fill:var(--accent-2)">2 o.</text>
+
+        <rect class="node" x="520" y="40" width="130" height="52" rx="7" style="stroke:var(--l7)"/>
+        <text class="lbl" x="585" y="60" text-anchor="middle">Données process</text>
+        <text class="lbl-s" x="585" y="80" text-anchor="middle">IO data · 40–1440 o.</text>
+
+        <rect class="node" x="655" y="40" width="70"  height="52" rx="7"/>
+        <text class="lbl-s" x="690" y="58" text-anchor="middle">Cycle</text>
+        <text class="lbl-s" x="690" y="74" text-anchor="middle">Counter</text>
+
+        <rect class="node" x="730" y="40" width="42"  height="52" rx="7" style="stroke:var(--warn)"/>
+        <text class="lbl-s" x="751" y="58" text-anchor="middle">Data</text>
+        <text class="lbl-s" x="751" y="74" text-anchor="middle">Status</text>
+
+        <rect class="node" x="777" y="40" width="33"  height="52" rx="7"/>
+        <text class="lbl-s" x="793" y="58" text-anchor="middle">Xfer</text>
+        <text class="lbl-s" x="793" y="74" text-anchor="middle">Stat.</text>
+
+        <!-- Accolades / regroupements -->
+        <line class="link" x1="10"  y1="108" x2="415" y2="108" style="stroke:var(--l2)"/>
+        <text class="lbl-s" x="212" y="126" text-anchor="middle" style="fill:var(--l2)">en-tête Ethernet (couche 2)</text>
+        <line class="link" x1="420" y1="108" x2="810" y2="108" style="stroke:var(--l7)"/>
+        <text class="lbl-s" x="615" y="126" text-anchor="middle" style="fill:var(--l7)">charge utile PROFINET RT</text>
+
+        <text class="lbl-s" x="410" y="164" text-anchor="middle">DataStatus (1 octet) → bits d'état : State (Run/Stop) · DataValid · Primary/Backup · ProviderState · StationProblem</text>
+      </svg>
+      <figcaption><b>Figure 6.1.</b> Une trame RT cyclique du point de vue du fil. Pas d'IP entre l'EtherType
+      <code>0x8892</code> et les données : la charge utile Profinet suit immédiatement. Le tag <b>802.1Q</b>
+      (pointillés) est optionnel mais quasi toujours présent en RT, car il porte la <b>priorité</b>. Les octets
+      de queue — <b>CycleCounter</b>, <b>DataStatus</b>, <b>TransferStatus</b> — disent si la donnée est fraîche
+      et valide.</figcaption>
+    </figure>
+
+    <p>Passons les champs en revue :</p>
+    <ul>
+      <li><strong>@MAC destination / @MAC source</strong> — les 12 octets d'adressage Ethernet classiques. En
+      cyclique, ce sont les MAC réelles des équipements (ex. <code>00:1b:1b:2a:10:20</code> pour une
+      ET&nbsp;200SP)&nbsp;; en DCP de découverte, la destination est souvent une adresse de multicast.</li>
+      <li><strong>Tag 802.1Q</strong> (optionnel) — 4 octets qui insèrent l'identifiant de <strong>VLAN</strong>
+      et surtout la <strong>priorité</strong> (champ PCP). Détaillé au §4.</li>
+      <li><strong>EtherType <code>0x8892</code></strong> — l'étiquette « ceci est du Profinet ». C'est sur elle
+      qu'on filtre pour tout capturer d'un coup.</li>
+      <li><strong>FrameID</strong> (2 octets) — la clé de lecture&nbsp;: il dit de quel type de trame il s'agit
+      (§3).</li>
+      <li><strong>Données process (IO data)</strong> — la charge utile applicative&nbsp;: l'image des entrées ou
+      des sorties, structurée selon la configuration matérielle (les modules de l'ET&nbsp;200SP, par exemple).</li>
+      <li><strong>CycleCounter</strong> — un compteur incrémenté à chaque cycle&nbsp;; il permet de détecter une
+      trame manquée ou rejouée.</li>
+      <li><strong>DataStatus</strong> (1 octet) — le champ d'état le plus riche. Ses bits indiquent notamment
+      <em>State</em> (Run/Stop de l'AR), <em>DataValid</em> (les données sont exploitables), <em>Primary/Backup</em>
+      (rôle en redondance), et l'agrégat <em>ProviderState</em> / <em>StationProblem</em>. Un
+      <code>DataStatus</code> qui bascule est souvent le premier signe visible d'un défaut.</li>
+      <li><strong>TransferStatus</strong> — dernier octet, en principe à 0 en RT_CLASS_1 nominal.</li>
+    </ul>
+
+    <h2>3. Le FrameID, clé de lecture</h2>
+    <p>Le <strong>FrameID</strong> est le champ qu'on apprend à lire en premier, car il classe la trame
+    <em>instantanément</em>, avant même d'en décoder le contenu. Chaque plage de valeurs correspond à une
+    nature de trafic. Le tableau ci-dessous donne les grandes plages — les <strong>bornes exactes</strong>
+    varient selon les versions de la spécification, mais <code>tshark</code> les décode de toute façon pour
+    toi&nbsp;; l'important est l'ordre de grandeur.</p>
+
+    <table>
+      <thead>
+        <tr><th>Plage FrameID (hexa)</th><th>Classe / usage</th><th>Nature</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>0x0100–0x7FFF</code></td><td>IRT / RT_CLASS_3 (isochrone)</td><td>cyclique planifié</td></tr>
+        <tr><td><code>0x8000–0xBBFF</code></td><td>RT_CLASS_1/2 (E/S cycliques)</td><td>cyclique temps réel</td></tr>
+        <tr><td><code>0xFC01</code></td><td>Alarme basse priorité</td><td>acyclique</td></tr>
+        <tr><td><code>0xFE01</code></td><td>Alarme haute priorité</td><td>acyclique</td></tr>
+        <tr><td><code>0xFEFC–0xFEFF</code></td><td>DCP (découverte / configuration)</td><td>acyclique</td></tr>
+        <tr><td><code>0xFF00–0xFF43</code></td><td>PTCP (synchronisation d'horloge)</td><td>acyclique / temps</td></tr>
+      </tbody>
+    </table>
+
+    <p>Concrètement, dès qu'on voit un FrameID <code>0x8000</code>, on sait sans rien lire d'autre&nbsp;: c'est
+    une trame d'<strong>E/S cyclique</strong>, la respiration normale du bus. Un <code>0xFEFE</code>&nbsp;? Du
+    <strong>DCP</strong> — quelqu'un cherche ou nomme une station. Un <code>0xFE01</code>&nbsp;? Une
+    <strong>alarme haute priorité</strong> vient de partir, il se passe quelque chose.</p>
+
+    <div class="callout astuce">
+      <p>Retiens juste les <strong>préfixes</strong> hexa : <code>0x8xxx</code> = E/S cycliques,
+      <code>0xFC/0xFE01</code> = alarmes, <code>0xFEFx</code> = DCP, <code>0xFFxx</code> = synchro. Lire le
+      FrameID d'un coup d'œil te dit le <em>type</em> de trame avant même de la disséquer — c'est le réflexe
+      le plus rentable du chapitre.</p>
+    </div>
+
+    <h2>4. VLAN &amp; priorité : faire passer le RT d'abord</h2>
+    <p>Dans un switch, quand plusieurs trames se présentent en même temps, il faut arbitrer. Profinet ne laisse
+    pas le hasard décider&nbsp;: les trames RT portent un <strong>tag 802.1Q</strong> avec une
+    <strong>priorité PCP élevée</strong> (couramment <strong>PCP&nbsp;=&nbsp;6</strong>), ce qui les place dans
+    une file de sortie prioritaire, devant le trafic « best-effort » (web, SNMP, ping…). C'est ce qui garantit
+    que la cadence temps réel tient même quand le réseau est chargé.</p>
+    <p>Sur une capture, le tag se lit dans les champs <code>vlan.id</code> et <code>vlan.priority</code> :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r cell.pcap -Y pn_rt -T fields -e vlan.id -e vlan.priority -e pn_rt.frame_id <span class="cmt"># tag + FrameID</span>
+0	<span class="hi">6</span>	0x8000
+0	<span class="hi">6</span>	0x8001
+0	<span class="hi">6</span>	0x8000</code></pre>
+
+    <p>Ici le VLAN vaut 0 (VLAN par défaut, ou « priority-tagged »&nbsp;: on ne se sert du tag que pour la
+    priorité), mais la <strong>priorité 6</strong> confirme qu'on regarde bien du trafic prioritaire temps réel.</p>
+
+    <h2>5. Capturer avec tshark</h2>
+    <p>Puisque le RT n'a pas d'IP, on filtre au niveau <strong>liaison</strong>. Le filtre BPF de capture le plus
+    utile est tout simplement l'EtherType Profinet :</p>
+
+    <pre><code class="language-bash"># Capturer TOUT le Profinet sur l'interface machine (couche 2)
+sudo tshark -i eth0 -f 'ether proto 0x8892'</code></pre>
+
+    <p>Le <code>-f 'ether proto 0x8892'</code> est un filtre <strong>de capture</strong> (BPF)&nbsp;: il travaille
+    sur le fil, avant tout décodage. Une fois les trames capturées (ou relues depuis un <code>.pcap</code>), on
+    affine avec les <strong>filtres d'affichage</strong> Profinet, la famille <code>pn_*</code> :</p>
+
+    <div class="callout shell">
+      <p>Filtres d'affichage <code>tshark</code> à connaître&nbsp;:</p>
+      <ul>
+        <li><code>-Y pn_dcp</code> — découverte / nommage (DCP).</li>
+        <li><code>-Y pn_rt</code> — l'enveloppe RT (toute trame <code>0x8892</code> temps réel).</li>
+        <li><code>-Y pn_io</code> — les échanges acycliques d'établissement de connexion (RPC).</li>
+        <li><code>-Y pn_alarm</code> — les alarmes basse/haute priorité.</li>
+        <li><code>-Y pn_ptcp</code> — la synchronisation d'horloge (PTCP).</li>
+      </ul>
+    </div>
+
+    <p>Pour du diagnostic scriptable, on extrait des <strong>champs précis</strong> avec <code>-T fields</code>.
+    Par exemple, le FrameID, l'émetteur et le compteur de cycle de chaque trame RT :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r cell.pcap -Y pn_rt \
+    -T fields -e pn_rt.frame_id -e eth.src -e pn_rt.cycle_counter
+0x8000	<span class="hi">00:1b:1b:2a:10:20</span>	14208
+0x8001	00:1b:1b:2a:10:01	14210
+0x8000	<span class="hi">00:1b:1b:2a:10:20</span>	14224
+0x8000	<span class="hi">00:1b:1b:2a:10:20</span>	14240
+0x8001	00:1b:1b:2a:10:01	14242</code></pre>
+
+    <p>On lit tout de suite la conversation cyclique : l'ET&nbsp;200SP <code>…10:20</code> émet des trames
+    <code>0x8000</code> (ses entrées → contrôleur), le CPU <code>…10:01</code> émet des <code>0x8001</code>
+    (ses sorties → device), et le <code>cycle_counter</code> avance régulièrement de trame en trame. Un saut
+    dans ce compteur signalerait des trames perdues.</p>
+
+    <div class="callout piege">
+      <p>On capture <strong>obligatoirement en couche&nbsp;2</strong>. Le RT n'a pas d'adresse IP&nbsp;: un
+      filtre <code>host 192.168.0.20</code> ne l'attrapera <em>jamais</em>, car il n'y a pas d'IP à matcher
+      dans la trame. Et rappelle-toi le <strong>piège WSL2</strong> du chapitre&nbsp;1&nbsp;: derrière le NAT
+      par défaut, tu ne verras aucune trame <code>0x8892</code>. Capture depuis l'edge Debian ou passe WSL2 en
+      mode miroir.</p>
+    </div>
+
+    <h2>6. Un extrait décodé, et le démarrage d'une station</h2>
+    <p>Pour voir tous les champs d'une trame, on demande la vue <strong>verbeuse</strong> avec <code>-V</code>.
+    Sur une trame RT cyclique, on retrouve la structure du §2 :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r cell.pcap -Y 'pn_rt &amp;&amp; pn_rt.frame_id == 0x8000' -V -c 1
+<span class="cmt">...</span>
+PROFINET Real-Time
+    <span class="hi">FrameID: 0x8000</span> (RT_CLASS_1)
+    IOData
+        <span class="cmt"># image des entrées du device (octets process)</span>
+    CycleCounter: 14208
+    <span class="hi">DataStatus: 0x35</span>
+        .... ...1 = State: Primary
+        .... ..0. = Redundancy: primary AR
+        .... .1.. = DataValid: valid
+        ...1 .... = ProviderState: Run
+        ..1. .... = StationProblem: normal
+    TransferStatus: 0</code></pre>
+
+    <p>Le <code>DataStatus: 0x35</code> se lit bit à bit : la station est en <em>Primary</em>, les données sont
+    <em>valides</em>, le fournisseur est en <em>Run</em>, pas de <em>StationProblem</em>. C'est l'état sain
+    qu'on veut voir sur toutes les trames cycliques.</p>
+
+    <p>Enfin, le <strong>démarrage d'une station</strong> illustre l'enchaînement des trois classes de trafic.
+    Filtre large sur une capture prise au moment de la mise sous tension d'un device :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r start.pcap -Y 'pn_dcp || pn_io || pn_rt' -T fields \
+    -e frame.number -e pn_rt.frame_id -e eth.src -e _ws.col.info
+1  0xfefe  00:1b:1b:2a:10:01  <span class="cmt"># DCP Identify (le contrôleur cherche la station)</span>
+2  0xfeff  00:1b:1b:2a:10:20  <span class="cmt"># DCP Ident Ok (la station répond)</span>
+3  0xfefd  00:1b:1b:2a:10:01  <span class="cmt"># DCP Set : Name-of-Station / IP</span>
+5         192.168.0.1        <span class="cmt"># Connect Request (RPC UDP 34964) : ouverture de l'AR</span>
+6         192.168.0.20       <span class="cmt"># Connect Response : IOCR négociés</span>
+9  0x8000  00:1b:1b:2a:10:20  <span class="cmt"># première trame cyclique : l'échange RT démarre</span></code></pre>
+
+    <p>La séquence est toujours la même&nbsp;: <strong>DCP</strong> (on identifie et on nomme la station, on lui
+    donne son IP) → <strong>Connect / AR</strong> (via RPC sur UDP&nbsp;34964, on négocie les relations de
+    communication et les <em>IOCR</em>) → <strong>échange cyclique</strong> (les FrameID <code>0x8xxx</code>
+    commencent à défiler). Reconnaître ces trois temps dans une capture, c'est savoir <em>où</em> un démarrage
+    se bloque.</p>
+
+    <div class="callout plc">
+      <p>Côté TIA Portal, ce que tu vois ici a un nom. L'<strong>AR</strong> (<em>Application Relation</em>)
+      établie par le Connect correspond à la relation « le CPU pilote ce device ». Les <strong>IOCR</strong>
+      (<em>IO Communication Relations</em>) sont les canaux d'entrées et de sorties cycliques que tu configures
+      dans les propriétés du device (temps de cycle « Watchdog », modules d'E/S). Le FrameID <code>0x8000</code>
+      capturé sur le fil est exactement l'IOCR d'entrée que TIA a alloué à cette station.</p>
+    </div>
+
+    <div class="callout note">
+      <p>La famille <code>pn_*</code> de dissecteurs (<code>pn_rt</code>, <code>pn_dcp</code>, <code>pn_io</code>,
+      <code>pn_alarm</code>, <code>pn_ptcp</code>) est intégrée à Wireshark/tshark depuis longtemps&nbsp;: aucune
+      extension à installer. Si un champ ne s'affiche pas, vérifie l'orthographe du filtre avec
+      <code>tshark -G fields | grep pn_rt</code>.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Profinet superpose <strong>trois classes</strong> : acyclique (DCP, Connect/AR par RPC, alarmes),
+        cyclique <strong>RT</strong> (E/S toutes les 1–4&nbsp;ms), et isochrone <strong>IRT</strong>.</li>
+        <li>Les trames RT sont de l'<strong>Ethernet brut</strong>, EtherType <code>0x8892</code>, <strong>sans
+        IP</strong> → on capture en <strong>couche&nbsp;2</strong>.</li>
+        <li>Structure RT : <code>@dest | @src | [VLAN 802.1Q] | 0x8892 | FrameID | IO data | CycleCounter |
+        DataStatus | TransferStatus</code>. Le <strong>DataStatus</strong> porte l'état (Run/Stop, DataValid,
+        Primary/Backup, StationProblem).</li>
+        <li>Le <strong>FrameID</strong> classe la trame d'un coup d'œil : <code>0x8xxx</code> = E/S cycliques,
+        <code>0xFC01/0xFE01</code> = alarmes, <code>0xFEFx</code> = DCP, <code>0xFFxx</code> = PTCP.</li>
+        <li>Le RT est <strong>prioritaire</strong> (tag 802.1Q, PCP&nbsp;=&nbsp;6) pour passer avant le
+        best-effort dans les switches.</li>
+        <li>Outillage : <code>tshark -f 'ether proto 0x8892'</code> pour capturer&nbsp;; filtres d'affichage
+        <code>-Y pn_dcp/pn_rt/pn_io/pn_alarm/pn_ptcp</code>&nbsp;; extraction <code>-T fields -e pn_rt.frame_id
+        -e eth.src -e pn_rt.cycle_counter</code>&nbsp;; vue complète <code>-V</code>.</li>
+        <li>Un démarrage se lit en trois temps : <strong>DCP</strong> → <strong>Connect/AR</strong> (RPC UDP
+        34964) → <strong>échange cyclique</strong>.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Compter les types de trames</h3>
+      <p>Tu as capturé le trafic Profinet dans <code>cell.pcap</code>. Compte combien de trames de chaque type
+      il contient : DCP, RT cyclique, et alarmes. Quelle(s) commande(s) utiliser&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>On relit le fichier avec un filtre d'affichage par famille et on compte les lignes&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> for f in pn_dcp pn_rt pn_alarm; do \
+    printf '%-9s ' "$f"; tshark -r cell.pcap -Y "$f" 2>/dev/null | wc -l; done
+pn_dcp    4
+pn_rt     <span class="hi">1876</span>
+pn_alarm  0</code></pre>
+        <p>Sans surprise, le <strong>cyclique domine</strong> largement (des milliers de trames <code>pn_rt</code>
+        pour quelques <code>pn_dcp</code> de découverte). <strong>Zéro alarme</strong> = bon signe, la cellule
+        tourne sans défaut. On aurait pu capturer directement du fil avec
+        <code>sudo tshark -i eth0 -f 'ether proto 0x8892' -a duration:10 -w cell.pcap</code> avant de compter.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Qui émet du cyclique&nbsp;?</h3>
+      <p>À partir de <code>cell.pcap</code>, dresse la liste des équipements qui émettent des trames RT
+      cycliques, avec le FrameID qu'ils utilisent. Autrement dit : quels <code>eth.src</code> pour quels
+      <code>frame_id</code>&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> tshark -r cell.pcap -Y pn_rt \
+    -T fields -e pn_rt.frame_id -e eth.src | sort | uniq -c
+    938 0x8000  <span class="hi">00:1b:1b:2a:10:20</span>
+    938 0x8001  00:1b:1b:2a:10:01</code></pre>
+        <p>Deux émetteurs cycliques : l'<strong>ET&nbsp;200SP</strong> <code>…10:20</code> pousse ses entrées
+        en <code>0x8000</code>, le <strong>CPU</strong> <code>…10:01</code> pousse ses sorties en
+        <code>0x8001</code>. Le nombre quasi identique de trames (938 chacune) confirme un échange
+        <strong>régulier et symétrique</strong> — un cycle par sens, sans perte visible. Si un device attendu
+        n'apparaît pas dans la liste, c'est qu'il n'échange pas de cyclique : connexion non établie, ou station
+        absente.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Classer une trame inconnue</h3>
+      <p>On te donne une trame isolée. En vue verbeuse, tu relèves&nbsp;: <code>vlan.priority = 6</code>,
+      <code>vlan.id = 0</code>, <code>pn_rt.frame_id = 0xFE01</code>. À quelle classe de trafic cette trame
+      appartient-elle, et qu'est-ce que ça t'apprend&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>On lit les indices dans l'ordre&nbsp;:</p>
+        <ul>
+          <li><strong>Priorité 6</strong> + <strong>tag 802.1Q</strong> → trame Profinet prioritaire, traitée
+          avant le best-effort par les switches.</li>
+          <li><strong>FrameID <code>0xFE01</code></strong> → d'après le tableau du §3, c'est une
+          <strong>alarme haute priorité</strong> — donc du trafic <em>acyclique</em>, pas du cyclique
+          d'E/S.</li>
+        </ul>
+        <p>Conclusion : ce n'est <em>pas</em> une trame d'échange normal, c'est une <strong>alarme urgente</strong>
+        émise par une station (défaut de module, retrait/insertion, diagnostic). On confirmerait avec&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> tshark -r cell.pcap -Y 'pn_alarm' -V | grep -iE 'alarm|frame id'</code></pre>
+        <p>Le réflexe FrameID paie : sans lire la charge utile, on sait déjà qu'il faut aller regarder ce qui
+        cloche sur la station émettrice.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Ports &amp; services</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>Diagnostiquer Profinet</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

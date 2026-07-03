@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnostic réseau OT/IT au shell Linux — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Diagnostic réseau OT/IT au shell Linux</h1>
+      <p class="sub">Diagnostiquer un réseau d'automatisme — <strong>S7-1500, Profinet, OPC-UA, anneau
+      MRP</strong> — avec les outils shell d'un Linux, en partant de la base. On monte couche par
+      couche, du câble à l'application, chaque chapitre orienté <em>« comment je trouve ce qui
+      cloche »</em>. 11 chapitres en français, sorties de commandes réelles commentées, figures et
+      exercices de labo à solutions repliables.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Comment lire ce cours ?</strong> Les chapitres se suivent et montent en couche : câble
+      (L1), liaison (L2), IP (L3), ports (L4), puis les protocoles métier (Profinet, MRP, OPC-UA) et
+      la supervision (SNMP), avant une méthodologie de synthèse. Les encarts « 💡 Intuition »,
+      « ⚠️ Piège », « 🖥️ Au shell », « 🔧 Côté S7-1500 » et « 🛡️ Prudence OT » balisent le texte.
+      Chaque chapitre finit par des <strong>exercices de labo</strong> avec solution repliable.
+      Aucun prérequis Linux avancé : on introduit chaque commande.
+    </div>
+
+    <div class="callout shell">
+      <p>Deux postes de diagnostic sont supposés tout au long du cours, tous deux avec accès au segment
+      Profinet quand c'est nécessaire :</p>
+      <ul>
+        <li><strong>Poste A</strong> — laptop Windows + <strong>WSL2</strong> (Debian/Ubuntu). Pratique,
+        mais attention au NAT WSL2 : la capture sur le fil demande le mode réseau <em>miroir</em>
+        (chapitre 1).</li>
+        <li><strong>Poste B</strong> — <strong>SSH sur un edge device Debian</strong> câblé directement
+        sur le réseau machine : capture L2 sans détour.</li>
+      </ul>
+    </div>
+
+    <ul class="klegend" aria-hidden="true">
+      <li><span class="sw sw-l1"></span> L1 physique</li>
+      <li><span class="sw sw-l2"></span> L2 liaison</li>
+      <li><span class="sw sw-l3"></span> L3 réseau/IP</li>
+      <li><span class="sw sw-l4"></span> L4 transport</li>
+      <li><span class="sw sw-l7"></span> L7 application</li>
+    </ul>
+
+    <div class="part-title">Partie A — Fondations : le réseau vu du shell</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html"><span class="num">01</span><span><strong>Contexte OT/IT &amp; poste de diagnostic</strong><span class="desc">l'architecture d'une cellule (CPU S7-1500, IO-devices, switch managé, anneau), IT vs OT, WSL2 vs edge Debian, le piège du NAT WSL2 &amp; le mode miroir, installer la boîte à outils</span></span></a></li>
+      <li><a href="chapitre-02.html"><span class="num">02</span><span><strong>Couche physique &amp; liaison (L1/L2)</strong><span class="desc"><code>ip link</code>, <code>ethtool</code> : link, débit, duplex, auto-négo, compteurs d'erreurs FCS/CRC, VLAN, MTU — lire l'état matériel d'un port</span></span></a></li>
+      <li><a href="chapitre-03.html"><span class="num">03</span><span><strong>Découvrir qui est là, sans IP</strong><span class="desc">LLDP (<code>lldpctl</code>), Profinet DCP identify (<code>pnio-dcp</code>), table MAC/ARP, <code>arp-scan</code> : cartographier la cellule en couche 2</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie B — IP &amp; connectivité (L3/L4)</div>
+    <ul class="toc">
+      <li><a href="chapitre-04.html"><span class="num">04</span><span><strong>Adressage, ARP, routage</strong><span class="desc"><code>ip addr</code>/<code>ip route</code>, se placer dans le bon sous-réseau/VLAN OT, <code>ping</code>/<code>arping</code>, diagnostiquer un doublon d'IP</span></span></a></li>
+      <li><a href="chapitre-05.html"><span class="num">05</span><span><strong>Ports &amp; services</strong><span class="desc"><code>ss</code>, <code>nmap</code> sur la cellule : S7comm (102), OPC-UA (4840), HTTP (80/443), SNMP (161) ; fingerprint des équipements</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie C — Profinet en profondeur</div>
+    <ul class="toc">
+      <li><a href="chapitre-06.html"><span class="num">06</span><span><strong>Anatomie d'une trame Profinet</strong><span class="desc">Ethertype 0x8892, RT vs IRT, Frame ID, VLAN &amp; priorité ; capturer et disséquer avec <code>tshark</code> (<code>pn_dcp</code>, <code>pn_rt</code>, <code>pn_io</code>)</span></span></a></li>
+      <li><a href="chapitre-07.html"><span class="num">07</span><span><strong>Diagnostiquer Profinet</strong><span class="desc">mesurer le temps de cycle et les trames RT perdues depuis une capture, alarmes, watchdog, nom de station, repérer un IO-device qui décroche</span></span></a></li>
+      <li><a href="chapitre-08.html"><span class="num">08</span><span><strong>L'anneau MRP</strong><span class="desc">MRM/MRC, ring ports, trames de test MRP (0x88E3), détecter un anneau ouvert/cassé, temps de reconvergence, topologie via LLDP</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie D — Application &amp; supervision</div>
+    <ul class="toc">
+      <li><a href="chapitre-09.html"><span class="num">09</span><span><strong>OPC-UA au shell</strong><span class="desc">port 4840, <code>GetEndpoints</code>, security policy (None/Sign/SignAndEncrypt), certificats, client CLI (<code>asyncua</code>) ; diagnostiquer une session qui ne s'établit pas</span></span></a></li>
+      <li><a href="chapitre-10.html"><span class="num">10</span><span><strong>SNMP &amp; le switch managé</strong><span class="desc"><code>snmpwalk</code>/<code>snmpget</code>, état et compteurs des ports, LLDP-MIB / MRP-MIB, corréler la supervision du switch avec la capture</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie E — Synthèse</div>
+    <ul class="toc">
+      <li><a href="chapitre-11.html"><span class="num">11</span><span><strong>Méthodologie de diagnostic</strong><span class="desc">démarche couche-par-couche, arbre de décision, cas complet de bout en bout (« un IO-device ne répond plus »), checklist réutilisable</span></span></a></li>
+    </ul>
+
+    <div class="callout ot">
+      Les commandes de ce cours supposent un <strong>banc de test</strong> : on scanne, on injecte, on
+      force un nom de station DCP sans état d'âme. Sur une installation <strong>en production</strong>,
+      un scan actif ou une écriture DCP peut perturber un automate — les encarts « Prudence OT » le
+      signalent au fil du texte.
+    </div>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux · à suivre dans l'ordre 🔌
+  </footer>
+</body>
+</html>

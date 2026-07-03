@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 09 — OPC-UA au shell</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 09</span><br>OPC-UA au shell</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre les étapes d'une connexion OPC-UA sur <code>opc.tcp</code> : de la poignée de main
+        <em>Hello/Acknowledge</em> jusqu'à la session activée.</li>
+        <li>Découvrir depuis le shell les <strong>endpoints</strong> qu'un serveur publie et leurs
+        <strong>politiques de sécurité</strong>, avec les outils CLI de la lib <code>asyncua</code>.</li>
+        <li>Naviguer l'espace d'adressage et lire un nœud, en ligne de commande ou en quelques lignes de Python.</li>
+        <li>Surtout&nbsp;: <strong>diagnostiquer pourquoi une session ne s'établit pas</strong> — certificat non
+        approuvé, politique incompatible, port fermé — en capturant la poignée de main et en lisant le code de
+        statut exact.</li>
+      </ul>
+    </div>
+
+    <h2>1. OPC-UA en bref</h2>
+    <p>OPC-UA (<em>Unified Architecture</em>) est le protocole d'échange applicatif standard entre un automate,
+    une supervision et le monde IT. Il fonctionne en <strong>client/serveur</strong> : notre
+    <strong>CPU S7-1500</strong> expose un <em>serveur</em> OPC-UA, et notre poste de diagnostic joue le
+    <em>client</em>. Le transport par défaut est <strong><code>opc.tcp</code></strong> — un protocole binaire
+    (UA-TCP) posé directement sur TCP, sur le <strong>port 4840</strong>. Ce n'est pas du HTTP&nbsp;: on ne le
+    lira pas avec <code>curl</code>, mais on peut parfaitement l'observer et le dialoguer au shell.</p>
+    <p>Une connexion ne s'ouvre pas d'un coup&nbsp;: elle se construit en plusieurs couches empilées, chacune
+    pouvant échouer pour sa propre raison. C'est précisément ce qui fait la richesse — et la difficulté — du
+    diagnostic OPC-UA. Les étapes&nbsp;:</p>
+    <ol>
+      <li><strong>Hello / Acknowledge</strong> — la couche transport UA-TCP se met d'accord sur les tailles de
+      buffer et la version. Si ça passe, le port 4840 répond bien un serveur OPC-UA.</li>
+      <li><strong>OpenSecureChannel</strong> — établissement du canal sécurisé&nbsp;: c'est ici que la
+      <em>Security Policy</em> et les certificats entrent en jeu. Première étape qui peut être rejetée pour
+      raison de sécurité.</li>
+      <li><strong>CreateSession</strong> — le serveur crée une session applicative et renvoie son certificat.</li>
+      <li><strong>ActivateSession</strong> — le client s'authentifie (anonyme, login/mot de passe, ou
+      certificat utilisateur) et active la session.</li>
+      <li><strong>Services</strong> — une fois la session active&nbsp;: <code>Browse</code> (naviguer),
+      <code>Read</code>, <code>Write</code>, souscriptions…</li>
+    </ol>
+    <p>Retiens cet ordre&nbsp;: <em>où</em> la connexion s'arrête dans cette séquence te dit <em>pourquoi</em>
+    elle échoue.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 820 400" role="img" aria-label="Diagramme de séquence d'une connexion OPC-UA entre un client et un serveur : Hello puis Acknowledge, OpenSecureChannel avec échange de certificats où un certificat non approuvé interrompt la connexion, puis CreateSession, ActivateSession, et enfin les services Browse et Read.">
+        <!-- lignes de vie -->
+        <text class="lbl" x="150" y="30" text-anchor="middle">Client (poste .71)</text>
+        <text class="lbl" x="670" y="30" text-anchor="middle">Serveur (CPU 192.168.0.1:4840)</text>
+        <line class="link" x1="150" y1="42" x2="150" y2="372" style="stroke-dasharray:4 4"/>
+        <line class="link" x1="670" y1="42" x2="670" y2="372" style="stroke-dasharray:4 4"/>
+
+        <!-- Hello -->
+        <line class="link" x1="150" y1="70" x2="670" y2="70" style="stroke:var(--l2)"/>
+        <text class="lbl-s" x="410" y="63" text-anchor="middle" style="fill:var(--l2)">Hello →</text>
+        <line class="link" x1="670" y1="98" x2="150" y2="98" style="stroke:var(--l2)"/>
+        <text class="lbl-s" x="410" y="91" text-anchor="middle" style="fill:var(--l2)">← Acknowledge</text>
+
+        <!-- OpenSecureChannel -->
+        <line class="link" x1="150" y1="140" x2="670" y2="140" style="stroke:var(--l4)"/>
+        <text class="lbl-s" x="410" y="133" text-anchor="middle" style="fill:var(--l4)">OpenSecureChannel + cert client →</text>
+        <!-- échec certificat -->
+        <line class="link-hot" x1="670" y1="168" x2="150" y2="168"/>
+        <text class="lbl-s" x="410" y="161" text-anchor="middle" style="fill:var(--danger)">← ServiceFault : BadCertificateUntrusted</text>
+        <rect x="560" y="150" width="150" height="30" rx="6" style="fill:none;stroke:var(--danger);stroke-width:1.5;stroke-dasharray:3 3"/>
+        <text class="lbl-s" x="635" y="196" text-anchor="middle" style="fill:var(--danger)">cert non approuvé → stop</text>
+
+        <!-- suite si OK -->
+        <text class="lbl-s" x="410" y="238" text-anchor="middle" style="fill:var(--fg-dim)">— si le certificat est approuvé, la séquence se poursuit —</text>
+        <line class="link" x1="150" y1="266" x2="670" y2="266" style="stroke:var(--l7)"/>
+        <text class="lbl-s" x="410" y="259" text-anchor="middle" style="fill:var(--l7)">CreateSession → / ← cert serveur</text>
+        <line class="link" x1="150" y1="300" x2="670" y2="300" style="stroke:var(--l7)"/>
+        <text class="lbl-s" x="410" y="293" text-anchor="middle" style="fill:var(--l7)">ActivateSession (auth) → / ← OK</text>
+        <line class="link" x1="150" y1="340" x2="670" y2="340" style="stroke:var(--l3)"/>
+        <text class="lbl-s" x="410" y="333" text-anchor="middle" style="fill:var(--l3)">Browse / Read / Write ⇄</text>
+      </svg>
+      <figcaption><b>Figure 9.1.</b> La séquence d'une connexion OPC-UA. La couche transport (<em>Hello/Ack</em>,
+      teal) valide le port&nbsp;; le <b>canal sécurisé</b> (violet) est l'étape critique où les certificats
+      s'échangent&nbsp;: un certificat client non approuvé côté serveur casse la connexion par un
+      <code>ServiceFault</code> (rouge), avant même la session. Si le canal passe, session (vert) puis services
+      (bleu) s'enchaînent.</figcaption>
+    </figure>
+
+    <h2>2. La sécurité OPC-UA, source n°1 de pannes</h2>
+    <p>Si une seule chose est à retenir de ce chapitre, c'est celle-ci&nbsp;: la grande majorité des connexions
+    OPC-UA qui « ne marchent pas » échouent sur la <strong>sécurité</strong>, pas sur le réseau. Deux réglages
+    indépendants décrivent le niveau de protection d'un endpoint&nbsp;:</p>
+    <ul>
+      <li><strong>Security Policy</strong> — la suite cryptographique&nbsp;: <code>None</code> (aucune),
+      <code>Basic256Sha256</code>, <code>Aes128_Sha256_RsaOaep</code>, <code>Aes256_Sha256_RsaPss</code>… Elle
+      fixe les algorithmes de signature et de chiffrement.</li>
+      <li><strong>Message Security Mode</strong> — ce qu'on fait des messages&nbsp;: <code>None</code> (rien),
+      <code>Sign</code> (signés, intègres mais lisibles), <code>SignAndEncrypt</code> (signés
+      <em>et</em> chiffrés).</li>
+    </ul>
+    <p>Dès qu'on quitte le mode <code>None</code>, l'authentification applicative repose sur des
+    <strong>certificats X.509 mutuels</strong>. Le client présente son certificat au serveur, le serveur
+    présente le sien au client, et <strong>chacun doit faire confiance au certificat de l'autre</strong>.
+    C'est un rejet réciproque&nbsp;: si le certificat du client n'est pas dans la <em>liste de confiance</em>
+    du serveur, le serveur refuse — même si le mot de passe est bon, même si le réseau est parfait. C'est
+    le piège classique du premier raccordement.</p>
+
+    <div class="callout note">
+      <p>Deux erreurs indépendantes se ressemblent sur le terrain&nbsp;: « le serveur refuse ma politique »
+      (<code>BadSecurityPolicyRejected</code>) et « le serveur ne fait pas confiance à mon certificat »
+      (<code>BadCertificateUntrusted</code> / <code>BadSecurityChecksFailed</code>). La première se règle en
+      choisissant une politique publiée par le serveur&nbsp;; la seconde en approuvant le certificat côté
+      serveur. Ne les confonds pas.</p>
+    </div>
+
+    <h2>3. Découvrir les endpoints du serveur</h2>
+    <p>Avant de se battre avec des certificats, la première question est&nbsp;: <em>que</em> le serveur
+    accepte-t-il&nbsp;? Un serveur OPC-UA publie une liste d'<strong>endpoints</strong>, chacun avec sa
+    Security Policy et son Security Mode. La lib <code>asyncua</code> (installée au chapitre&nbsp;1) fournit
+    des outils CLI pour ça, sans écrire une ligne de code. Le plus utile est <code>uadiscover</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> uadiscover opc.tcp://192.168.0.1:4840
+<span class="cmt"># Application: urn:S7-1500:OPCUA:Server  (ProductUri: SIEMENS.S71500)</span>
+
+Endpoints:
+  <span class="hi">opc.tcp://192.168.0.1:4840</span>
+    SecurityPolicy : None
+    SecurityMode   : None
+    UserTokens     : Anonymous, UserName
+  <span class="hi">opc.tcp://192.168.0.1:4840</span>
+    SecurityPolicy : Basic256Sha256
+    SecurityMode   : SignAndEncrypt
+    UserTokens     : UserName, Certificate
+  <span class="hi">opc.tcp://192.168.0.1:4840</span>
+    SecurityPolicy : Aes128_Sha256_RsaOaep
+    SecurityMode   : SignAndEncrypt
+    UserTokens     : UserName, Certificate</code></pre>
+
+    <p>Cette sortie est une mine d'informations. On y lit que le serveur expose un endpoint <strong>ouvert</strong>
+    (<code>None/None</code>, souvent désactivé sur une vraie install), et deux endpoints <strong>sécurisés</strong>.
+    Elle répond aussi à la question « quelle authentification&nbsp;? » via <em>UserTokens</em> : anonyme,
+    login/mot de passe (<code>UserName</code>), ou certificat utilisateur. Choisis toujours une combinaison
+    <em>publiée ici</em> — en demander une autre, c'est le <code>BadSecurityPolicyRejected</code> assuré.</p>
+
+    <div class="callout astuce">
+      <p>Lance <code>uadiscover</code> <strong>en tout premier</strong>. Il ne demande aucun certificat, ne
+      crée aucune session, et te dit exactement ce que le serveur sait faire. Tu évites des heures à te battre
+      avec une politique ou un token que le CPU n'accepte de toute façon pas. Découvre d'abord, connecte
+      ensuite.</p>
+    </div>
+
+    <h2>4. Naviguer et lire un nœud</h2>
+    <p>Une fois l'endpoint choisi, deux besoins&nbsp;: parcourir l'espace d'adressage pour trouver les nœuds,
+    et lire leur valeur. En restant sur l'endpoint <code>None</code> (le plus simple pour débuter), les outils
+    CLI d'<code>asyncua</code> suffisent&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> uals -u opc.tcp://192.168.0.1:4840
+<span class="cmt"># browse depuis Objects (ns=0;i=85)</span>
+Objects
+  ├─ Server
+  └─ DeviceSet
+       └─ PLC_1
+            ├─ DataBlocksGlobal
+            │    └─ <span class="hi">Moteur1</span>  (ns=3)
+            │         ├─ Vitesse   ns=3;i=1001
+            │         └─ Marche    ns=3;i=1002
+            └─ ...</code></pre>
+
+    <p>Le nœud <code>Moteur1.Vitesse</code> porte l'identifiant <code>ns=3;i=1001</code> (espace de noms 3,
+    identifiant numérique 1001 — la convention Siemens pour les variables issues d'un bloc de données). Pour
+    lire sa valeur&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> uaread -u opc.tcp://192.168.0.1:4840 -n <span class="hi">"ns=3;i=1001"</span>
+1450.0</code></pre>
+
+    <p>Pour aller plus loin (boucler, formater, intégrer à un script de supervision), quelques lignes de Python
+    avec <code>asyncua</code> font le même travail et se prêtent à l'automatisation&nbsp;:</p>
+
+    <pre><code class="language-python">import asyncio
+from asyncua import Client
+
+async def main():
+    async with Client("opc.tcp://192.168.0.1:4840") as c:
+        node = c.get_node("ns=3;i=1001")
+        print(await node.read_value())
+
+asyncio.run(main())</code></pre>
+
+    <p>Sur l'endpoint <code>None</code>, aucun certificat n'est requis&nbsp;: la lecture marche du premier coup
+    si le port est ouvert. Dès qu'on vise un endpoint sécurisé, il faut fournir un certificat client
+    (paramètre <code>set_security</code> côté <code>asyncua</code>) — et c'est là que commencent les vraies
+    aventures du §6.</p>
+
+    <div class="callout ot">
+      <p>Lire est sans danger&nbsp;; <strong>écrire</strong> ne l'est pas. Un <code>uawrite</code> sur un nœud
+      comme <code>Moteur1.Marche</code> agit <em>réellement</em> sur le procédé — tu peux démarrer un moteur.
+      Sur une installation vivante, contente-toi de lectures tant que tu n'as pas la certitude absolue de ce
+      que fait le nœud visé. Lecture d'abord, toujours.</p>
+    </div>
+
+    <h2>5. Capturer la poignée de main</h2>
+    <p>Quand une connexion échoue et que les messages du client restent vagues, la vérité est sur le fil.
+    <code>tshark</code> décode nativement OPC-UA&nbsp;: on filtre le port 4840 en capture, et on n'affiche que
+    les trames OPC-UA en analyse&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo tshark -i eth0 -f 'tcp port 4840' -Y opcua
+  1  0.000  192.168.0.71 → 192.168.0.1  OpcUa  <span class="hi">Hello</span> message
+  2  0.002  192.168.0.1 → 192.168.0.71  OpcUa  <span class="hi">Acknowledge</span> message
+  3  0.004  192.168.0.71 → 192.168.0.1  OpcUa  <span class="hi">OpenSecureChannel</span> request
+  4  0.021  192.168.0.1 → 192.168.0.71  OpcUa  <span class="hi">ServiceFault</span> : <span class="hi">BadCertificateUntrusted</span></code></pre>
+
+    <p>Cette capture raconte toute l'histoire&nbsp;: <em>Hello</em> et <em>Acknowledge</em> passent — donc le
+    port est ouvert et un serveur OPC-UA répond bien. Mais dès l'<em>OpenSecureChannel</em>, le serveur renvoie
+    un <code>ServiceFault</code> avec le code <code>BadCertificateUntrusted</code>&nbsp;: il ne fait pas
+    confiance au certificat client. On n'atteint jamais <em>CreateSession</em>. Le code de statut est le
+    diagnostic&nbsp;; voici les plus fréquents&nbsp;:</p>
+
+    <table>
+      <thead>
+        <tr><th>Code de statut</th><th>Cause probable</th><th>Correction</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>BadCertificateUntrusted</code><br><code>BadSecurityChecksFailed</code></td>
+          <td>Certificat client non approuvé côté serveur.</td>
+          <td>Approuver le certificat client dans la liste de confiance du CPU (TIA).</td>
+        </tr>
+        <tr>
+          <td><code>BadSecurityPolicyRejected</code></td>
+          <td>Politique demandée non supportée par le serveur.</td>
+          <td>Choisir une politique publiée par <code>uadiscover</code>.</td>
+        </tr>
+        <tr>
+          <td><code>BadIdentityTokenRejected</code></td>
+          <td>Mode d'authentification refusé (ex. anonyme interdit).</td>
+          <td>Utiliser un <em>UserToken</em> autorisé (login ou certificat).</td>
+        </tr>
+        <tr>
+          <td><code>BadTimeout</code> / connexion refusée<br>(aucune trame en retour)</td>
+          <td>Port 4840 fermé, pare-feu, ou serveur OPC-UA désactivé.</td>
+          <td>Vérifier l'ouverture du port et le pare-feu (§6a).</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout shell">
+      <p>Le réflexe gagnant&nbsp;: reproduis la tentative qui échoue pendant que <code>tshark -Y opcua</code>
+      tourne, et lis le <strong>code de statut exact</strong> du <code>ServiceFault</code>. C'est lui qui
+      tranche entre « problème de certificat », « problème de politique » et « problème de réseau » — bien
+      plus fiable qu'un message d'erreur générique côté client.</p>
+    </div>
+
+    <h2>6. Arbre de diagnostic « la session ne s'établit pas »</h2>
+    <p>Face à une connexion qui refuse de s'ouvrir, on remonte la pile dans l'ordre, du plus bas au plus
+    haut. Chaque étape écarte une famille de causes.</p>
+
+    <h3>a. Le port 4840 est-il seulement ouvert&nbsp;?</h3>
+    <p>Inutile de parler certificats si rien n'écoute. On confirme d'abord la couche transport avec
+    <code>nmap</code> (ou <code>ss</code> côté serveur, cf. chapitre&nbsp;5)&nbsp;:</p>
+    <pre class="term"><code><span class="prompt">$</span> nmap -p4840 192.168.0.1
+PORT     STATE  SERVICE
+4840/tcp <span class="hi">open</span>   opcua</code></pre>
+    <p>Si le port est <code>filtered</code> (pare-feu) ou <code>closed</code> (serveur OPC-UA désactivé dans le
+    CPU), le problème est là&nbsp;: aucune poignée de main ne pourra même commencer. C'est cohérent avec un
+    <code>BadTimeout</code> ou un « connexion refusée » sans aucune trame de retour.</p>
+
+    <h3>b. Le serveur publie-t-il une politique compatible&nbsp;?</h3>
+    <p>Le port est ouvert&nbsp;: on interroge les endpoints avec <code>uadiscover</code> (§3) et on vérifie que
+    la politique et le mode qu'on veut utiliser figurent bien dans la liste. Un <code>BadSecurityPolicyRejected</code>
+    à la capture confirme qu'on demande quelque chose d'absent&nbsp;; on aligne son client sur ce qui est publié.</p>
+
+    <h3>c. Le certificat client est-il approuvé&nbsp;?</h3>
+    <p>La politique est bonne mais la capture montre <code>BadCertificateUntrusted</code> à l'<em>OpenSecureChannel</em>&nbsp;:
+    le serveur voit notre certificat mais ne lui fait pas confiance. La correction ne se fait pas au shell mais
+    <strong>côté serveur</strong>&nbsp;: il faut ajouter le certificat client à la liste de confiance du CPU
+    (voir l'encart TIA ci-dessous). Après approbation, la même tentative franchit l'<em>OpenSecureChannel</em>.</p>
+
+    <h3>d. L'URL d'endpoint est-elle résoluble par le client&nbsp;?</h3>
+    <p>Cas plus subtil&nbsp;: la découverte réussit, mais la connexion échoue juste après avec un timeout ou une
+    erreur de résolution. C'est que le serveur, quand on l'interroge, renvoie ses endpoints avec son
+    <strong>propre hostname</strong> (ex. <code>opc.tcp://plc1-s71500:4840</code>) au lieu de son IP. Si le
+    client ne résout pas ce nom (pas de DNS, pas d'entrée <code>/etc/hosts</code>), il n'arrive nulle part. La
+    parade&nbsp;: forcer l'IP.</p>
+
+    <div class="callout piege">
+      <p>Un serveur OPC-UA renvoie souvent ses endpoints avec <strong>son hostname</strong>, pas son IP. Le
+      client suit alors cette URL… et se perd si le nom n'est pas résoluble sur le réseau OT (souvent sans
+      DNS). Symptôme&nbsp;: <code>uadiscover</code> marche mais <code>uals</code>/<code>uaread</code>
+      temporise. Deux parades&nbsp;: ajouter le nom dans <code>/etc/hosts</code>
+      (<code>192.168.0.1  plc1-s71500</code>), ou dire au client d'ignorer l'URL renvoyée et de garder l'IP
+      d'origine — l'option <code>--no-check-hostname</code> des outils <code>asyncua</code>, ou
+      <code>client.check_hostname = False</code> en Python.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>Sur le S7-1500, le serveur OPC-UA s'active et se paramètre dans TIA Portal (propriétés du CPU →
+      <em>OPC UA → Serveur</em>)&nbsp;: activation, port, endpoints, Security Policies proposées, gestion des
+      utilisateurs. Surtout, c'est là que se trouve la <strong>liste de confiance des certificats</strong>
+      (<em>Sécurité de la communication → Certificats des partenaires</em>). Pour lever un
+      <code>BadCertificateUntrusted</code>, on y importe et on <strong>approuve le certificat du client</strong>,
+      puis on recharge la configuration. Sans cette approbation, aucun canal sécurisé ne s'ouvrira, quoi que
+      fasse le shell.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>OPC-UA = <strong>client/serveur</strong> sur <code>opc.tcp</code> (binaire UA-TCP), port
+        <strong>4840</strong>&nbsp;; le CPU S7-1500 est le serveur. Connexion en étapes&nbsp;:
+        <em>Hello/Ack → OpenSecureChannel → CreateSession → ActivateSession → services</em>.</li>
+        <li>La sécurité est la <strong>panne n°1</strong>&nbsp;: <strong>Security Policy</strong> (None,
+        Basic256Sha256…) × <strong>Message Security Mode</strong> (None, Sign, SignAndEncrypt), plus des
+        <strong>certificats X.509 mutuels</strong> qui doivent être approuvés de part et d'autre.</li>
+        <li><code>uadiscover opc.tcp://192.168.0.1:4840</code> liste endpoints, politiques et modes
+        <strong>en premier</strong>&nbsp;: on sait ce que le serveur accepte avant de tenter quoi que ce soit.</li>
+        <li>Lire&nbsp;: <code>uals</code> (browse), <code>uaread -n "ns=3;i=1001"</code>, ou un court script
+        <code>asyncua</code>. <strong>Écrire agit sur le procédé</strong> — lecture d'abord.</li>
+        <li>Diagnostic « pas de session »&nbsp;: <code>tshark -Y opcua</code> pour lire le
+        <strong>code de statut</strong> → port fermé (<code>nmap -p4840</code>), politique
+        (<code>BadSecurityPolicyRejected</code>), certificat (<code>BadCertificateUntrusted</code> → approuver
+        dans TIA), ou hostname non résoluble (forcer l'IP).</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Cartographier ce que le serveur accepte</h3>
+      <p>Interroge le serveur OPC-UA du CPU (<code>opc.tcp://192.168.0.1:4840</code>) et dresse la liste des
+      endpoints publiés&nbsp;: pour chacun, quelle Security Policy, quel Security Mode, et quels modes
+      d'authentification. Quel endpoint choisirais-tu pour un premier test rapide, et pourquoi&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> uadiscover opc.tcp://192.168.0.1:4840
+Endpoints:
+  opc.tcp://192.168.0.1:4840  None / None            (Anonymous, UserName)
+  opc.tcp://192.168.0.1:4840  Basic256Sha256 / SignAndEncrypt  (UserName, Certificate)
+  opc.tcp://192.168.0.1:4840  Aes128_Sha256_RsaOaep / SignAndEncrypt  (UserName, Certificate)</code></pre>
+        <p>Pour un premier test, l'endpoint <strong><code>None/None</code></strong> en authentification
+        <strong>anonyme</strong> est le plus rapide&nbsp;: aucun certificat, aucune politique à négocier. S'il
+        répond, on a validé le réseau, le port et le serveur d'un coup. Attention&nbsp;: sur une vraie
+        installation cet endpoint est souvent désactivé pour raison de sécurité — auquel cas il faudra passer
+        directement par un endpoint sécurisé et gérer les certificats.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Diagnostiquer une session qui n'aboutit pas</h3>
+      <p>Un collègue se plaint&nbsp;: « ma connexion OPC-UA sécurisée ne s'ouvre pas, le client dit juste
+      <em>connection failed</em> ». Le port 4840 répond pourtant. Capture sa tentative, identifie le code de
+      statut, et explique la correction.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>On capture pendant qu'il relance sa connexion&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> sudo tshark -i eth0 -f 'tcp port 4840' -Y opcua
+1  0.000  .71 → .1   OpcUa  Hello message
+2  0.002  .1  → .71  OpcUa  Acknowledge message
+3  0.004  .71 → .1   OpcUa  OpenSecureChannel request
+4  0.019  .1  → .71  OpcUa  ServiceFault : <span class="hi">BadCertificateUntrusted</span></code></pre>
+        <p><em>Hello/Acknowledge</em> passent&nbsp;: le port est bien ouvert et un serveur OPC-UA répond — donc
+        ce n'est <strong>pas</strong> un problème réseau. La connexion casse à l'<em>OpenSecureChannel</em> avec
+        <code>BadCertificateUntrusted</code>&nbsp;: le serveur reçoit le certificat du client mais ne lui fait
+        pas confiance. <strong>Correction&nbsp;:</strong> côté CPU, dans TIA Portal
+        (<em>Sécurité de la communication → Certificats des partenaires</em>), importer et
+        <strong>approuver le certificat client</strong>, puis recharger. Rien à changer côté shell&nbsp;: le
+        même client repassera ensuite l'<em>OpenSecureChannel</em>. Si le code avait été
+        <code>BadSecurityPolicyRejected</code>, la correction aurait été tout autre — aligner la politique du
+        client sur celles publiées par <code>uadiscover</code>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Lire une valeur, proprement</h3>
+      <p>Lis la valeur du nœud <code>ns=3;i=1001</code> du CPU. Avant de tenter la lecture, vérifie que le
+      port 4840 est bien ouvert — pour ne pas confondre « nœud introuvable » et « serveur injoignable ». Donne
+      les deux commandes, puis l'équivalent en Python.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>D'abord la couche transport, ensuite l'application&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> nmap -p4840 192.168.0.1
+4840/tcp <span class="hi">open</span> opcua
+<span class="prompt">$</span> uaread -u opc.tcp://192.168.0.1:4840 -n "ns=3;i=1001"
+1450.0</code></pre>
+        <p>Le port <code>open</code> écarte le pare-feu et le serveur désactivé&nbsp;; si <code>uaread</code>
+        échouait <em>ensuite</em>, on saurait que le problème est applicatif (nœud, politique, certificat), pas
+        réseau. L'équivalent Python, pratique pour scripter une supervision&nbsp;:</p>
+        <pre><code class="language-python">import asyncio
+from asyncua import Client
+
+async def main():
+    async with Client("opc.tcp://192.168.0.1:4840") as c:
+        node = c.get_node("ns=3;i=1001")
+        print(await node.read_value())
+
+asyncio.run(main())</code></pre>
+        <p>Si le serveur renvoie ses endpoints avec son hostname et que la lecture temporise malgré un port
+        ouvert, ajoute <code>c.check_hostname = False</code> avant l'entrée dans le <code>with</code>, ou une
+        entrée dans <code>/etc/hosts</code> (cf. le piège du §6d).</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-08.html"><span class="lbl">← Précédent</span>L'anneau MRP</a>
+    <a class="next" href="chapitre-10.html"><span class="lbl">Suivant →</span>SNMP &amp; le switch managé</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

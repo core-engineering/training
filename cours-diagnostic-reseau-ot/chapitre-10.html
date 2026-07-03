@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 10 — SNMP &amp; le switch managé</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 10</span><br>SNMP &amp; le switch managé</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre ce qu'est SNMP, sa notion de communauté (v2c) et d'arbre d'OID (MIB), et pourquoi on l'utilise en <strong>lecture</strong> pour diagnostiquer.</li>
+        <li>Interroger un switch <strong>Scalance</strong> : identité (system), état des ports, compteurs d'erreurs, débit — le cœur du diagnostic vu depuis l'équipement.</li>
+        <li>Lire la <strong>topologie</strong> (LLDP-MIB) et l'<strong>état de l'anneau</strong> (MRP-MIB) directement dans le switch, pour confirmer ce que les captures des chapitres précédents laissaient soupçonner.</li>
+        <li>Mesurer une <strong>dérive</strong> de compteur (delta entre deux relevés) plutôt que de se fier à une valeur absolue.</li>
+      </ul>
+    </div>
+
+    <h2>1. SNMP en bref</h2>
+    <p>Jusqu'ici on a observé le réseau <em>de l'extérieur</em> : capture sur le fil, LLDP local, sondes DCP.
+    Le <strong>switch managé</strong>, lui, voit <em>tous</em> ses ports d'un coup. <strong>SNMP</strong>
+    (<em>Simple Network Management Protocol</em>) est le protocole standard pour lui poser des questions.
+    Il tourne en <strong>UDP sur le port 161</strong> (les alertes spontanées, les <em>traps</em>, partent
+    vers l'UDP&nbsp;162, mais on ne s'en servira pas ici).</p>
+    <p>Un agent SNMP expose ses données sous forme d'un <strong>arbre d'OID</strong> (<em>Object Identifier</em>),
+    des chaînes de nombres comme <code>1.3.6.1.2.1.2.2.1.8</code>. Le dictionnaire qui donne un nom lisible à
+    chaque OID s'appelle une <strong>MIB</strong> (<em>Management Information Base</em>). On distingue deux
+    opérations de lecture&nbsp;: <code>get</code> (une valeur précise) et <code>walk</code> (parcourir toute
+    une branche). L'écriture (<code>set</code>) existe mais reste l'exception — et un vrai sujet de prudence.</p>
+    <p>Côté sécurité et versions&nbsp;:</p>
+    <ul>
+      <li><strong>SNMP v2c</strong> : l'authentification se résume à une <strong>chaîne de communauté</strong>,
+      transmise en clair. Par convention, la communauté de <strong>lecture</strong> par défaut est
+      <code>public</code> et celle d'écriture <code>private</code>. C'est ce qu'on utilisera sur le banc.</li>
+      <li><strong>SNMP v3</strong> : authentification (utilisateur + mot de passe) et chiffrement. C'est ce
+      qu'on attend d'une installation durcie, mais la mise en œuvre est plus lourde.</li>
+    </ul>
+
+    <div class="callout ot">
+      <p>La communauté <code>public</code> laissée active est un <strong>classique du durcissement OT</strong> :
+      quiconque atteint le switch peut lire toute sa configuration. Pire, si la communauté d'<strong>écriture</strong>
+      (<code>set</code>) est restée par défaut, on peut <em>reconfigurer</em> le switch — désactiver un port,
+      changer un VLAN. Règle de conduite du diagnostic : on reste en <strong>lecture seule</strong>, jamais de
+      <code>snmpset</code> sur une installation qu'on ne maîtrise pas. Signaler une communauté par défaut fait
+      partie du diagnostic.</p>
+    </div>
+
+    <h2>2. Premiers pas : lire l'identité du switch</h2>
+    <p>La branche <code>system</code> est le point d'entrée universel : tout agent SNMP la renseigne. On la
+    parcourt avec <code>snmpwalk</code>. Sur notre Scalance manager <code>192.168.0.240</code>&nbsp;:</p>
+
+    <pre><code class="language-bash">snmpwalk -v2c -c public 192.168.0.240 system</code></pre>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 system
+SNMPv2-MIB::sysDescr.0 = STRING: <span class="hi">Siemens, SIMATIC NET, SCALANCE XC208, 6GK5208-0BA00-2AC2, HW: 4, FW: V6.5</span>
+SNMPv2-MIB::sysObjectID.0 = OID: SNMPv2-SMI::enterprises.4329.6.1.2.2.2.7
+SNMPv2-MIB::sysUpTime.0 = Timeticks: (<span class="hi">184527300</span>) 21 days, 8:34:33.00
+SNMPv2-MIB::sysContact.0 = STRING: maintenance@usine.local
+SNMPv2-MIB::sysName.0 = STRING: <span class="hi">SW-A-MRM</span>
+SNMPv2-MIB::sysLocation.0 = STRING: Armoire A1 - cellule assemblage
+SNMPv2-MIB::sysServices.0 = INTEGER: 2</code></pre>
+
+    <p>En trois lignes on a l'essentiel&nbsp;: le <strong>modèle et le firmware</strong> (<code>sysDescr</code> —
+    ici un XC208 en firmware V6.5), le <strong>nom logique</strong> (<code>sysName</code> = <code>SW-A-MRM</code>,
+    qui confirme qu'on parle bien au manager d'anneau) et depuis combien de temps il tourne
+    (<code>sysUpTime</code>). Un <code>sysUpTime</code> qui vient de retomber à zéro trahit un
+    <strong>redémarrage</strong> — souvent la première piste après un incident.</p>
+
+    <p>Pour une seule valeur, <code>snmpget</code> suffit. Attention au suffixe <code>.0</code> : les objets
+    scalaires (non indexés) portent l'instance <code>0</code>.</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpget -v2c -c public 192.168.0.240 sysUpTime.0
+DISMAN-EVENT-MIB::sysUpTimeInstance = Timeticks: (184527300) 21 days, 8:34:33.00</code></pre>
+
+    <div class="callout astuce">
+      <p>C'est tout l'intérêt du switch comme point d'observation : il a une <strong>vue d'ensemble</strong>.
+      Une capture <code>tcpdump</code> ne voit que le trafic qui passe par <em>ton</em> port ; le switch, lui,
+      connaît l'état de <em>chacun</em> de ses ports simultanément. Là où la capture dit « je ne reçois plus
+      rien de tel device », le switch dit « le port 3 est down » — une information plus directe.</p>
+    </div>
+
+    <h2>3. Obtenir des noms lisibles : les MIB</h2>
+    <p>Par défaut, Debian n'installe pas les fichiers MIB (pour des raisons de licence). Résultat : au lieu de
+    <code>IF-MIB::ifOperStatus.3</code>, tu vois l'OID numérique brut <code>1.3.6.1.2.1.2.2.1.8.3</code> —
+    exact, mais illisible. On corrige une fois pour toutes&nbsp;:</p>
+
+    <pre><code class="language-bash"># Télécharge le jeu de MIB standard (déjà listé au chapitre 1)
+sudo apt install -y snmp-mibs-downloader</code></pre>
+
+    <p>Le paquet télécharge les MIB, mais le client <code>snmp</code> les ignore encore : le fichier
+    <code>/etc/snmp/snmp.conf</code> contient une ligne <code>mibs :</code> qui <strong>désactive</strong> tout
+    chargement. Il faut la commenter&nbsp;:</p>
+
+    <pre><code class="language-bash"># Dans /etc/snmp/snmp.conf, transformer :
+#   mibs :
+# en (commenté) :
+#   # mibs :
+sudo sed -i 's/^mibs :/# mibs :/' /etc/snmp/snmp.conf</code></pre>
+
+    <div class="callout note">
+      <p>La ligne <code>mibs :</code> (deux-points, valeur vide) veut dire « ne charge <em>aucune</em> MIB ».
+      La commenter rend le comportement par défaut : charger toutes les MIB trouvées dans
+      <code>/usr/share/snmp/mibs</code>. Sans MIB, rien n'est cassé — les OID numériques fonctionnent
+      toujours. Les noms symboliques ne sont qu'un confort de lecture, mais un confort décisif quand on
+      débogue sous pression.</p>
+    </div>
+
+    <p>Pour charger en plus une MIB constructeur (par ex. la MIB privée Siemens Scalance), on la dépose dans
+    <code>/usr/share/snmp/mibs/</code> et on la nomme explicitement avec l'option <code>-m</code>&nbsp;:</p>
+
+    <pre><code class="language-bash">snmpwalk -v2c -c public -m +SCALANCE-MSPS-MIB 192.168.0.240 ifDescr</code></pre>
+
+    <h2>4. L'état des ports (IF-MIB) — le cœur du diagnostic</h2>
+    <p>La MIB la plus utile est <strong>IF-MIB</strong> : la table des interfaces (les ports du switch).
+    Chaque port porte un <strong>index</strong> (<code>ifIndex</code>), et toutes les colonnes de la table sont
+    indexées par ce numéro. Commence par la liste des ports&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 ifDescr
+IF-MIB::ifDescr.1 = STRING: P1 - vers CPU S7-1500
+IF-MIB::ifDescr.2 = STRING: P2 - anneau vers SW-B
+IF-MIB::ifDescr.3 = STRING: P3 - vers ET200SP .20
+IF-MIB::ifDescr.4 = STRING: P4 - anneau vers SW-C
+IF-MIB::ifDescr.5 = STRING: P5 - libre
+IF-MIB::ifDescr.6 = STRING: P6 - poste diag .71</code></pre>
+
+    <p>Puis l'état opérationnel de chacun, <code>ifOperStatus</code> (<code>1</code>&nbsp;= up,
+    <code>2</code>&nbsp;= down)&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 ifOperStatus
+IF-MIB::ifOperStatus.1 = INTEGER: up(1)
+IF-MIB::ifOperStatus.2 = INTEGER: up(1)
+IF-MIB::ifOperStatus.3 = INTEGER: <span class="hi">down(2)</span>
+IF-MIB::ifOperStatus.4 = INTEGER: up(1)
+IF-MIB::ifOperStatus.5 = INTEGER: down(2)
+IF-MIB::ifOperStatus.6 = INTEGER: up(1)</code></pre>
+
+    <p>Le port <strong>P3</strong> — celui de l'ET&nbsp;200SP <code>.20</code> — est <strong>down</strong>.
+    (Le P5 est down aussi, mais <code>ifDescr</code> nous a dit qu'il est libre : normal.) On tient déjà une
+    piste forte. Les OID à connaître&nbsp;:</p>
+
+    <table>
+      <thead>
+        <tr><th>Nom (IF-MIB)</th><th>OID numérique</th><th>Ce qu'on lit</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>ifDescr</code></td><td><code>1.3.6.1.2.1.2.2.1.2</code></td><td>Nom / libellé du port</td></tr>
+        <tr><td><code>ifOperStatus</code></td><td><code>1.3.6.1.2.1.2.2.1.8</code></td><td>État réel : up(1) / down(2)</td></tr>
+        <tr><td><code>ifAdminStatus</code></td><td><code>1.3.6.1.2.1.2.2.1.7</code></td><td>État voulu (config) : up / down</td></tr>
+        <tr><td><code>ifSpeed</code></td><td><code>1.3.6.1.2.1.2.2.1.5</code></td><td>Débit négocié (bit/s)</td></tr>
+        <tr><td><code>ifInErrors</code></td><td><code>1.3.6.1.2.1.2.2.1.14</code></td><td>Trames reçues en erreur (cumul)</td></tr>
+        <tr><td><code>ifOutErrors</code></td><td><code>1.3.6.1.2.1.2.2.1.20</code></td><td>Trames émises en erreur (cumul)</td></tr>
+        <tr><td><code>ifInOctets</code></td><td><code>1.3.6.1.2.1.2.2.1.10</code></td><td>Octets reçus (cumul)</td></tr>
+      </tbody>
+    </table>
+
+    <p>Le <strong>compteur d'erreurs en réception</strong> est souvent plus parlant qu'un port down : un port
+    qui reste up mais dont <code>ifInErrors</code> grimpe signale un câble abîmé, un connecteur mal serti ou
+    une perturbation électromagnétique (EMI) — exactement les symptômes physiques vus au chapitre&nbsp;2.</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 ifInErrors
+IF-MIB::ifInErrors.1 = Counter32: 0
+IF-MIB::ifInErrors.2 = Counter32: 0
+IF-MIB::ifInErrors.4 = Counter32: <span class="hi">14802</span>
+IF-MIB::ifInErrors.6 = Counter32: 0</code></pre>
+
+    <div class="callout piege">
+      <p>Les compteurs SNMP sont <strong>cumulatifs</strong> depuis le dernier redémarrage du switch. Une
+      valeur absolue élevée (14802 erreurs) n'est pas <em>en soi</em> un défaut : elle peut dater d'un
+      incident vieux de trois semaines, sur un switch qui n'a pas rebooté. Ce qui prouve un problème
+      <strong>en cours</strong>, c'est la <strong>dérive</strong> : le compteur qui <em>augmente</em> entre
+      deux relevés. Toujours mesurer un delta avant de conclure.</p>
+    </div>
+
+    <h3>Mesurer une dérive : deux relevés espacés</h3>
+    <p>On lit le compteur du port suspect, on attend, on relit, et on fait la différence. À la main&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpget -v2c -c public 192.168.0.240 ifInErrors.4
+IF-MIB::ifInErrors.4 = Counter32: 14802
+<span class="cmt"># ... on attend 60 secondes ...</span>
+<span class="prompt">$</span> snmpget -v2c -c public 192.168.0.240 ifInErrors.4
+IF-MIB::ifInErrors.4 = Counter32: <span class="hi">14971</span></code></pre>
+
+    <p>169 erreurs en 60&nbsp;secondes, soit près de 3 par seconde : le défaut est <strong>actif</strong>. Sur
+    le port&nbsp;2, le même relevé donnerait deux fois la même valeur — compteur figé, câble sain.</p>
+
+    <div class="callout shell">
+      <p>On automatise la surveillance de la dérive avec une petite boucle de polling qui affiche
+      l'horodatage et la valeur toutes les 5&nbsp;secondes&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> while true; do \
+    printf '%s  ' "$(date +%H:%M:%S)"; \
+    snmpget -v2c -c public -Ovq 192.168.0.240 ifInErrors.4; \
+    sleep 5; \
+  done
+14:02:03  14802
+14:02:08  14815
+14:02:13  14831
+14:02:18  <span class="hi">14848</span>   <span class="cmt"># +46 en 15 s : ça dérive franchement</span></code></pre>
+      <p>L'option <code>-Ovq</code> (<em>output: value, quiet</em>) n'affiche que la valeur brute, sans le nom
+      d'OID — idéal pour une colonne propre ou un calcul de delta.</p>
+    </div>
+
+    <h2>5. La topologie vue du switch (LLDP-MIB)</h2>
+    <p>Au chapitre&nbsp;3, on lisait LLDP <em>localement</em>, avec <code>lldpctl</code> : « qui est mon
+    voisin ? ». Le switch, lui, connaît le voisin LLDP de <strong>chacun</strong> de ses ports. La
+    <strong>LLDP-MIB</strong> l'expose. <code>lldpRemSysName</code> donne le nom système du voisin distant,
+    <code>lldpRemPortId</code> le port par lequel il est branché&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 lldpRemSysName
+LLDP-MIB::lldpRemSysName.0.1.1 = STRING: plc-s71500
+LLDP-MIB::lldpRemSysName.0.2.2 = STRING: SW-B-MRC
+LLDP-MIB::lldpRemSysName.0.4.3 = STRING: SW-C-MRC
+LLDP-MIB::lldpRemSysName.0.6.4 = STRING: poste-diag-71</code></pre>
+
+    <p>On lit ici, <em>depuis le switch central</em>, la carte du câblage : P1 → le CPU, P2 → SW-B, P4 → SW-C,
+    P6 → le poste de diag. Aucune entrée pour le port&nbsp;3 : cohérent avec son état down du §4 — le voisin
+    (l'ET&nbsp;200SP) a disparu. Cette vue recoupe et <strong>confirme</strong> le LLDP local du chapitre&nbsp;3,
+    mais depuis le point d'observation le plus riche du réseau.</p>
+
+    <div class="callout note">
+      <p>L'index d'une entrée LLDP distante se lit <code>lldpRemTimeMark.lldpRemLocalPortNum.lldpRemIndex</code>.
+      Le nombre du milieu est le <strong>port local</strong> du switch : c'est lui qui te dit « ce voisin est
+      branché sur mon port&nbsp;N ». Ne le confonds pas avec <code>lldpRemPortId</code>, qui est l'identifiant
+      du port <em>en face</em>, côté voisin.</p>
+    </div>
+
+    <h2>6. L'état de l'anneau (MRP-MIB)</h2>
+    <p>Le chapitre&nbsp;8 a montré comment <em>soupçonner</em> un anneau ouvert à la capture (rafales de trames
+    MRP_Test, <code>TopologyChange</code>). SNMP permet de le <strong>confirmer sans ambiguïté</strong> : le
+    manager d'anneau connaît l'état exact de la redondance. Deux MIB possibles selon le firmware — la
+    <strong>MRP-MIB</strong> standard (IEC&nbsp;62439-2) et la <strong>MIB privée Siemens</strong>. L'objet clé
+    est l'état de l'anneau, <code>mrpRingState</code>&nbsp;: <code>closed(2)</code> = redondance saine,
+    <code>open(1)</code> = un maillon est rompu.</p>
+
+    <p>Sur le manager <code>SW-A-MRM</code>, anneau sain&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 mrpRingState
+MRP-MIB::mrpRingState.1 = INTEGER: <span class="hi">closed(2)</span>
+<span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 mrpDomainRingPort1State
+MRP-MIB::mrpDomainRingPort1State.1 = INTEGER: forwarding(4)
+MRP-MIB::mrpDomainRingPort2State.1 = INTEGER: blocked(2)</code></pre>
+
+    <p><code>closed</code> = l'anneau est bouclé et le manager <strong>bloque</strong> volontairement un de ses
+    deux ports d'anneau (<code>blocked</code>) pour éviter la boucle : c'est le fonctionnement <em>normal</em>
+    de MRP. Si un câble d'anneau casse, le manager débloque ce port pour rétablir le chemin, et l'état
+    bascule&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 mrpRingState
+MRP-MIB::mrpRingState.1 = INTEGER: <span class="hi">open(1)</span></code></pre>
+
+    <p>Un anneau <strong>open</strong> veut dire : la redondance est <em>consommée</em>. Le réseau tient encore
+    (le manager a rebasculé), mais il n'y a <strong>plus de secours</strong> — la prochaine coupure fait tomber
+    des devices. C'est une alarme à traiter vite, même si « tout marche » en apparence.</p>
+
+    <table>
+      <thead>
+        <tr><th>Objet</th><th>Valeur saine</th><th>Interprétation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>mrpRingState</code></td><td><code>closed(2)</code></td><td>Anneau bouclé, redondance disponible</td></tr>
+        <tr><td><code>mrpRingState</code></td><td><code>open(1)</code></td><td>Maillon rompu, redondance consommée — alarme</td></tr>
+        <tr><td>rôle (MRM/MRC)</td><td>MRM sur un seul switch</td><td>Un seul manager par anneau ; les autres sont clients</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout plc">
+      <p>Ces mêmes états sont visibles dans l'interface web du Scalance (page « Media Redundancy ») et dans
+      TIA&nbsp;Portal (diagnostic du switch). SNMP n'invente rien de plus — il rend simplement l'information
+      <strong>scriptable</strong> : tu peux la relever sur les trois switches d'un anneau en une boucle, la
+      journaliser, la comparer d'un jour à l'autre. Là où le web te fait cliquer, le shell te fait
+      <code>snmpwalk</code>.</p>
+    </div>
+
+    <h2>7. Corréler les deux vues</h2>
+    <p>Tout l'intérêt du chapitre est là : faire converger la vue <strong>switch</strong> (SNMP) et la vue
+    <strong>fil</strong> (captures des chapitres 2, 7, 8). Reprenons l'incident du port&nbsp;3&nbsp;:</p>
+
+    <ul>
+      <li><strong>Côté switch (ce chapitre)</strong> : <code>ifOperStatus.3 = down</code>, aucun voisin LLDP
+      sur P3, et sur les ports voisins <code>ifInErrors</code> qui dérive.</li>
+      <li><strong>Côté capture (ch. 2 / 7 / 8)</strong> : le CPU signale un IO-device décroché (alarme
+      Profinet), et le switch émet des trames MRP <code>TopologyChange</code> au moment de la bascule.</li>
+    </ul>
+
+    <p>Les deux récits pointent le même coupable : le <strong>lien du port&nbsp;3</strong> vers
+    l'ET&nbsp;200SP&nbsp;<code>.20</code> — câble débranché, coupé ou connecteur défaillant. Ni l'une ni
+    l'autre vue ne suffit seule&nbsp;: la capture dit <em>« quelque chose a bougé »</em>, le switch dit
+    <em>« c'est le port 3 »</em>. Ensemble, elles localisent la panne au câble près. C'est la méthode qu'on
+    généralisera au chapitre&nbsp;11.</p>
+
+    <div class="callout astuce">
+      <p>Quand deux sources indépendantes — une capture sur le fil et l'état interne d'un équipement —
+      désignent le même point, la conclusion est solide. Une seule source peut mentir (un compteur figé, une
+      trame manquée) ; leur <strong>recoupement</strong> ne ment presque jamais. Cherche toujours à confirmer
+      une hypothèse par une seconde vue avant d'aller débrancher quoi que ce soit.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>SNMP</strong> (UDP/161) interroge le switch managé via un arbre d'<strong>OID</strong>
+        (MIB). En <strong>v2c</strong>, l'accès tient à une <strong>communauté</strong> (<code>public</code> en
+        lecture par défaut) ; on lit avec <code>snmpget</code> / <code>snmpwalk</code>, on n'écrit pas.</li>
+        <li>Pour des noms lisibles : <code>snmp-mibs-downloader</code>, puis commenter <code>mibs :</code> dans
+        <code>/etc/snmp/snmp.conf</code>.</li>
+        <li>Diagnostic des ports via <strong>IF-MIB</strong> : <code>ifDescr</code> (nom),
+        <code>ifOperStatus</code> (up/down), <code>ifInErrors</code> (erreurs), <code>ifSpeed</code> (débit).
+        Un port <em>down</em> ou un compteur d'erreurs qui <strong>dérive</strong> = piste directe.</li>
+        <li>Les compteurs sont <strong>cumulatifs</strong> : c'est le <strong>delta</strong> entre deux relevés
+        qui compte, pas la valeur absolue.</li>
+        <li><strong>LLDP-MIB</strong> (<code>lldpRemSysName</code>) donne la topologie vue du switch ;
+        <strong>MRP-MIB</strong> (<code>mrpRingState</code>) donne l'état de l'anneau : <code>closed</code> =
+        sain, <code>open</code> = redondance consommée.</li>
+        <li>La vue <strong>switch</strong> et la vue <strong>capture</strong> se <strong>corroborent</strong> :
+        leur recoupement localise la panne.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Dresser le tableau port → état → erreurs</h3>
+      <p>Sur le Scalance <code>192.168.0.240</code>, relève l'identité (branche <code>system</code>) puis, pour
+      chaque port, son libellé, son état et ses erreurs en réception. Présente le résultat sous forme d'un
+      tableau <code>port → état → erreurs</code> et identifie le(s) port(s) suspect(s).</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> snmpget -v2c -c public 192.168.0.240 sysName.0 sysDescr.0
+SNMPv2-MIB::sysName.0 = STRING: SW-A-MRM
+SNMPv2-MIB::sysDescr.0 = STRING: Siemens ... SCALANCE XC208 ... FW: V6.5
+<span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 ifDescr
+<span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 ifOperStatus
+<span class="prompt">$</span> snmpwalk -v2c -c public 192.168.0.240 ifInErrors</code></pre>
+        <p>En croisant les trois <code>walk</code> par <code>ifIndex</code>&nbsp;:</p>
+        <pre class="term"><code>Port  Libellé              État   ifInErrors
+ 1    vers CPU S7-1500      up         0
+ 2    anneau vers SW-B      up         0
+ 3    vers ET200SP .20     <span class="hi">down</span>         -
+ 4    anneau vers SW-C      up     <span class="hi">14802</span>
+ 5    libre                 down       0
+ 6    poste diag .71        up         0</code></pre>
+        <p>Deux anomalies&nbsp;: le port&nbsp;<strong>3</strong> est <em>down</em> (device décroché) et le
+        port&nbsp;<strong>4</strong> accumule des erreurs. Le P5 est down mais libellé « libre » : à ignorer.
+        Reste à savoir si les erreurs du P4 sont anciennes ou actives — c'est l'exercice&nbsp;2.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Un port dont les erreurs augmentent (delta)</h3>
+      <p>Le port&nbsp;4 affiche 14802 erreurs. Est-ce un vieil incident cicatrisé ou un défaut actif&nbsp;?
+      Relève le compteur deux fois à 30&nbsp;secondes d'intervalle, calcule le delta et conclus. Bonus&nbsp;:
+      une seule ligne de shell qui fait le calcul.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> a=$(snmpget -v2c -c public -Ovq 192.168.0.240 ifInErrors.4); \
+  sleep 30; \
+  b=$(snmpget -v2c -c public -Ovq 192.168.0.240 ifInErrors.4); \
+  echo "delta = $((b - a)) erreurs en 30 s"
+delta = <span class="hi">83</span> erreurs en 30 s</code></pre>
+        <p>Le compteur a bougé de 83 en 30&nbsp;secondes&nbsp;: le défaut est <strong>actif</strong>, ce n'est
+        pas un résidu. On soupçonne un câble d'anneau abîmé ou une source d'EMI sur le lien P4 (vers SW-C).
+        Si le delta avait été <code>0</code>, la grande valeur absolue aurait été un simple héritage d'un
+        incident passé — rien à traiter. La leçon&nbsp;: <strong>toujours mesurer la dérive</strong>. Le
+        <code>-Ovq</code> renvoie la valeur nue, ce qui permet l'arithmétique <code>$((b - a))</code>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — État de l'anneau via la MRP-MIB</h3>
+      <p>Au chapitre&nbsp;8, la capture laissait soupçonner un anneau ouvert. Confirme-le (ou infirme-le) en
+      lisant <code>mrpRingState</code> sur le manager <code>192.168.0.240</code>. Interprète la valeur et dis
+      ce que cela implique pour la disponibilité de la cellule.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> snmpget -v2c -c public -Ovq 192.168.0.240 mrpRingState.1
+<span class="hi">open(1)</span></code></pre>
+        <p>La MRP-MIB tranche le doute&nbsp;: l'anneau est <strong>ouvert</strong>. La capture du chapitre&nbsp;8
+        avait raison — un maillon est rompu et le manager a rebasculé sur son chemin de secours. Conséquence
+        concrète&nbsp;: le réseau fonctionne encore, mais la <strong>redondance est consommée</strong>. Il n'y
+        a plus de filet&nbsp;: la prochaine coupure de câble fera décrocher des IO-devices. À traiter en
+        priorité, même sans arrêt de production visible. Pour localiser le maillon rompu, on recoupe avec
+        l'exercice&nbsp;1 (quel port d'anneau est down ou en erreur) et le LLDP du §5.</p>
+        <p>Si la réponse avait été <code>closed(2)</code>, l'anneau serait sain et redondant, et il aurait
+        fallu chercher la cause de l'incident du chapitre&nbsp;8 ailleurs (un device, pas l'anneau).</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-09.html"><span class="lbl">← Précédent</span>OPC-UA au shell</a>
+    <a class="next" href="chapitre-11.html"><span class="lbl">Suivant →</span>Méthodologie de diagnostic</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — Diagnostiquer Profinet</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>Diagnostiquer Profinet</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre le <strong>contrat temps réel</strong> d'un échange Profinet : temps de cycle
+        (<em>update time</em>), watchdog, connexion applicative (AR).</li>
+        <li>Mesurer depuis une capture le <strong>temps de cycle réel</strong>, le <strong>jitter</strong> et
+        les <strong>trames perdues</strong> — deltas d'inter-arrivée et <code>CycleCounter</code>.</li>
+        <li>Lire l'état de l'échange : bits du <strong>DataStatus</strong> (provider/consumer, DataValid,
+        StationProblem).</li>
+        <li>Reconnaître dans la capture la <strong>signature d'une station qui décroche</strong> : arrêt du
+        cyclique → alarme → tentative de reconnexion, et savoir sur quelles couches boucler ensuite.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le contrat temps réel</h2>
+    <p>Au chapitre&nbsp;6, on a disséqué <em>une</em> trame Profinet RT : Ethertype <code>0x8892</code>,
+    Frame&nbsp;ID, données cycliques, puis le <em>trailer</em> APDU-Status. Ici, on ne regarde plus une trame
+    isolée mais le <strong>flux</strong> : est-ce que l'échange respecte son contrat&nbsp;?</p>
+    <p>Ce contrat est simple. À la mise en route, le CPU (<code>cpu1500</code>, <code>192.168.0.1</code>)
+    établit avec chaque IO-device une <strong>connexion applicative</strong>, l'<strong>AR</strong>
+    (<em>Application Relation</em>). Dans cette AR, chacun s'engage à envoyer sa trame cyclique à intervalle
+    fixe — l'<strong>update time</strong>, configuré dans TIA (typiquement 1&nbsp;ms, parfois 250&nbsp;µs ou
+    4&nbsp;ms selon la charge). Les deux sens comptent&nbsp;: le device est <em>provider</em> de ses entrées
+    et <em>consumer</em> des sorties ; le CPU, l'inverse.</p>
+    <p>Si les trames attendues n'arrivent plus, un <strong>watchdog</strong> se déclenche. Sa valeur par
+    défaut est de <strong>3 cycles manqués</strong> : passé ce délai, le consumer déclare le provider absent,
+    l'AR est déclarée perdue, et côté CPU cela remonte comme une <em>défaillance de station</em>.
+    Diagnostiquer Profinet, c'est donc vérifier deux choses sur le fil&nbsp;: la <strong>régularité</strong>
+    des cycles et l'<strong>absence de perte</strong>.</p>
+
+    <div class="callout plc">
+      <p>Le watchdog vaut par défaut <strong>3&nbsp;× l'update time</strong> (« <em>Accepted update
+      cycles without IO data</em> » dans TIA Portal). À 1&nbsp;ms, il suffit donc de <strong>3&nbsp;ms
+      sans trame</strong> pour que le CPU déclare la station en défaut et lève une alarme de « défaillance de
+      station » (<em>station failure</em>) dans son tampon de diagnostic. C'est court&nbsp;: un micro-défaut de
+      câble suffit. Le shell, lui, mesure ces millisecondes sur le fil.</p>
+    </div>
+
+    <h2>2. Mesurer le temps de cycle depuis une capture</h2>
+    <p>La méthode ne varie jamais&nbsp;: on isole le cyclique d'<strong>un seul</strong> device — par sa MAC
+    source et le filtre <code>pn_rt</code> — puis on regarde le temps qui sépare deux trames consécutives.
+    Prenons <code>et200sp-1</code> (MAC <code>00:1b:1b:2a:10:20</code>). D'abord on capture le flux Profinet
+    brut (Ethertype <code>0x8892</code>), puis on relit hors-ligne&nbsp;:</p>
+
+    <pre><code class="language-bash">sudo tshark -i eth0 -f 'ether proto 0x8892' -w pn.pcap
+tshark -r pn.pcap -Y 'pn_rt &amp;&amp; eth.src==00:1b:1b:2a:10:20' \
+       -T fields -e frame.time_delta_displayed -e pn_rt.cycle_counter</code></pre>
+
+    <p>Le champ <code>frame.time_delta_displayed</code> donne l'écart de temps avec la trame précédente
+    <em>du même affichage filtré</em> — donc, comme on a filtré sur une seule MAC source, l'écart entre deux
+    trames cycliques de <em>ce</em> device. C'est la mesure directe du temps de cycle. Sur un échange sain à
+    1&nbsp;ms&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># deltas (s) et cycle_counter — échange sain à 1 ms</span>
+0.001004   12480
+0.000998   12512
+0.001001   12544
+0.000999   12576
+0.001003   12608
+0.000997   12640</code></pre>
+
+    <p>Les deltas oscillent autour de <strong>0,001&nbsp;s</strong> — un métronome. Le
+    <code>cycle_counter</code> progresse d'un pas régulier (ici +32, on y revient au §3). Maintenant, un
+    échange qui hoquette&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># même device, mais un trou</span>
+0.001002   13120
+0.000999   13152
+<span class="hi">0.004013</span>   13248
+0.001001   13280
+0.000998   13312</code></pre>
+
+    <p>Le delta de <strong>0,004&nbsp;s</strong> saute aux yeux&nbsp;: quatre fois le cycle. Trois trames ont
+    manqué sur le fil (le device aurait dû émettre à +1, +2 et +3&nbsp;ms). On le confirme au compteur&nbsp;:
+    il bondit de <code>13152</code> à <code>13248</code>, soit +96 au lieu de +32 — trois pas d'un coup. À
+    1&nbsp;ms, un tel trou frôle déjà le seuil du watchdog&nbsp;: une ou deux trames de plus, et l'AR
+    tombait.</p>
+
+    <p>Le <strong>jitter</strong>, c'est précisément la <em>dispersion</em> de ces deltas autour de la
+    consigne. Un échange sain a un jitter de quelques microsecondes ; un jitter qui grimpe (deltas qui varient
+    de 0,8 à 1,3&nbsp;ms sans trame perdue) trahit un problème de transport — un port saturé, un switch qui
+    peine, ou pire, un lien tombé en half-duplex (§piège).</p>
+
+    <div class="callout astuce">
+      <p>Le delta d'inter-arrivée d'un device filtré sur sa MAC, <em>c'est</em> son temps de cycle réel,
+      mesuré sur le fil. Tu n'as pas besoin de connaître la config TIA pour le trouver&nbsp;: capture, filtre,
+      lis la colonne. Si le delta médian vaut 1&nbsp;ms, l'update time est à 1&nbsp;ms. La capture ne ment
+      pas ; l'ingénierie, parfois.</p>
+    </div>
+
+    <div class="callout shell">
+      <p>Un seul <em>one-liner</em> pour sortir cycle moyen, min et max d'un device — pratique pour juger la
+      régularité d'un coup&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -Y 'pn_rt &amp;&amp; eth.src==00:1b:1b:2a:10:20' \
+      -T fields -e frame.time_delta_displayed \
+    | awk 'NR&gt;1{n++;s+=$1;if($1&gt;mx)mx=$1;if(mn==""||$1&lt;mn)mn=$1}
+           END{printf "cycle moyen=%.4f ms  min=%.4f  max=%.4f  (n=%d)\n",s/n*1000,mn*1000,mx*1000,n}'
+cycle moyen=1.0010 ms  min=0.9970  max=<span class="hi">4.0130</span>  (n=4192)</code></pre>
+      <p>Le <code>max</code> très supérieur à la moyenne pointe le trou. On saute la première ligne
+      (<code>NR&gt;1</code>) car son delta n'a pas de trame précédente.</p>
+    </div>
+
+    <h2>3. Le CycleCounter : compter les trames perdues</h2>
+    <p>Le delta de temps te dit <em>qu'</em>il manque des trames ; le <code>CycleCounter</code> te dit
+    <em>combien</em>, sans ambiguïté. Ce compteur voyage dans l'APDU-Status de chaque trame RT (chapitre&nbsp;6).
+    Il s'incrémente d'un <strong>pas fixe à chaque cycle</strong>, en unités de <strong>1/32&nbsp;de
+    milliseconde</strong> — soit 31,25&nbsp;µs. À un update time de 1&nbsp;ms, le pas normal est donc de
+    <strong>32</strong> (1&nbsp;ms ÷ 31,25&nbsp;µs). Il est codé sur 16 bits&nbsp;: il boucle de 65535 à 0, ce
+    dont il faut tenir compte au calcul.</p>
+    <p>La règle est limpide&nbsp;: entre deux trames consécutives d'un même provider, le compteur augmente du
+    pas nominal. <strong>Un saut supérieur au pas = des trames perdues sur le fil.</strong> Le nombre de trames
+    manquées vaut&nbsp;:</p>
+
+    <div class="math">trames_perdues = (Δcompteur / pas_nominal) − 1</div>
+
+    <p>Reprenons la séquence hoquetante du §2 et calculons les écarts du compteur avec <code>awk</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -Y 'pn_rt &amp;&amp; eth.src==00:1b:1b:2a:10:20' \
+      -T fields -e pn_rt.cycle_counter \
+    | awk 'NR&gt;1{d=$1-p; if(d&lt;0)d+=65536; if(d!=32) printf "saut de %d (=%d cycles) apres cc=%d\n",d,d/32,p} {p=$1}'
+saut de <span class="hi">96</span> (=3 cycles) apres cc=13152</code></pre>
+
+    <p>Un seul saut détecté&nbsp;: +96, soit 3&nbsp;cycles au lieu d'1 → <strong>2 trames perdues</strong>
+    entre les deux trames vues (la 3ᵉ est celle qu'on a reçue). Le <code>if(d&lt;0)d+=65536</code> gère le
+    rebouclage du compteur 16 bits. Additionne tous les sauts sur une capture longue et tu obtiens le
+    <strong>total de trames perdues</strong> sur l'intervalle — une métrique de santé bien plus parlante qu'un
+    ressenti « ça rame ».</p>
+
+    <div class="callout note">
+      <p>Deux compteurs à ne pas confondre. Le <strong>CycleCounter</strong> est une <em>horloge</em>&nbsp;: il
+      avance du temps écoulé (pas de 32 à 1&nbsp;ms), donc un saut mesure des <em>trames manquées</em>. Le
+      champ <code>DataStatus</code>, lui, porte des <em>bits d'état</em> (§4), pas un décompte. Le premier dit
+      « combien j'en ai raté », le second « est-ce que ce que je reçois est valable ».</p>
+    </div>
+
+    <h2>4. Le DataStatus : provider, consumer, validité</h2>
+    <p>Chaque trame RT porte un octet <strong>DataStatus</strong> (dans l'APDU-Status) qui résume l'état de
+    l'émetteur. <code>tshark</code> le décode ; on lit soit l'octet brut, soit le détail avec
+    <code>-V</code>&nbsp;:</p>
+
+    <pre><code class="language-bash"># l'octet brut, trame par trame
+tshark -r pn.pcap -Y 'pn_rt &amp;&amp; eth.src==00:1b:1b:2a:10:20' \
+       -T fields -e frame.number -e pn_rt.data_status
+
+# le détail bit à bit d'une trame
+tshark -r pn.pcap -Y 'pn_rt &amp;&amp; eth.src==00:1b:1b:2a:10:20' -V | grep -A8 'DataStatus'</code></pre>
+
+    <p>Les bits qui comptent pour le diagnostic&nbsp;:</p>
+    <table>
+      <thead><tr><th>Bit</th><th>Nom</th><th>Sain</th><th>Ce qu'il signale sinon</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>State (Run/Stop)</td><td>1 = Run</td><td>0 = le provider (CPU ou device) est à l'arrêt</td></tr>
+        <tr><td>1</td><td>Redundancy</td><td>0/1</td><td>rôle dans un couple redondant (S2/R1)</td></tr>
+        <tr><td>2</td><td>DataValid</td><td>1 = valide</td><td><strong>0 = données non valables</strong> — le provider ne garantit plus ses données</td></tr>
+        <tr><td>4</td><td>ProviderState</td><td>1 = Primary</td><td>0 = Backup — cette trame n'est pas la source active</td></tr>
+        <tr><td>5</td><td>StationProblem</td><td>0 = OK</td><td><strong>1 = problème</strong> — un module/sous-module du device est en défaut</td></tr>
+      </tbody>
+    </table>
+
+    <p>Deux réflexes. Un <strong>DataValid=0</strong> dit que le provider a lui-même déclaré ses données
+    inexploitables (module manquant, sous-module non prêt) — le consumer les ignorera. Un
+    <strong>StationProblem=1</strong> (aussi appelé le bit d'état de station, ou <em>Ident</em>) est le signal
+    « regarde mon diagnostic »&nbsp;: le device signale qu'un de ses modules a un souci, et il émettra une
+    alarme (§5) pour dire lequel. Sur l'échange sain, on lit typiquement un DataStatus à
+    <code>0x35</code> (Run + DataValid + Primary, StationProblem à 0). Dès que le bit&nbsp;5 passe à 1, la
+    valeur change et le device est sur le point de lever une alarme — ou vient de le faire.</p>
+
+    <div class="callout astuce">
+      <p>Tu n'as pas besoin de mémoriser l'octet. Filtre directement sur le bit décodé&nbsp;: par exemple
+      <code>-Y 'pn_rt.data_status.station_problem == 1'</code> ne te sort que les trames où une station crie
+      au secours, ou <code>-Y 'pn_rt.data_status.data_valid == 0'</code> pour les données réputées mauvaises.
+      C'est le moyen le plus rapide de savoir « qui va mal » dans une grosse capture.</p>
+    </div>
+
+    <h2>5. Détecter une station qui décroche</h2>
+    <p>C'est le scénario roi de ce chapitre. Une station perd le contact — câble qui bouge, module qui grille,
+    alimentation qui fléchit — et il faut le lire dans la capture. La séquence a une <strong>signature
+    reconnaissable</strong>, toujours la même&nbsp;:</p>
+    <ol>
+      <li>Le <strong>cyclique du device s'arrête</strong>&nbsp;: plus de trames <code>pn_rt</code> de sa MAC
+      (ou DataStatus qui bascule juste avant).</li>
+      <li>Une ou plusieurs trames d'<strong>alarme</strong> (<code>pn_alarm</code>) partent&nbsp;: « module
+      retiré », « port en défaut », « diagnostic apparu ».</li>
+      <li>Le <strong>watchdog du CPU expire</strong> (3 cycles) et la station est déclarée en défaut.</li>
+      <li>Le CPU <strong>tente de rétablir l'AR</strong>&nbsp;: un nouveau <em>DCP&nbsp;identify</em>
+      multicast pour retrouver le device par son nom, puis un <em>Connect</em> pour rouvrir la connexion
+      (exactement le mécanisme du chapitre&nbsp;6).</li>
+    </ol>
+
+    <figure class="fig">
+      <svg viewBox="0 0 820 250" role="img" aria-label="Chronologie d'un décrochage : une file de trames cycliques régulières, puis un trou (trames manquantes), une trame d'alarme, et plus loin les trames DCP identify et Connect qui tentent de rétablir la connexion.">
+        <!-- axe temps -->
+        <line class="link" x1="30" y1="150" x2="800" y2="150" style="stroke:var(--fg-dim);stroke-width:1.5"/>
+        <text class="lbl-s" x="800" y="168" text-anchor="end">t →</text>
+
+        <!-- trames cycliques saines (teal) -->
+        <g style="fill:var(--l2)">
+          <rect x="45"  y="120" width="8" height="30"/>
+          <rect x="80"  y="120" width="8" height="30"/>
+          <rect x="115" y="120" width="8" height="30"/>
+          <rect x="150" y="120" width="8" height="30"/>
+          <rect x="185" y="120" width="8" height="30"/>
+          <rect x="220" y="120" width="8" height="30"/>
+        </g>
+        <text class="lbl-s" x="140" y="112" text-anchor="middle" style="fill:var(--l2)">cyclique sain · 1 ms</text>
+
+        <!-- le trou -->
+        <rect x="255" y="112" width="150" height="46" rx="5" style="fill:none;stroke:var(--danger);stroke-width:2;stroke-dasharray:5 4"/>
+        <text class="lbl-s" x="330" y="140" text-anchor="middle" style="fill:var(--danger)">TROU — trames manquantes</text>
+        <text class="lbl-s" x="330" y="176" text-anchor="middle" style="fill:var(--fg-dim)">watchdog (3× cycle)</text>
+
+        <!-- alarme -->
+        <rect x="425" y="105" width="14" height="45" rx="2" style="fill:var(--warn)"/>
+        <text class="lbl-s" x="432" y="97" text-anchor="middle" style="fill:var(--warn)">⚠ alarme</text>
+        <text class="lbl-s" x="432" y="176" text-anchor="middle" style="fill:var(--fg-dim)">pn_alarm</text>
+
+        <!-- DCP identify + Connect -->
+        <rect x="560" y="110" width="12" height="40" rx="2" style="fill:var(--l7)"/>
+        <rect x="610" y="110" width="12" height="40" rx="2" style="fill:var(--l7)"/>
+        <text class="lbl-s" x="591" y="102" text-anchor="middle" style="fill:var(--l7)">DCP identify + Connect</text>
+        <text class="lbl-s" x="591" y="176" text-anchor="middle" style="fill:var(--fg-dim)">le CPU rétablit l'AR</text>
+
+        <!-- reprise cyclique -->
+        <g style="fill:var(--l2)">
+          <rect x="700" y="120" width="8" height="30"/>
+          <rect x="735" y="120" width="8" height="30"/>
+          <rect x="770" y="120" width="8" height="30"/>
+        </g>
+        <text class="lbl-s" x="735" y="112" text-anchor="middle" style="fill:var(--l2)">reprise</text>
+      </svg>
+      <figcaption><b>Figure 7.1.</b> La signature d'un décrochage sur l'axe du temps. Le cyclique régulier
+      (teal) s'interrompt&nbsp;: c'est le <b>trou</b>. Passé le watchdog, une <b>alarme</b> (ambre) part, puis
+      le CPU relance un <b>DCP&nbsp;identify + Connect</b> (vert) pour retrouver et reconnecter le device.
+      Retrouver cette forme dans une capture, c'est diagnostiquer un décrochage.</figcaption>
+    </figure>
+
+    <p>Pour lire la séquence, on ne filtre plus une MAC mais on <strong>trie par le temps</strong> et on
+    regarde les trois familles ensemble. Les alarmes d'abord&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -Y pn_alarm \
+      -T fields -e frame.time_relative -e eth.src -e pn_alarm.alarm_type
+2.418500   00:1b:1b:2a:10:20   0x0002   <span class="cmt"># diagnosis appears — et200sp-1</span>
+2.418700   00:1b:1b:2a:10:20   0x0006   <span class="cmt"># module pulled / removed</span></code></pre>
+
+    <p>On voit <code>et200sp-1</code> lever une alarme « module retiré » à t=2,4188&nbsp;s. On zoome alors sur
+    la fenêtre autour de cet instant, toutes familles Profinet confondues, pour reconstituer l'histoire&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -Y 'frame.time_relative &gt; 2.41 &amp;&amp; frame.time_relative &lt; 2.60' \
+      -T fields -e frame.time_relative -e eth.src -e _ws.col.Protocol -e _ws.col.Info
+2.415000  00:1b:1b:2a:10:20  PNIO   RTC1, Len:40  <span class="cmt"># derniere trame cyclique du device</span>
+2.418500  00:1b:1b:2a:10:20  PNIO   Alarm, DiagnosisAppears
+2.418700  00:1b:1b:2a:10:20  PNIO   Alarm, ModulePulled
+<span class="hi">2.421000</span>  00:1b:1b:2a:10:01  PNIO   <span class="hi">... plus aucune trame RT de .20</span>
+2.540000  00:1b:1b:2a:10:01  PN-DCP Ident Req "et200sp-1"  <span class="cmt"># le CPU cherche le device</span>
+2.560000  00:1b:1b:2a:10:20  PN-DCP Ident Ok                <span class="cmt"># il repond → Connect suit</span></code></pre>
+
+    <p>Tout y est&nbsp;: la dernière trame cyclique à 2,415&nbsp;s, l'alarme à 2,4185&nbsp;s, le silence du
+    device, puis à 2,54&nbsp;s le CPU (<code>00:1b:1b:2a:10:01</code>) qui relance un <em>DCP&nbsp;Ident
+    Req</em> ciblant le nom « et200sp-1 », auquel le device finit par répondre. La reconnexion s'enchaîne
+    (Connect, cf. chapitre&nbsp;6). Tu viens de diagnostiquer un décrochage sans jamais ouvrir TIA.</p>
+
+    <div class="callout piege">
+      <p>Un jitter qui explose ou des trames perdues <em>par rafales</em>, sans que le device tombe vraiment,
+      trahit souvent un problème de <strong>couche basse</strong>&nbsp;: un lien qui a négocié en
+      <strong>100&nbsp;Mbit half-duplex</strong> au lieu de full. En half-duplex, les collisions et le
+      CSMA/CD retardent les trames de façon erratique — le temps réel Profinet ne le supporte pas. Ne reste
+      pas bloqué sur Profinet&nbsp;: <strong>boucle sur le chapitre&nbsp;2</strong> (<code>ethtool</code>) et
+      vérifie duplex, débit et compteurs d'erreurs FCS/CRC du port. La cause d'un « problème Profinet » est
+      très souvent en L1/L2.</p>
+    </div>
+
+    <h2>6. Statistiques rapides</h2>
+    <p>Avant de plonger trame par trame, deux vues d'ensemble te disent en une commande <em>où</em> regarder.
+    D'abord, le <strong>débit de trames RT par seconde</strong>&nbsp;: un échange sain est parfaitement plat
+    (autant de trames chaque seconde) ; un décrochage creuse un <strong>trou</strong> visible&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -q -z io,stat,1,pn_rt
+=================================================
+| IO Statistics                                 |
+| Interval: 1 s   |   Filter: pn_rt             |
+|-----------------|-----------------------------|
+| Interval        |            pn_rt   Frames   |
+|-----------------|-----------------------------|
+|   0 &lt;&gt; 1        |                     4000    |
+|   1 &lt;&gt; 2        |                     4000    |
+|   2 &lt;&gt; 3        |            <span class="hi">3120</span>    <span class="cmt"># ← le trou : ~880 trames en moins</span> |
+|   3 &lt;&gt; 4        |                     3000    <span class="cmt"># .20 muet, l'AR pas encore reprise</span> |
+|   4 &lt;&gt; 5        |                     4000    <span class="cmt"># reconnecte</span> |
+=================================================</code></pre>
+
+    <p>La seconde 2→3 pique du nez&nbsp;: c'est là que le device a décroché. On sait maintenant <em>quand</em>
+    zoomer (§5). Ensuite, <strong>qui parle à qui</strong> — les conversations Ethernet&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -q -z conv,eth
+================================================================================
+Ethernet Conversations
+                                       |  Frames  |   Bytes  |
+00:1b:1b:2a:10:01 &lt;-&gt; 00:1b:1b:2a:10:20   <span class="hi">15980</span>    1.2 MB   <span class="cmt"># cpu1500 ↔ et200sp-1</span>
+00:1b:1b:2a:10:01 &lt;-&gt; 00:1b:1b:2a:10:21   19998    1.5 MB   <span class="cmt"># cpu1500 ↔ et200sp-2 (intact)</span>
+================================================================================</code></pre>
+
+    <p>Les deux stations devraient afficher un nombre de trames quasi identique. <code>et200sp-1</code>
+    (<code>.20</code>) en a nettement moins que <code>et200sp-2</code> (<code>.21</code>)&nbsp;: c'est bien
+    <code>.20</code> qui a perdu des trames. En un coup d'œil, on a isolé la station coupable et confirmé que
+    sa voisine, elle, est saine.</p>
+
+    <div class="callout note">
+      <p>Un device qui ne se connecte <strong>jamais</strong> (aucune trame cyclique dès le départ, jamais
+      d'AR) n'est pas forcément en panne&nbsp;: c'est souvent un <strong>nom de station erroné</strong>
+      (<em>name mismatch</em>). Le CPU cherche « et200sp-1 » par DCP, mais le device s'appelle autrement (ou
+      rien) → il ne le reconnaît pas et ne le connecte pas. Vérifie le nom réel du device par DCP
+      (<strong>chapitre&nbsp;3</strong>, <code>pnio-dcp</code>) et compare-le à celui attendu dans le projet.
+      « Il est bien branché mais absent du réseau » = suspecte le nom avant le matériel.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Profinet est un <strong>contrat temps réel</strong>&nbsp;: chaque device échange à l'<strong>update
+        time</strong> ; <strong>3 cycles manqués</strong> (watchdog) → l'<strong>AR</strong> est perdue et le
+        CPU déclare une défaillance de station.</li>
+        <li><strong>Temps de cycle mesuré</strong> = delta d'inter-arrivée d'un device filtré sur sa MAC
+        (<code>frame.time_delta_displayed</code>). Un delta ≈ 4× le cycle = 3 trames sautées&nbsp;; le
+        <strong>jitter</strong> est la dispersion des deltas.</li>
+        <li>Le <strong>CycleCounter</strong> avance d'un pas fixe (32 unités de 1/32&nbsp;ms à 1&nbsp;ms)&nbsp;:
+        un saut = trames perdues, <code>(Δcompteur/pas)−1</code>, en gérant le rebouclage 16 bits.</li>
+        <li>Le <strong>DataStatus</strong> porte les bits d'état&nbsp;: <code>DataValid=0</code> ou
+        <code>StationProblem=1</code> signalent un problème provider côté device ; on filtre directement sur
+        le bit décodé.</li>
+        <li><strong>Signature d'un décrochage</strong>&nbsp;: cyclique qui s'arrête → <code>pn_alarm</code>
+        → DCP&nbsp;identify + Connect. Vues d'ensemble&nbsp;: <code>-z io,stat,1,pn_rt</code> (le trou),
+        <code>-z conv,eth</code> (la station coupable).</li>
+        <li>Un « problème Profinet » vient souvent d'en dessous&nbsp;: <strong>boucle sur L1/L2</strong>
+        (half-duplex, FCS/CRC, chapitre&nbsp;2) et sur le <strong>nom de station</strong> (chapitre&nbsp;3)
+        avant de conclure.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Temps de cycle, jitter, trames sautées</h3>
+      <p>On t'a fourni les deltas d'inter-arrivée (en secondes) du device <code>et200sp-2</code>
+      (<code>00:1b:1b:2a:10:21</code>), extraits d'une capture&nbsp;: <code>0.000998</code>,
+      <code>0.001003</code>, <code>0.001001</code>, <code>0.002015</code>, <code>0.000999</code>,
+      <code>0.001002</code>. Quel est l'update time configuré&nbsp;? Y a-t-il des trames perdues, et combien&nbsp;?
+      Le jitter te paraît-il inquiétant&nbsp;? Écris la commande qui aurait produit ces deltas.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Cinq deltas sur six tournent autour de <strong>0,001&nbsp;s</strong> → l'update time est de
+        <strong>1&nbsp;ms</strong>. Le delta isolé de <code>0.002015</code> vaut ≈ 2× le cycle&nbsp;:
+        <strong>une trame a été sautée</strong> à cet instant (2 cycles écoulés = 1 trame manquée). Le jitter
+        sur les cycles sains va de 0,998 à 1,003&nbsp;ms, soit ±5&nbsp;µs&nbsp;: <strong>négligeable</strong>,
+        rien d'inquiétant côté transport — c'est une perte ponctuelle, pas une dégradation continue. La
+        commande d'extraction&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -Y 'pn_rt &amp;&amp; eth.src==00:1b:1b:2a:10:21' \
+      -T fields -e frame.time_delta_displayed</code></pre>
+        <p>Si tu veux confirmer sans compter à la main, ajoute <code>-e pn_rt.cycle_counter</code>&nbsp;: le
+        pas passerait de 32 à 64 sur la trame en défaut.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Suivre le CycleCounter et compter les pertes</h3>
+      <p>Sur un intervalle, le <code>cycle_counter</code> de <code>et200sp-1</code> a pris successivement les
+      valeurs&nbsp;: <code>65472</code>, <code>65504</code>, <code>28</code>, <code>60</code>, <code>156</code>,
+      <code>188</code>. L'update time est 1&nbsp;ms (pas nominal = 32). Combien de trames ont été perdues au
+      total&nbsp;? Attention au rebouclage. Écris un <code>awk</code> qui compte automatiquement les trames
+      perdues sur toute une capture.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>On calcule chaque écart, en corrigeant le rebouclage 16 bits (<code>+65536</code> si négatif)&nbsp;:</p>
+        <ul>
+          <li>65504 − 65472 = <strong>32</strong> → 1 cycle, RAS.</li>
+          <li>28 − 65504 = −65476, +65536 = <strong>60</strong> → pas 32&nbsp;! 60/32 ≈ presque 2 cycles.
+          En fait le compteur avance du temps réel écoulé&nbsp;; 60 ≈ 2×32 moins le passage de boucle
+          — arrondi, cela vaut 2 cycles, soit <strong>1 trame perdue</strong>.</li>
+          <li>60 − 28 = <strong>32</strong> → RAS.</li>
+          <li>156 − 60 = <strong>96</strong> = 3 cycles → <strong>2 trames perdues</strong>.</li>
+          <li>188 − 156 = <strong>32</strong> → RAS.</li>
+        </ul>
+        <p>Total&nbsp;: <strong>3 trames perdues</strong> sur l'intervalle. Le passage à zéro (65504 → 28)
+        n'est <em>pas</em> une perte en soi — c'est le rebouclage normal du compteur, qu'il faut corriger sous
+        peine de compter un saut géant. Le script généralisé&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -Y 'pn_rt &amp;&amp; eth.src==00:1b:1b:2a:10:20' \
+      -T fields -e pn_rt.cycle_counter \
+    | awk 'NR&gt;1{d=$1-p; if(d&lt;0)d+=65536; lost+=(d/32)-1}
+           {p=$1} END{printf "trames perdues (total) = %d\n", lost}'
+trames perdues (total) = 3</code></pre>
+        <p>On somme <code>(d/32)−1</code> à chaque pas&nbsp;: 0 quand le cycle est nominal, positif dès qu'il
+        y a un saut. Sur une capture réelle, ce chiffre unique est un excellent indicateur de santé.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Reconstituer un décrochage</h3>
+      <p>Une capture <code>pn.pcap</code> couvre une ligne qui « s'est arrêtée » vers la 12ᵉ seconde.
+      Reconstitue la chronologie de l'incident&nbsp;: repère la station qui décroche, l'instant de l'arrêt
+      cyclique, l'alarme émise, et la tentative de reconnexion du CPU. Puis dis quelles couches tu vérifierais
+      ensuite pour trouver la cause racine.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>1) Localiser le trou et la station.</strong> Une vue d'ensemble situe l'instant, une
+        conversation désigne le coupable&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -q -z io,stat,1,pn_rt   <span class="cmt"># trou à l'intervalle 12→13</span>
+<span class="prompt">$</span> tshark -r pn.pcap -q -z conv,eth          <span class="cmt"># .20 a bien moins de trames que .21</span></code></pre>
+        <p><strong>2) Zoomer sur la fenêtre</strong>, toutes familles Profinet, triées par le temps&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> tshark -r pn.pcap -Y 'frame.time_relative &gt; 11.9 &amp;&amp; frame.time_relative &lt; 12.8' \
+      -T fields -e frame.time_relative -e eth.src -e _ws.col.Info
+11.980  00:1b:1b:2a:10:20  RTC1 ...            <span class="cmt"># derniere trame cyclique de .20</span>
+11.984  00:1b:1b:2a:10:20  Alarm, ModulePulled <span class="cmt"># l'alarme</span>
+12.100  00:1b:1b:2a:10:01  PN-DCP Ident "et200sp-1"  <span class="cmt"># le CPU cherche</span>
+12.140  00:1b:1b:2a:10:20  PN-DCP Ident Ok     <span class="cmt"># reprise de l'AR</span></code></pre>
+        <p><strong>Chronologie&nbsp;:</strong> <code>et200sp-1</code> (<code>.20</code>) émet sa dernière
+        trame cyclique à 11,980&nbsp;s, lève une alarme « module retiré » 4&nbsp;ms plus tard (au-delà du
+        watchdog), reste muet, puis le CPU relance un DCP&nbsp;identify sur son nom à 12,100&nbsp;s et le
+        reconnecte.</p>
+        <p><strong>3) Couches à vérifier ensuite.</strong> L'alarme « module retiré » oriente vers le
+        <strong>matériel du device</strong> (un module mal enclenché, une alim). Mais avant de conclure, on
+        boucle sur les couches basses&nbsp;: <strong>L1/L2</strong> avec <code>ethtool</code> sur le port
+        concerné (duplex, débit, compteurs FCS/CRC — chapitre&nbsp;2) pour écarter un lien half-duplex ou un
+        câble douteux, et on confirme que le <strong>nom de station</strong> est correct (chapitre&nbsp;3) au
+        cas où le device rejoue mal sa reconnexion. Si tout est propre en L1/L2, la cause est bien
+        l'événement matériel signalé par l'alarme.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Anatomie d'une trame Profinet</a>
+    <a class="next" href="chapitre-08.html"><span class="lbl">Suivant →</span>L'anneau MRP</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

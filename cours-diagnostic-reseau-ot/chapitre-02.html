@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — Couche physique &amp; liaison (L1/L2)</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>Couche physique &amp; liaison (L1/L2)</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Lister et nommer les interfaces réseau d'un poste, et lire leur état de lien
+        (<code>UP</code>, <code>LOWER_UP</code>, porteuse) depuis le shell.</li>
+        <li>Diagnostiquer une faute de couche 1 avec <code>ethtool</code> : débit, duplex, auto-négociation —
+        et reconnaître le fameux port Profinet tombé en <strong>10 Mbit/s half-duplex</strong>.</li>
+        <li>Lire les <strong>compteurs d'erreurs matériels</strong> (FCS/CRC, frame, dropped) et distinguer une
+        erreur ponctuelle d'une dérive qui grimpe — signe de bruit EMI ou de câble abîmé.</li>
+        <li>Repérer physiquement le bon port dans l'armoire (LED clignotante), comprendre VLAN 802.1Q, MTU, et
+        traquer un lien qui « flappe ».</li>
+      </ul>
+    </div>
+
+    <h2>1. Lister et nommer les interfaces</h2>
+    <p>Avant de diagnostiquer un lien, il faut savoir <em>lequel</em>. Sur Linux moderne, on n'utilise plus
+    <code>ifconfig</code> mais <code>ip</code>, de la suite <code>iproute2</code>. Pour un inventaire lisible
+    d'un coup d'œil&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip -brief link
+lo               UNKNOWN        00:00:00:00:00:00 &lt;LOOPBACK,UP,LOWER_UP&gt;
+eth0             UP             <span class="hi">b8:27:eb:4a:1c:70</span> &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt;
+enp3s0           DOWN           00:1b:21:8f:33:a2 &lt;BROADCAST,MULTICAST&gt;</code></pre>
+
+    <p>La sortie complète, plus verbeuse, se lit avec <code>ip link</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip link show eth0
+2: eth0: &lt;BROADCAST,MULTICAST,<span class="hi">UP,LOWER_UP</span>&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000
+    link/ether b8:27:eb:4a:1c:70 brd ff:ff:ff:ff:ff:ff</code></pre>
+
+    <p>Trois champs comptent ici. Le mot-clé <code>UP</code> dit que <em>l'administrateur</em> a activé le port
+    (côté logiciel). <code>LOWER_UP</code> dit que la <strong>porteuse est présente</strong> : un câble est
+    branché et le lien physique est établi. Enfin <code>state UP</code> résume l'état effectif. Un port
+    branché mais mal câblé donnera <code>UP</code> sans <code>LOWER_UP</code>, et <code>state DOWN</code>.</p>
+
+    <p>Un mot sur les noms. Le noyau nommait historiquement les cartes <code>eth0</code>, <code>eth1</code>…
+    dans l'ordre de détection — instable d'un boot à l'autre. Les distributions récentes utilisent des
+    <strong>noms prévisibles</strong> dérivés de la position physique&nbsp;: <code>enp3s0</code> = bus PCI 3,
+    slot 0. Sur l'edge Debian tu croiseras souvent ces noms&nbsp;; sur WSL2, l'interface reste
+    <code>eth0</code>. Le cours écrit <code>eth0</code> par convention, remplace-le par le vrai nom
+    (<code>ip -brief link</code>) sur ton matériel.</p>
+
+    <p>Activer un port éteint côté logiciel&nbsp;:</p>
+
+    <pre><code class="language-bash"># Activer / désactiver l'interface (côté administratif)
+sudo ip link set eth0 up
+sudo ip link set eth0 down</code></pre>
+
+    <div class="callout astuce">
+      <p><code>ip -brief link</code> et <code>ip -brief addr</code> sont tes deux réflexes d'entrée : un
+      tableau serré, une interface par ligne. Ajoute <code>-c</code> (<code>ip -c -br link</code>) pour la
+      couleur : les interfaces <code>UP</code> ressortent en vert, tu vois l'état du parc en une seconde.</p>
+    </div>
+
+    <h2>2. L'état du lien : débit, duplex, auto-négociation</h2>
+    <p><code>ip link</code> dit si le lien est là, mais pas <em>à quelle vitesse</em> ni <em>en quel mode</em>.
+    Pour cela, l'outil de référence est <code>ethtool</code>, qui interroge directement le
+    <strong>PHY</strong> (la puce d'interface physique) de la carte&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo ethtool eth0
+Settings for eth0:
+	Supported ports: [ TP ]
+	Supported link modes:   10baseT/Half 10baseT/Full
+	                        100baseT/Half <span class="hi">100baseT/Full</span>
+	                        1000baseT/Full
+	Supported pause frame use: Symmetric
+	Supports auto-negotiation: Yes
+	Advertised link modes:  10baseT/Half 10baseT/Full
+	                        100baseT/Half 100baseT/Full
+	                        1000baseT/Full
+	Advertised auto-negotiation: Yes
+	<span class="hi">Speed: 100Mb/s</span>
+	<span class="hi">Duplex: Full</span>
+	Port: Twisted Pair
+	PHY address: 1
+	Auto-negotiation: on
+	<span class="hi">Link detected: yes</span></code></pre>
+
+    <p>Trois lignes à lire en priorité. <strong>Link detected: yes</strong> confirme la porteuse (équivalent
+    de <code>LOWER_UP</code>). <strong>Speed</strong> et <strong>Duplex</strong> donnent le régime négocié.
+    En Profinet, un port device est <strong>presque toujours 100 Mbit/s Full duplex</strong> : c'est le
+    régime nominal d'un ET&nbsp;200SP, d'un CPU S7-1500 ou d'un port Scalance. Le duplex intégral supprime les
+    collisions ; c'est ce que le temps réel exige.</p>
+
+    <div class="callout piege">
+      <p>Un port tombé en <strong>10 Mbit/s</strong> ou surtout en <strong>Half duplex</strong> est une panne
+      silencieuse&nbsp;: le lien « marche », le ping passe, mais l'auto-négociation a mal tourné — souvent un
+      câble médiocre, une paire coupée, un connecteur oxydé, ou un côté fixé en manuel face à un côté en auto.
+      En half-duplex, l'émission et la réception ne peuvent pas coexister&nbsp;: <strong>collisions,
+      retransmissions, jitter</strong>. Le Profinet RT le déteste — tu verras des IO-devices « clignoter »
+      (Station failure intermittent) sans jamais comprendre pourquoi si tu ne regardes pas Speed/Duplex.</p>
+    </div>
+
+    <p>Quand un lien est douteux, compare le régime <em>négocié</em> (<code>Speed</code>, <code>Duplex</code>)
+    à ce que les deux côtés <em>annoncent</em> (<code>Advertised link modes</code>). Si un côté n'annonce plus
+    le Gigabit alors qu'il le supporte, c'est le symptôme classique d'une paire de cuivre défaillante : la
+    négociation retombe sur le plus petit dénominateur commun.</p>
+
+    <div class="callout plc">
+      <p>Sur le CPU S7-1500, chaque port a un <strong>voyant Link/Activity</strong> vert. Dans TIA Portal, la
+      vue « Diagnostic en ligne » d'un port physique affiche exactement <em>Vitesse de transmission</em> et
+      <em>Mode</em> (Full/Half), et lève un défaut de diagnostic si le lien tombe sous le régime attendu.
+      <code>ethtool</code> est la même information, mais lue <strong>côté poste de diagnostic</strong>, sans
+      ouvrir le projet d'ingénierie ni être en ligne sur l'automate.</p>
+    </div>
+
+    <h2>3. Les compteurs d'erreurs matériels</h2>
+    <p>Un lien « 100 Full, Link yes » peut quand même être malade : il transporte des trames, mais une partie
+    arrive corrompue et se fait jeter. Ces rejets sont comptés par le matériel. Vue synthétique avec
+    <code>ip -s link</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip -s link show eth0
+2: eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000
+    link/ether b8:27:eb:4a:1c:70 brd ff:ff:ff:ff:ff:ff
+    RX:  bytes packets errors dropped  missed   mcast
+    481203344  912774   <span class="hi">2183</span>       0       0   118402
+    TX:  bytes packets errors dropped carrier collsns
+    390115820  874009      0       0       0       0</code></pre>
+
+    <p>Ici <code>RX errors 2183</code> : plus de deux mille trames reçues, jetées à l'entrée. Pour savoir
+    <em>pourquoi</em>, on descend au détail par-compteur du pilote avec <code>ethtool -S</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo ethtool -S eth0 | grep -iE 'err|crc|drop|coll|frame'
+     rx_errors: 2183
+     <span class="hi">rx_crc_errors: 2181</span>
+     rx_frame_errors: 2
+     rx_dropped: 0
+     tx_errors: 0
+     tx_dropped: 0
+     collisions: 0</code></pre>
+
+    <p>Le verdict est net : presque toutes les erreurs sont des <strong>CRC</strong> (contrôle FCS raté). La
+    trame est arrivée abîmée sur le fil — le contenu ne correspond plus à sa somme de contrôle. C'est un
+    problème de <strong>couche physique</strong>, pas de configuration&nbsp;: câble pincé ou trop long, blindage
+    coupé, connecteur RJ45 mal serti, ou <strong>bruit électromagnétique</strong> — un variateur de fréquence
+    qui commute juste à côté du câble dans l'armoire est un coupable classique.</p>
+
+    <div class="callout note">
+      <p>Repères d'interprétation des compteurs RX :</p>
+      <ul>
+        <li><code>rx_crc_errors</code> — trame corrompue (FCS invalide) : câble, blindage, EMI. Le plus parlant en armoire.</li>
+        <li><code>rx_frame_errors</code> — trame de longueur non entière en octets (alignement) : souvent la même cause physique.</li>
+        <li><code>rx_dropped</code> — trame correcte mais jetée faute de ressources (buffers, filtrage) : plutôt un souci système/charge que câble.</li>
+        <li><code>collisions</code> / <code>tx_errors</code> — non nuls sur un lien Full duplex moderne = anomalie de négociation (retour au §2).</li>
+      </ul>
+    </div>
+
+    <h3>La vraie question : est-ce que ça grimpe&nbsp;?</h3>
+    <p>Un compteur à 2183 depuis le dernier boot il y a trois mois n'est pas alarmant : peut-être un
+    débranchement à chaud ancien. Ce qui compte, c'est de savoir s'il <strong>augmente maintenant</strong>. On
+    fait deux relevés espacés et on regarde le <em>delta</em>&nbsp;:</p>
+
+    <div class="callout shell">
+      <p>Relever un compteur, attendre, relever à nouveau, et lire la différence&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> ethtool -S eth0 | awk '/rx_crc_errors/{print $2}'; sleep 10; \
+  ethtool -S eth0 | awk '/rx_crc_errors/{print $2}'
+2181
+<span class="hi">2199</span>          <span class="cmt"># +18 CRC en 10 s → dérive active, câble à suspecter</span></code></pre>
+      <p>Pour surveiller en direct pendant qu'on manipule un câble, la boucle <code>watch</code> rafraîchit
+      chaque seconde et fait clignoter les chiffres qui bougent&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> watch -n1 -d "ethtool -S eth0 | grep -i err"</code></pre>
+      <p>Bouge le câble, tape sur le chemin de câbles, éloigne du variateur : si les CRC s'emballent au geste,
+      tu tiens le coupable physique.</p>
+    </div>
+
+    <p>Un compteur <strong>figé</strong> pendant que la ligne fonctionne = lien sain. Un compteur qui
+    <strong>monte régulièrement</strong> même à faible cadence = dégradation en cours, à corriger avant qu'elle
+    ne provoque des pertes de cycle Profinet.</p>
+
+    <h2>4. Identifier la carte… et le port physique</h2>
+    <p>Quel pilote, quelle puce&nbsp;? <code>ethtool -i</code> le dit — utile pour chercher un bug de driver ou
+    vérifier une version de firmware&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo ethtool -i eth0
+driver: igb
+version: 5.15.0
+firmware-version: 3.25, 0x800005d0
+bus-info: 0000:03:00.0
+supports-statistics: yes</code></pre>
+
+    <p>Mais le problème le plus fréquent en armoire est trivial et pénible : <strong>quel port RJ45 de
+    l'edge</strong>, parmi quatre identiques, est branché sur le CPU&nbsp;? <code>ethtool -p</code> fait
+    <strong>clignoter la LED</strong> du port ciblé pendant N secondes&nbsp;:</p>
+
+    <pre><code class="language-bash"># Faire clignoter la LED du port eth0 pendant 15 s pour le repérer
+sudo ethtool -p eth0 15</code></pre>
+
+    <div class="callout astuce">
+      <p>Devant l'armoire, lance <code>sudo ethtool -p eth0 30</code> et regarde quelle LED clignote
+      anormalement : c'est <em>physiquement</em> ce port-là. Bien plus fiable que de suivre un câble à la main
+      dans un chemin de câbles bondé. Tous les pilotes ne supportent pas <code>-p</code> ; s'il ne se passe
+      rien, retombe sur la méthode « débranchement » de l'exercice&nbsp;3.</p>
+    </div>
+
+    <h2>5. VLAN 802.1Q et MTU</h2>
+    <p>Le Profinet RT circule fréquemment dans un <strong>VLAN tagué 802.1Q</strong>, avec la
+    <strong>priorité 6</strong> (classe temps réel) inscrite dans le champ PCP de la balise — c'est ainsi que
+    les switches Scalance donnent la priorité au trafic cyclique face au reste. Pour voir les détails de
+    couche 2 d'une interface, dont son éventuelle appartenance VLAN, on ajoute <code>-d</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip -d link show eth0.100
+7: eth0.100@eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+    link/ether b8:27:eb:4a:1c:70 brd ff:ff:ff:ff:ff:ff
+    <span class="hi">vlan protocol 802.1Q id 100</span> &lt;REORDER_HDR&gt; ...</code></pre>
+
+    <p>Pour observer ou injecter du trafic dans un VLAN précis depuis le poste de diagnostic, on crée une
+    <strong>sous-interface</strong> tagée&nbsp;:</p>
+
+    <pre><code class="language-bash"># Créer une sous-interface sur le VLAN 100, puis l'activer
+sudo ip link add link eth0 name eth0.100 type vlan id 100
+sudo ip link set eth0.100 up
+
+# La retirer une fois le diagnostic terminé
+sudo ip link delete eth0.100</code></pre>
+
+    <p>Dernier point de couche 2&nbsp;: la <strong>MTU</strong>, visible dans chaque sortie <code>ip link</code>
+    (<code>mtu 1500</code>). Le Profinet cyclique tient dans de petites trames, mais les échanges
+    <em>acycliques</em> (paramétrage d'un device, lecture d'enregistrements, mise à jour) peuvent produire de
+    gros paquets. Un <strong>MTU incohérent</strong> entre deux équipements (l'un à 1500, l'autre bridé plus
+    bas) laisse passer les petites trames et casse silencieusement les grosses : le lien « marche » mais
+    certaines opérations acycliques échouent ou traînent. Vérifie que la MTU est homogène de bout en bout.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 760 190" role="img" aria-label="Chaîne de diagnostic d'un port : le câble RJ45 arrive sur la puce PHY, qui alimente les compteurs matériels ; ip link lit l'état du lien, ethtool lit le débit/duplex du PHY, ethtool -S lit les compteurs.">
+        <!-- Liens -->
+        <line class="link" x1="150" y1="80" x2="250" y2="80"/>
+        <line class="link" x1="410" y1="80" x2="510" y2="80"/>
+        <!-- Noeuds principaux -->
+        <rect class="node" x="30" y="55" width="120" height="50" rx="7" style="stroke:var(--l1)"/>
+        <text class="lbl" x="90" y="77" text-anchor="middle">Câble / RJ45</text>
+        <text class="lbl-s" x="90" y="93" text-anchor="middle" style="fill:var(--l1)">couche 1</text>
+
+        <rect class="node" x="250" y="55" width="160" height="50" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="330" y="77" text-anchor="middle">PHY (puce port)</text>
+        <text class="lbl-s" x="330" y="93" text-anchor="middle" style="fill:var(--l2)">Speed / Duplex / Link</text>
+
+        <rect class="node" x="510" y="55" width="220" height="50" rx="7"/>
+        <text class="lbl" x="620" y="77" text-anchor="middle">Compteurs matériels</text>
+        <text class="lbl-s" x="620" y="93" text-anchor="middle">rx_crc_errors, rx_dropped…</text>
+
+        <!-- Étiquettes outils -->
+        <text class="lbl-s" x="330" y="140" text-anchor="middle" style="fill:var(--accent-2)">ethtool eth0</text>
+        <text class="lbl-s" x="620" y="140" text-anchor="middle" style="fill:var(--accent-2)">ethtool -S eth0</text>
+        <text class="lbl-s" x="90"  y="140" text-anchor="middle" style="fill:var(--accent-2)">ip link (état)</text>
+        <line class="link" x1="90"  y1="105" x2="90"  y2="128" style="stroke:var(--accent-2)"/>
+        <line class="link" x1="330" y1="105" x2="330" y2="128" style="stroke:var(--accent-2)"/>
+        <line class="link" x1="620" y1="105" x2="620" y2="128" style="stroke:var(--accent-2)"/>
+      </svg>
+      <figcaption><b>Figure 2.1.</b> Où chaque commande regarde. Le câble (couche 1) entre dans le
+      <b>PHY</b>, qui négocie débit et duplex et alimente les <b>compteurs matériels</b>. <code>ip link</code>
+      donne l'état administratif et la porteuse ; <code>ethtool</code> lit le régime du PHY ;
+      <code>ethtool -S</code> expose les erreurs comptées par le matériel — trois angles sur le même port.</figcaption>
+    </figure>
+
+    <h2>6. Un lien qui « flappe »</h2>
+    <p>Le pire défaut de couche 1 n'est pas le lien mort, c'est le lien <strong>intermittent</strong> : un
+    connecteur à moitié enclenché, une soudure fatiguée, un câble sectionné par des vibrations. Le lien monte,
+    tombe, remonte — et à chaque cycle le Profinet perd sa connexion IO. Le noyau journalise chaque
+    transition&nbsp;; on la suit en direct avec <code>dmesg -w</code> (mode <em>follow</em>)&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo dmesg -wT | grep -i eth0
+[mar. 03 juil. 2026 14:22:07] igb 0000:03:00.0 eth0: <span class="hi">Link is Down</span>
+[mar. 03 juil. 2026 14:22:09] igb 0000:03:00.0 eth0: <span class="hi">Link is Up</span> 100 Mbps Full Duplex, Flow Control: RX/TX
+[mar. 03 juil. 2026 14:22:41] igb 0000:03:00.0 eth0: Link is Down
+[mar. 03 juil. 2026 14:22:43] igb 0000:03:00.0 eth0: Link is Up 100 Mbps Full Duplex, Flow Control: RX/TX</code></pre>
+
+    <p>Deux coupures en vingt secondes, à intervalle irrégulier : signature typique d'un <strong>contact
+    mécanique intermittent</strong>. L'option <code>-T</code> horodate chaque ligne, ce qui permet de corréler
+    les coupures avec un événement (une machine qui démarre, une porte d'armoire qu'on ferme, une vibration).
+    Croise toujours <code>dmesg</code> avec le §3 : un flap s'accompagne souvent d'une bouffée de
+    <code>rx_crc_errors</code> juste avant que le lien lâche.</p>
+
+    <div class="callout ot">
+      <p>Manipuler un câble ou débrancher un port en production coupe le device Profinet correspondant — et
+      selon le programme, peut figer une partie de process. Sur une installation vivante, on lit d'abord
+      passivement (<code>dmesg</code>, compteurs, <code>ethtool</code> sans rien changer) et on ne débranche
+      qu'après avoir prévenu et sécurisé. Les exercices ci-dessous se font sur banc de test.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Inventaire &amp; état</strong> : <code>ip -brief link</code> pour la liste ;
+        <code>UP</code> = activé côté admin, <code>LOWER_UP</code> = porteuse présente. Activer :
+        <code>sudo ip link set eth0 up</code>.</li>
+        <li><strong>Régime du lien</strong> : <code>ethtool eth0</code> → <code>Speed</code>,
+        <code>Duplex</code>, <code>Link detected</code>. En Profinet on attend <strong>100 Mb/s Full</strong> ;
+        un <strong>10 Mb ou Half</strong> = négo/câble défectueux → jitter et retransmissions.</li>
+        <li><strong>Erreurs matérielles</strong> : <code>ip -s link</code> (vue) et <code>ethtool -S</code>
+        (détail). <code>rx_crc_errors</code> qui monte = physique/EMI/câble. Ce qui compte est le
+        <strong>delta</strong> entre deux relevés, pas la valeur absolue.</li>
+        <li><strong>Repérage</strong> : <code>ethtool -i</code> (pilote), <code>ethtool -p eth0 15</code>
+        (LED clignotante pour trouver le bon port dans l'armoire).</li>
+        <li><strong>Couche 2</strong> : <code>ip -d link</code> montre le VLAN 802.1Q (Profinet RT = priorité 6) ;
+        <code>ip link add … type vlan</code> crée une sous-interface tagée ; une <strong>MTU</strong>
+        incohérente casse silencieusement les gros paquets acycliques.</li>
+        <li><strong>Flapping</strong> : <code>sudo dmesg -wT | grep eth0</code> révèle les
+        <em>Link Up/Down</em> répétés d'un contact intermittent.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Ce port est-il sain&nbsp;?</h3>
+      <p>Sur ton edge Debian, l'interface câblée sur le switch OT s'appelle <code>eth0</code>. Affiche son
+      débit, son duplex et l'état du lien, puis juge si le port est dans le régime attendu pour du Profinet.
+      Qu'est-ce qui te ferait dire « non »&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> sudo ethtool eth0 | grep -E 'Speed|Duplex|Link detected'
+	Speed: 100Mb/s
+	Duplex: Full
+	Link detected: yes</code></pre>
+        <p><strong>100 Mb/s, Full, Link yes</strong> : c'est exactement le régime nominal d'un port Profinet —
+        port sain. Ce qui devrait t'alerter : <code>Speed: 10Mb/s</code> (négociation retombée au plancher,
+        câble suspect), <code>Duplex: Half</code> (collisions garanties, jitter), ou
+        <code>Link detected: no</code> (pas de porteuse — câble débranché ou coupé). Un
+        <code>Speed: 1000Mb/s</code> n'est pas une faute en soi, mais s'il apparaît là où l'ingénierie attend
+        du 100 Full, vérifie que le device et le switch sont d'accord.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Erreur ponctuelle ou dérive&nbsp;?</h3>
+      <p>Un device ET&nbsp;200SP « décroche » par intermittence. Tu suspectes le câble. Relève les erreurs CRC
+      du port, attends, relève à nouveau, et conclus : s'agit-il d'un vieil incident figé ou d'une dégradation
+      active&nbsp;? Donne la commande et le raisonnement.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> ethtool -S eth0 | grep rx_crc_errors; sleep 30; \
+  ethtool -S eth0 | grep rx_crc_errors
+     rx_crc_errors: 40571
+     <span class="hi">rx_crc_errors: 40794</span>     <span class="cmt"># +223 en 30 s</span></code></pre>
+        <p>La valeur absolue (40&nbsp;571) ne dit rien seule : elle a pu s'accumuler sur des mois. Le
+        <strong>delta</strong>, lui, est parlant : <strong>+223 CRC en 30 secondes</strong>, soit une dérive
+        franche et continue → couche physique en cause (câble, blindage, ou EMI d'un variateur voisin). Si le
+        second relevé avait donné exactement 40&nbsp;571 (delta nul), on aurait conclu à un incident
+        <em>ancien</em> et figé, sans rapport avec le décrochage actuel. Pour confirmer visuellement pendant
+        qu'on bouge le câble :</p>
+        <pre class="term"><code><span class="prompt">$</span> watch -n1 -d 'ethtool -S eth0 | grep -i crc'</code></pre>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Quel port va au CPU&nbsp;?</h3>
+      <p>L'edge a quatre ports RJ45 identiques ; tu ne sais pas lequel monte vers le CPU S7-1500
+      (<code>192.168.0.1</code>). Trouve-le de deux façons : d'abord sans rien débrancher, puis par une
+      méthode de repli si la première échoue.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Méthode 1 — LED clignotante (non-intrusive).</strong> Fais clignoter chaque port et regarde
+        l'armoire&nbsp;:</p>
+        <pre><code class="language-bash">sudo ethtool -p eth0 20   # puis eth1, eth2… en observant les LED</code></pre>
+        <p>Le port dont la LED clignote anormalement pendant 20 s est <em>physiquement</em> celui que tu
+        interroges. En suivant son câble jusqu'au switch/CPU, tu identifies le bon lien sans jamais couper le
+        trafic.</p>
+        <p><strong>Méthode 2 — corrélation par débranchement (si <code>-p</code> n'est pas supporté).</strong>
+        Sur banc de test uniquement : lance un suivi du lien, puis débranche/rebranche le câble suspect&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> sudo dmesg -wT | grep -iE 'eth[0-9]'
+[... 14:31:02] igb ... eth2: <span class="hi">Link is Down</span>
+[... 14:31:05] igb ... eth2: <span class="hi">Link is Up</span> 100 Mbps Full Duplex, Flow Control: RX/TX</code></pre>
+        <p>C'est l'interface dont le lien tombe au débranchement (<code>eth2</code> ici) qui porte le câble du
+        CPU. Vérifie en aval que ce segment porte bien <code>192.168.0.1</code>. Cette méthode coupe le
+        Profinet le temps de la manipulation : à réserver au banc, jamais en production sans accord.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Contexte OT/IT &amp; poste de diagnostic</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>Découvrir qui est là, sans IP</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

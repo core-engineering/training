@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Contexte OT/IT &amp; poste de diagnostic</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Contexte OT/IT &amp; poste de diagnostic</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Situer les acteurs d'une cellule d'automatisme : CPU S7-1500, IO-devices, switch managé, anneau MRP, et les protocoles qui circulent.</li>
+        <li>Comprendre ce que « OT » impose de plus que « IT » du point de vue du diagnostic réseau.</li>
+        <li>Mettre en place tes deux postes de diagnostic — WSL2 et edge Debian — et surtout <strong>éviter le piège du NAT WSL2</strong> qui empêche de voir le trafic sur le fil.</li>
+        <li>Installer une fois pour toutes la boîte à outils shell qui servira dans tout le cours.</li>
+      </ul>
+    </div>
+
+    <h2>1. Ce qu'on diagnostique : une cellule d'automatisme</h2>
+    <p>Avant de sortir la moindre commande, il faut une carte mentale de ce qui est branché. Une cellule
+    Siemens typique s'organise autour d'un <strong>CPU S7-1500</strong> qui joue le rôle de <em>contrôleur
+    Profinet</em> (Profinet IO-Controller). Il pilote des <strong>IO-devices</strong> — des périphériques
+    décentralisés comme des stations ET&nbsp;200SP, des variateurs, des îlots de vannes — à travers un ou
+    plusieurs <strong>switches managés</strong> (gamme Scalance, par exemple). Ces switches sont souvent
+    câblés en <strong>anneau</strong> avec le protocole de redondance <strong>MRP</strong>, pour qu'une
+    coupure de câble ne fasse pas tomber la ligne.</p>
+    <p>Par-dessus ce trafic temps réel circulent d'autres flux : la supervision et la configuration
+    (<strong>OPC-UA</strong> vers un serveur, un SCADA, un edge), l'administration des switches
+    (<strong>SNMP</strong>, web), et l'accès depuis le monde bureautique via un <strong>pare-feu IT/OT</strong>.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 820 470" role="img" aria-label="Topologie d'une cellule : un pare-feu IT/OT en haut, trois switches managés A, B et C câblés en anneau MRP, le CPU S7-1500 relié au switch A, deux stations ET 200SP en périphérie, et les deux postes de diagnostic (laptop WSL2 et edge Debian) branchés sur les switches B et C.">
+        <!-- Liens anneau MRP (teal) -->
+        <line class="link" x1="410" y1="152" x2="180" y2="279" style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="410" y1="152" x2="640" y2="279" style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="220" y1="300" x2="600" y2="300" style="stroke:var(--l2);stroke-width:2.5"/>
+        <text class="lbl-s" x="410" y="296" text-anchor="middle" style="fill:var(--l2)">anneau MRP</text>
+        <!-- Liens simples -->
+        <line class="link" x1="410" y1="57"  x2="410" y2="110"/>
+        <line class="link" x1="410" y1="152" x2="410" y2="209"/>
+        <line class="link" x1="150" y1="321" x2="120" y2="389"/>
+        <line class="link" x1="670" y1="321" x2="700" y2="389"/>
+        <line class="link" x1="200" y1="321" x2="300" y2="389"/>
+        <line class="link" x1="620" y1="321" x2="520" y2="389"/>
+        <!-- Noeuds -->
+        <rect class="node" x="350" y="15"  width="120" height="42" rx="7"/>
+        <text class="lbl" x="410" y="41" text-anchor="middle">Pare-feu IT/OT</text>
+        <text class="lbl-s" x="410" y="9"  text-anchor="middle">↑ réseau IT / bureautique</text>
+
+        <rect class="node" x="350" y="110" width="120" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="410" y="131" text-anchor="middle">Switch A</text>
+        <text class="lbl-s" x="410" y="145" text-anchor="middle">MRM (manager)</text>
+
+        <rect class="node" x="90"  y="279" width="120" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="150" y="300" text-anchor="middle">Switch B</text>
+        <text class="lbl-s" x="150" y="314" text-anchor="middle">MRC</text>
+
+        <rect class="node" x="610" y="279" width="120" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="670" y="300" text-anchor="middle">Switch C</text>
+        <text class="lbl-s" x="670" y="314" text-anchor="middle">MRC</text>
+
+        <rect class="node" x="350" y="209" width="120" height="42" rx="7" style="stroke:var(--l7)"/>
+        <text class="lbl" x="410" y="230" text-anchor="middle">CPU S7-1500</text>
+        <text class="lbl-s" x="410" y="244" text-anchor="middle">IO-Controller</text>
+
+        <rect class="node" x="60"  y="389" width="120" height="42" rx="7"/>
+        <text class="lbl" x="120" y="410" text-anchor="middle">ET 200SP</text>
+        <text class="lbl-s" x="120" y="424" text-anchor="middle">IO-device</text>
+
+        <rect class="node" x="640" y="389" width="120" height="42" rx="7"/>
+        <text class="lbl" x="700" y="410" text-anchor="middle">ET 200SP</text>
+        <text class="lbl-s" x="700" y="424" text-anchor="middle">IO-device</text>
+
+        <rect class="node" x="240" y="389" width="120" height="42" rx="7" style="stroke:var(--accent-2)"/>
+        <text class="lbl" x="300" y="410" text-anchor="middle">Laptop WSL2</text>
+        <text class="lbl-s" x="300" y="424" text-anchor="middle">poste A 🔎</text>
+
+        <rect class="node" x="460" y="389" width="120" height="42" rx="7" style="stroke:var(--accent-2)"/>
+        <text class="lbl" x="520" y="410" text-anchor="middle">Edge Debian</text>
+        <text class="lbl-s" x="520" y="424" text-anchor="middle">poste B 🔎</text>
+      </svg>
+      <figcaption><b>Figure 1.1.</b> Une cellule type. Les trois switches managés forment l'<b>anneau MRP</b>
+      (traits teal) ; le <b>Switch A</b> est le <em>Media Redundancy Manager</em>, les autres sont
+      <em>clients</em>. Le CPU pilote les ET&nbsp;200SP en Profinet. Nos deux postes de diagnostic
+      (contours ambre) se branchent sur un port libre d'un switch — d'où l'on observe, capture et scanne.</figcaption>
+    </figure>
+
+    <h2>2. OT n'est pas IT</h2>
+    <p>En informatique de gestion (IT), on optimise le débit et on tolère la latence : un mail qui arrive
+    200&nbsp;ms plus tard, personne ne le remarque. En automatisme (OT, <em>Operational Technology</em>),
+    c'est l'inverse : le trafic Profinet temps réel attend un échange <strong>toutes les 1 à 4&nbsp;ms</strong>,
+    de façon régulière comme un métronome. Ce qui compte, ce n'est pas le débit mais la
+    <strong>régularité</strong> (le <em>jitter</em>) et l'<strong>absence de perte</strong>.</p>
+    <p>Conséquence pour le diagnostic : les réflexes IT peuvent être contre-productifs. Un scan de ports
+    agressif, un « ping de la mort », une tempête de broadcast peuvent perturber un automate qui n'a pas
+    été conçu pour encaisser du trafic parasite. D'où une règle de conduite.</p>
+
+    <div class="callout ot">
+      <p>Sur une installation <strong>en production</strong>, on privilégie toujours l'observation
+      <strong>passive</strong> (capture, LLDP, lecture SNMP) avant toute action active, et on n'exécute un
+      scan ou une écriture DCP qu'en connaissance de cause. Dans ce cours, on travaille sur des
+      <strong>bancs de test</strong> : on peut être agressif sans risque — mais garde ce réflexe pour le
+      terrain.</p>
+    </div>
+
+    <h2>3. Tes deux postes de diagnostic</h2>
+    <p>Tout le cours suppose l'un de ces deux points d'observation, tous deux capables d'accéder au segment
+    Profinet&nbsp;:</p>
+    <ul>
+      <li><strong>Poste A — laptop Windows + WSL2</strong> (Debian ou Ubuntu). C'est le poste du quotidien,
+      transportable, mais avec une subtilité réseau majeure détaillée au §4.</li>
+      <li><strong>Poste B — edge device Debian</strong> déjà câblé dans l'armoire, atteint en
+      <code>ssh</code>. Son interface Ethernet est <em>physiquement</em> sur le réseau machine : la capture
+      couche&nbsp;2 y est directe, sans aucune gymnastique.</li>
+    </ul>
+    <p>Quand une commande se comporte différemment sur l'un ou l'autre, le cours le précisera. Par défaut,
+    tout ce qui suit s'exécute dans un shell Debian/Ubuntu identique sur les deux.</p>
+
+    <h2>4. Le piège WSL2 : le NAT qui cache le fil</h2>
+    <p>Par défaut, WSL2 place ta distribution Linux derrière un <strong>routeur NAT</strong> : Linux reçoit
+    une interface virtuelle (souvent <code>eth0</code> dans un réseau en <code>172.x.x.x</code>) reliée à un
+    switch virtuel Hyper-V, <em>pas</em> à la carte Ethernet physique du laptop. Vérifie-le&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip -brief addr
+lo               UNKNOWN        127.0.0.1/8 ::1/128
+eth0             UP             <span class="hi">172.24.108.3</span>/20 fe80::215:5dff:fe6c:1a2b/64</code></pre>
+
+    <p>Cette adresse en <code>172.x</code> n'est pas celle de ton réseau machine (typiquement
+    <code>192.168.0.x</code> en Profinet). <strong>Conséquence directe :</strong> un <code>tcpdump</code>
+    lancé ici ne verra <em>jamais</em> une trame Profinet du fil — il n'observe que le trafic du switch
+    virtuel WSL. C'est la première source de confusion du débutant : « je capture, mais rien ne passe ».</p>
+
+    <div class="callout piege">
+      <p>En mode NAT, WSL2 ne voit pas les trames de couche&nbsp;2 du réseau physique (Profinet RT, LLDP,
+      DCP, MRP…). Ce ne sont pas des paquets IP routables : le NAT ne peut pas les relayer. Tu peux
+      <em>parfois</em> joindre un automate en IP (si le pare-feu Windows et le routage le permettent), mais
+      tu ne captureras rien de la couche liaison.</p>
+    </div>
+
+    <h3>La solution : le mode réseau « miroir »</h3>
+    <p>Windows 11 (et WSL récent) propose un mode réseau <strong>miroir</strong> (<em>mirrored</em>) qui
+    donne à Linux les <em>mêmes</em> interfaces que Windows — carte Ethernet physique comprise. On l'active
+    dans le fichier <code>.wslconfig</code>, à la racine de ton profil Windows
+    (<code>C:\Users\&lt;toi&gt;\.wslconfig</code>)&nbsp;:</p>
+
+    <pre><code class="language-ini"># C:\Users\&lt;toi&gt;\.wslconfig
+[wsl2]
+networkingMode=mirrored</code></pre>
+
+    <p>Puis, depuis PowerShell, on redémarre le sous-système&nbsp;:</p>
+
+    <pre><code class="language-powershell">wsl --shutdown</code></pre>
+
+    <p>Après redémarrage, <code>ip -brief addr</code> dans WSL montre désormais les interfaces réelles du
+    laptop (par ex. <code>eth3</code> avec l'IP du réseau machine). La capture couche&nbsp;2 devient possible
+    directement dans WSL.</p>
+
+    <div class="callout astuce">
+      <p>Trois façons d'observer le fil depuis un laptop Windows, de la plus simple à la plus lourde&nbsp;:</p>
+      <ol>
+        <li><strong>WSL2 miroir</strong> (ci-dessus) — capture native dans le shell Linux. Le confort maximal.</li>
+        <li><strong>Capturer côté Windows, analyser dans WSL</strong> : Wireshark/Npcap enregistre un
+        <code>.pcap</code>, que tu ouvres ensuite avec <code>tshark -r capture.pcap</code> dans WSL. Marche
+        même sans mode miroir.</li>
+        <li><strong>Adaptateur USB-Ethernet dédié</strong> passé à WSL via <code>usbipd-win</code> : Linux
+        pilote directement une carte réseau. Utile pour isoler un segment.</li>
+      </ol>
+    </div>
+
+    <div class="callout note">
+      <p>Sur l'<strong>edge Debian</strong>, rien de tout cela : <code>eth0</code> (ou son vrai nom, cf.
+      chapitre&nbsp;2) est la carte physique branchée sur le switch. <code>tcpdump -i eth0</code> voit le
+      Profinet immédiatement. Quand tu as le choix et que tu veux capturer du temps réel, l'edge est le
+      poste le plus sûr.</p>
+    </div>
+
+    <h2>5. Installer la boîte à outils</h2>
+    <p>Une seule session d'installation suffit pour tout le cours. Sur Debian/Ubuntu (WSL comme edge)&nbsp;:</p>
+
+    <pre><code class="language-bash"># Mettre à jour l'index des paquets
+sudo apt update
+
+# Couches basses & capture
+sudo apt install -y iproute2 ethtool tcpdump tshark
+
+# Découverte & scan
+sudo apt install -y lldpd nmap arp-scan
+
+# Supervision & MIB SNMP
+sudo apt install -y snmp snmp-mibs-downloader
+
+# Outils Profinet & OPC-UA en Python
+sudo apt install -y python3-pip
+pip install --user pnio-dcp asyncua</code></pre>
+
+    <p>Deux points d'attention à l'installation&nbsp;:</p>
+    <ul>
+      <li><strong><code>tshark</code></strong> demande si les utilisateurs non-root peuvent capturer
+      (« <em>Should non-superusers be able to capture packets?</em> »). Réponds <strong>Oui</strong> pour
+      éviter de tout lancer en <code>sudo</code> — cela configure les capacités sur <code>dumpcap</code>.</li>
+      <li><strong><code>lldpd</code></strong> est un démon : une fois installé, il tourne en tâche de fond et
+      collecte les voisins LLDP. On l'interrogera avec <code>lldpctl</code> au chapitre&nbsp;3.</li>
+    </ul>
+
+    <div class="callout shell">
+      <p>Vérifie que l'essentiel répond, sans privilège particulier&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> ip -V; tshark -v | head -1; nmap --version | head -1
+ip utility, iproute2-6.1.0
+TShark (Wireshark) 4.2.2
+Nmap version 7.94 ( https://nmap.org )</code></pre>
+    </div>
+
+    <div class="callout plc">
+      <p>Côté S7-1500, la plupart de ces observations ont un équivalent dans TIA Portal (vue « Diagnostic
+      en ligne », « Topologie », serveur web du CPU). L'intérêt du shell Linux&nbsp;: il est
+      <strong>non-intrusif</strong>, scriptable, indépendant du fabricant, et il voit le réseau <em>tel
+      qu'il est réellement sur le fil</em> — pas la vue qu'en donne l'ingénierie. Les deux sont
+      complémentaires : TIA pour la configuration attendue, le shell pour la réalité mesurée.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Une cellule = un <strong>CPU S7-1500</strong> (IO-Controller) pilotant des <strong>IO-devices</strong>
+        via des <strong>switches managés</strong>, souvent en <strong>anneau MRP</strong> ; par-dessus, OPC-UA,
+        SNMP et l'uplink IT.</li>
+        <li>En <strong>OT</strong>, on juge la <strong>régularité</strong> et l'<strong>absence de perte</strong>,
+        pas le débit ; en production, on observe passivement avant d'agir.</li>
+        <li>Deux postes : <strong>WSL2</strong> (mobile) et <strong>edge Debian</strong> (câblé, capture directe).</li>
+        <li><strong>Piège WSL2</strong> : le NAT par défaut cache le fil. Solution = mode réseau
+        <strong>miroir</strong> (<code>.wslconfig</code> → <code>networkingMode=mirrored</code> → <code>wsl --shutdown</code>),
+        ou capturer côté Windows et lire le <code>.pcap</code> dans WSL.</li>
+        <li>Boîte à outils installée une fois : <code>iproute2</code>, <code>ethtool</code>, <code>tcpdump</code>,
+        <code>tshark</code>, <code>lldpd</code>, <code>nmap</code>, <code>arp-scan</code>, <code>snmp</code>,
+        plus <code>pnio-dcp</code> et <code>asyncua</code>.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Suis-je derrière un NAT&nbsp;?</h3>
+      <p>Sur ton poste (WSL2 ou edge), affiche tes interfaces et détermine si l'adresse IP que tu vois
+      correspond au réseau machine attendu (par ex. <code>192.168.0.0/24</code>) ou à un réseau NAT WSL
+      (<code>172.16.0.0/12</code>). Quelle commande, et comment conclure&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> ip -brief addr
+lo     UNKNOWN  127.0.0.1/8 ::1/128
+eth0   UP       172.24.108.3/20 ...</code></pre>
+        <p>Une adresse en <code>172.16–172.31.x</code> avec un masque <code>/20</code> et un nom d'interface
+        <code>eth0</code> unique est la signature du <strong>NAT WSL2</strong> : tu ne verras pas le fil. Une
+        adresse dans le plan machine (ex. <code>192.168.0.50/24</code>) sur une interface qui porte le nom du
+        matériel indique que tu es <strong>sur le segment</strong> — cas normal de l'edge, ou d'un WSL en
+        mode miroir. En cas de doute, un <code>tcpdump -c 5 -i eth0</code> qui ne capture <em>que</em> ton
+        propre trafic (et aucune trame Profinet ni LLDP) confirme le NAT.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Passer WSL2 en mode miroir</h3>
+      <p>(Poste A uniquement.) Configure WSL2 pour qu'il expose les interfaces physiques du laptop, applique
+      le changement, et vérifie que l'interface Ethernet du réseau machine apparaît désormais dans Linux.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Créer ou éditer <code>C:\Users\&lt;toi&gt;\.wslconfig</code>&nbsp;:</p>
+        <pre><code class="language-ini">[wsl2]
+networkingMode=mirrored</code></pre>
+        <p>Depuis PowerShell&nbsp;: <code>wsl --shutdown</code>, puis rouvrir WSL. Vérifier&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> ip -brief addr | grep -v 172\\.
+eth3   UP       192.168.0.71/24 ...</code></pre>
+        <p>L'apparition d'une interface portant l'IP du plan machine (ici <code>192.168.0.71</code>) confirme
+        le succès. Si rien n'a changé, vérifie la version de Windows (le mode miroir demande Windows&nbsp;11
+        22H2 ou plus récent) et que <code>.wslconfig</code> est bien à la racine de ton profil.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Vérifier la boîte à outils</h3>
+      <p>Installe la boîte à outils, puis écris une seule ligne de commande qui affiche la version de
+      <code>tshark</code>, <code>nmap</code> et <code>lldpd</code>, pour confirmer d'un coup d'œil que les
+      trois répondent.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> for t in tshark nmap lldpd; do "$t" -v 2>&amp;1 | head -1; done
+TShark (Wireshark) 4.2.2
+Nmap version 7.94 ( https://nmap.org )
+lldpd 1.0.16</code></pre>
+        <p>La boucle <code>for</code> évite de répéter la commande. On redirige <code>2&gt;&amp;1</code> car
+        certains outils écrivent leur version sur la sortie d'erreur, et <code>head -1</code> ne garde que la
+        première ligne. Si l'un des trois manque, <code>command -v tshark</code> confirme s'il est installé et
+        dans le <code>PATH</code>.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="index.html"><span class="lbl">← Précédent</span>Sommaire</a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>Couche physique &amp; liaison (L1/L2)</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

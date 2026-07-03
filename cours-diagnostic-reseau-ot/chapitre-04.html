@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — Adressage, ARP, routage</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>Adressage, ARP, routage</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Voir et poser une adresse IP avec <code>ip addr</code>, pour se placer dans le <strong>bon plan</strong> de la cellule.</li>
+        <li>Comprendre le <strong>routage</strong> (<code>ip route</code>) et pourquoi joindre un device hors subnet passe par la passerelle.</li>
+        <li>Manier <strong>ARP</strong> (<code>ip neigh</code>) — le pont entre l'IP et la MAC — et tester la joignabilité par <code>ping</code> <em>et</em> <code>arping</code>.</li>
+        <li>Diagnostiquer les fautes IP classiques en OT, au premier rang desquelles le redoutable <strong>doublon d'adresse IP</strong>.</li>
+      </ul>
+    </div>
+
+    <h2>1. Voir et poser une adresse</h2>
+    <p>Avant de tester quoi que ce soit, il faut savoir où l'on est. La commande de référence est
+    <code>ip addr show</code>, mais pour un coup d'œil rapide on préfère la vue condensée
+    <code>ip -brief addr</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip -brief addr
+lo               UNKNOWN        127.0.0.1/8 ::1/128
+eth0             UP             <span class="hi">192.168.0.71</span>/24 fe80::215:5dff:fe6c:1a2b/64</code></pre>
+
+    <p>Ici l'interface <code>eth0</code> est bien dans le plan de la cellule (<code>192.168.0.0/24</code>).
+    Si ce n'est pas le cas — par exemple parce qu'on vient de brancher un poste neuf — on ajoute une adresse
+    dans le bon subnet&nbsp;:</p>
+
+    <pre><code class="language-bash"># Se placer dans le plan machine 192.168.0.0/24
+sudo ip addr add 192.168.0.71/24 dev eth0
+
+# Vérifier
+ip -brief addr show eth0
+
+# Retirer l'adresse quand on a fini
+sudo ip addr del 192.168.0.71/24 dev eth0</code></pre>
+
+    <p>Le <code>/24</code> n'est pas décoratif&nbsp;: c'est lui qui dit à Linux « toutes les adresses
+    <code>192.168.0.1</code> à <code>192.168.0.254</code> sont sur mon lien local, joignables directement ».
+    Sans le bon masque, l'automate voisin devient un inconnu à router.</p>
+
+    <div class="callout piege">
+      <p>Sur un <strong>WSL2 en mode NAT</strong> (cf. chapitre&nbsp;1), poser une adresse
+      <code>192.168.0.71</code> avec <code>ip addr add</code> <em>ne suffit pas</em> à voir le fil&nbsp;: la
+      trame ne sort jamais de la carte physique. Cette section suppose que tu es sur l'<strong>edge</strong>
+      ou sur un WSL en <strong>mode miroir</strong>. Poser une IP donne l'illusion d'être connecté ; seul le
+      trafic réel (§4) le confirme.</p>
+    </div>
+
+    <div class="callout ot">
+      <p>Poser une adresse déjà utilisée sur le segment, c'est <strong>créer un doublon</strong> — la faute
+      OT la plus perturbante (§5). Avant tout <code>ip addr add</code> sur une installation vivante,
+      vérifie que l'IP visée est libre&nbsp;: un <code>arping -D</code> (§5) tranche la question en deux
+      secondes. Ne jamais «&nbsp;prendre&nbsp;» une IP au hasard sur un réseau de production.</p>
+    </div>
+
+    <h2>2. Le routage : rester local ou passer la passerelle</h2>
+    <p>Quand Linux doit émettre un paquet, il consulte sa <strong>table de routage</strong>. On la lit
+    avec <code>ip route</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip route
+default via 192.168.0.240 dev eth0 <span class="cmt"># passerelle par défaut (le Scalance/routeur)</span>
+192.168.0.0/24 dev eth0 proto kernel scope link src 192.168.0.71</code></pre>
+
+    <p>Deux entrées, deux logiques&nbsp;:</p>
+    <ul>
+      <li>La ligne <code>192.168.0.0/24 … scope link</code> dit&nbsp;: «&nbsp;pour toute IP de ce subnet, je
+      parle <strong>directement</strong> sur <code>eth0</code>&nbsp;» — c'est le cas du CPU
+      (<code>192.168.0.1</code>) et des ET&nbsp;200SP.</li>
+      <li>La ligne <code>default via 192.168.0.240</code> dit&nbsp;: «&nbsp;pour tout le reste
+      (une IP <em>hors</em> de mon subnet), j'envoie au <strong>routeur</strong> <code>192.168.0.240</code>,
+      qui saura relayer&nbsp;».</li>
+    </ul>
+
+    <p>Pour atteindre un autre segment de la cellule — mettons un banc d'essai en
+    <code>192.168.10.0/24</code> derrière le Scalance <code>.240</code> — on ajoute une route explicite&nbsp;:</p>
+
+    <pre><code class="language-bash"># Joindre le segment 192.168.10.0/24 via le Scalance .240
+sudo ip route add 192.168.10.0/24 via 192.168.0.240
+
+# Retirer la route
+sudo ip route del 192.168.10.0/24</code></pre>
+
+    <div class="callout astuce">
+      <p>Retiens la règle du «&nbsp;même quartier&nbsp;»&nbsp;: deux IP dans le <strong>même subnet</strong>
+      se parlent en direct (ARP + trame Ethernet, couche&nbsp;2). Deux IP dans des subnets
+      <strong>différents</strong> ne se voient pas&nbsp;: il faut un <strong>routeur</strong> (couche&nbsp;3)
+      pour faire le pont. En OT, ce routeur est très souvent aussi le <strong>pare-feu IT/OT</strong> — d'où
+      des blocages qui ne sont pas des pannes, mais des règles.</p>
+    </div>
+
+    <p>C'est la raison pour laquelle un ping vers un device «&nbsp;hors quartier&nbsp;» peut échouer même si
+    tout fonctionne&nbsp;: le paquet part bien vers la passerelle, mais le pare-feu OT décide de ne pas le
+    relayer. Diagnostiquer, ici, c'est distinguer «&nbsp;pas de route&nbsp;», «&nbsp;route mais filtré&nbsp;»
+    et «&nbsp;device réellement absent&nbsp;».</p>
+
+    <h2>3. ARP, le pont L2 ↔ L3</h2>
+    <p>Sur un même subnet, l'IP ne suffit pas à livrer une trame&nbsp;: Ethernet ne connaît que les
+    <strong>adresses MAC</strong>. Le protocole <strong>ARP</strong> (<em>Address Resolution Protocol</em>)
+    fait la traduction. Quand ton poste veut parler à <code>192.168.0.1</code>, il crie en broadcast
+    «&nbsp;qui a 192.168.0.1&nbsp;? dis-moi ta MAC&nbsp;», et le CPU répond «&nbsp;c'est moi,
+    <code>00:1b:1b:2a:10:01</code>&nbsp;». Le résultat est mis en cache dans la <strong>table des
+    voisins</strong>, qu'on lit avec <code>ip neigh</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip neigh
+192.168.0.1    dev eth0 lladdr 00:1b:1b:2a:10:01 <span class="hi">REACHABLE</span>
+192.168.0.20   dev eth0 lladdr 00:1b:1b:2a:10:20 <span class="hi">STALE</span>
+192.168.0.21   dev eth0 lladdr 00:1b:1b:2a:10:21 REACHABLE
+192.168.0.240  dev eth0 lladdr 00:1b:1b:2a:10:f0 STALE</code></pre>
+
+    <p>Chaque ligne associe une <strong>IP</strong> à une <strong>MAC</strong> (<code>lladdr</code>) et porte
+    un <strong>état</strong>&nbsp;:</p>
+    <ul>
+      <li><strong>REACHABLE</strong> — le voisin a répondu récemment, l'entrée est fraîche et fiable.</li>
+      <li><strong>STALE</strong> — l'entrée est connue mais vieillissante&nbsp;; elle sera revalidée au
+      prochain trafic. Ce n'est <em>pas</em> une panne, juste un cache qui refroidit.</li>
+      <li><strong>DELAY</strong> / <strong>PROBE</strong> — états transitoires&nbsp;: le noyau est en train de
+      re-sonder le voisin.</li>
+      <li><strong>FAILED</strong> — personne n'a répondu à l'ARP&nbsp;: l'IP ne correspond à aucune MAC sur
+      le lien. Là, c'est un vrai signal d'absence.</li>
+    </ul>
+
+    <p>Pour forcer une re-résolution — par exemple après avoir remplacé un équipement, donc changé la MAC
+    derrière une IP — on vide la table&nbsp;:</p>
+
+    <pre><code class="language-bash"># Purger toute la table des voisins sur eth0
+sudo ip neigh flush dev eth0
+
+# Ou une seule entrée
+sudo ip neigh flush 192.168.0.20</code></pre>
+
+    <div class="callout note">
+      <p>Un cache ARP obsolète est un piège de diagnostic classique&nbsp;: on a remplacé une ET&nbsp;200SP,
+      la nouvelle a la même IP mais une nouvelle MAC, et le poste continue de parler à l'ancienne MAC tant
+      que l'entrée n'a pas expiré. Après tout remplacement de matériel, un <code>ip neigh flush</code>
+      remet les compteurs à zéro.</p>
+    </div>
+
+    <h2>4. Tester la joignabilité : ping, mais pas seulement</h2>
+    <p>Le réflexe est le <code>ping</code>, qui envoie des paquets ICMP <em>echo request</em> et attend
+    l'<em>echo reply</em>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ping -c4 192.168.0.1
+PING 192.168.0.1 (192.168.0.1) 56(84) bytes of data.
+64 bytes from 192.168.0.1: icmp_seq=1 ttl=255 time=0.42 ms
+64 bytes from 192.168.0.1: icmp_seq=2 ttl=255 time=0.38 ms
+64 bytes from 192.168.0.1: icmp_seq=3 ttl=255 time=0.40 ms
+64 bytes from 192.168.0.1: icmp_seq=4 ttl=255 time=0.39 ms
+
+--- 192.168.0.1 ping statistics ---
+4 packets transmitted, 4 received, <span class="hi">0% packet loss</span>, time 3051ms
+rtt min/avg/max/mdev = 0.380/0.397/0.420/0.015 ms</code></pre>
+
+    <p>Quelques options utiles au diagnostic OT&nbsp;:</p>
+    <ul>
+      <li><code>-c4</code> — s'arrêter après 4 paquets (sinon, boucle infinie&nbsp;: <kbd>Ctrl</kbd>+<kbd>C</kbd> pour couper).</li>
+      <li><code>-i 0.2</code> — intervalle entre paquets (par défaut 1&nbsp;s). Utile pour resserrer un test, mais reste modéré en production.</li>
+      <li><code>-s 1400</code> — taille de charge utile, pour éprouver la fragmentation / le MTU d'un lien.</li>
+      <li><code>-W 1</code> — timeout d'attente d'une réponse, en secondes&nbsp;: raccourcit le verdict sur un device muet.</li>
+    </ul>
+
+    <p>Mais voici le piège central de l'OT&nbsp;: <strong>beaucoup d'équipements industriels ne répondent pas
+    à l'ICMP</strong>. Pile réseau minimaliste, ICMP désactivé, ou pare-feu qui le filtre&nbsp;: le device
+    est bien là, parfaitement fonctionnel en Profinet, mais un <code>ping</code> le déclare «&nbsp;injoignable&nbsp;».
+    Conclure une panne sur ce seul silence est une <strong>erreur de débutant</strong>.</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ping -c3 192.168.0.20
+PING 192.168.0.20 (192.168.0.20) 56(84) bytes of data.
+
+--- 192.168.0.20 ping statistics ---
+3 packets transmitted, <span class="hi">0 received</span>, 100% packet loss, time 2043ms</code></pre>
+
+    <p>La vraie question n'est pas «&nbsp;répond-il à l'ICMP&nbsp;?&nbsp;» mais «&nbsp;est-il présent sur le
+    lien&nbsp;?&nbsp;». Pour cela on descend d'une couche&nbsp;: <code>arping</code> envoie une requête
+    <strong>ARP</strong> (couche&nbsp;2) et attend une réponse ARP. Or <em>tout</em> équipement IP qui
+    possède l'adresse <strong>doit</strong> répondre à l'ARP pour exister sur le réseau&nbsp;— ICMP filtré
+    ou pas&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo arping -I eth0 -c3 192.168.0.20
+ARPING 192.168.0.20 from 192.168.0.71 eth0
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:20]  0.703ms
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:20]  0.688ms
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:20]  0.691ms
+Sent 3 probes (1 broadcast(s))
+Received 3 response(s)</code></pre>
+
+    <p>Verdict&nbsp;: la station <code>.20</code> est <strong>bel et bien là</strong>, elle répond en L2 avec
+    sa MAC <code>00:1b:1b:2a:10:20</code>. Le <code>ping</code> muet ne signifiait qu'une chose&nbsp;: son
+    ICMP est filtré. Le lien est sain.</p>
+
+    <div class="callout piege">
+      <p>Un <code>ping</code> sans réponse en OT ne veut <strong>pas</strong> dire «&nbsp;device absent&nbsp;».
+      Beaucoup d'automates, capteurs et modules I/O ne répondent pas à l'ICMP par conception. Avant de
+      conclure à une panne, fais un <code>arping -I eth0 &lt;ip&gt;</code>&nbsp;: une réponse ARP prouve la
+      présence sur le lien, même si l'ICMP est fermé.</p>
+    </div>
+
+    <div class="callout shell">
+      <p>Combo de terrain pour trancher «&nbsp;présent ou pas&nbsp;»&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> ping -c2 -W1 192.168.0.20 || sudo arping -I eth0 -c2 192.168.0.20</code></pre>
+      <p>Si le <code>ping</code> échoue, le <code>arping</code> prend le relais et donne le verdict L2. Deux
+      réponses ARP = joignable&nbsp;; zéro = vraie absence (à confirmer par câble/port au chapitre&nbsp;2).</p>
+    </div>
+
+    <h2>5. Le doublon d'IP, faute OT emblématique</h2>
+    <p>Voici la panne qui rend fou. Deux équipements portent la <strong>même adresse IP</strong> sur le même
+    segment&nbsp;— typiquement une ET&nbsp;200SP de rechange configurée avec l'IP de celle qu'elle devait
+    remplacer, mais l'ancienne est restée branchée. Le symptôme&nbsp;: comportement <strong>erratique</strong>.
+    Le CPU perd puis retrouve la station, les échanges Profinet claquent par intermittence, le ping répond
+    «&nbsp;une fois sur deux&nbsp;» avec des temps qui sautent — parce que c'est tantôt un équipement, tantôt
+    l'autre qui répond.</p>
+
+    <p>La cause profonde est au niveau ARP&nbsp;: deux MAC différentes revendiquent la même IP. La table des
+    voisins <strong>oscille</strong>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip neigh show 192.168.0.20
+192.168.0.20 dev eth0 lladdr <span class="hi">00:1b:1b:2a:10:20</span> REACHABLE
+<span class="cmt"># quelques secondes plus tard…</span>
+<span class="prompt">$</span> ip neigh show 192.168.0.20
+192.168.0.20 dev eth0 lladdr <span class="hi">00:1b:1b:2a:10:aa</span> STALE</code></pre>
+
+    <p>La MAC associée à <code>.20</code> a changé entre deux lectures&nbsp;: signal d'alerte. Pour
+    <strong>confirmer</strong> franchement le doublon, on utilise la <em>Duplicate Address Detection</em> de
+    <code>arping</code> avec l'option <code>-D</code>. Elle sonde l'IP et signale toute réponse&nbsp;;
+    lorsqu'<strong>on</strong> ne porte pas l'IP, deux MAC différentes qui répondent = doublon avéré&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo arping -D -I eth0 -c3 192.168.0.20
+ARPING 192.168.0.20 from 0.0.0.0 eth0
+Unicast reply from 192.168.0.20 [<span class="hi">00:1B:1B:2A:10:20</span>]  0.71ms
+Unicast reply from 192.168.0.20 [<span class="hi">00:1B:1B:2A:10:AA</span>]  0.83ms
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:20]  0.69ms
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:AA]  0.80ms
+Sent 3 probes (3 broadcast(s))
+Received 4 response(s)  <span class="hi">← plus de réponses que de sondes : DEUX répondeurs</span></code></pre>
+
+    <p>Le diagnostic est sans appel&nbsp;: <strong>une seule IP, deux MAC</strong>
+    (<code>…:10:20</code> et <code>…:10:AA</code>) répondent. Il y a bien deux équipements physiques qui se
+    disputent <code>192.168.0.20</code>. Le nombre de réponses supérieur au nombre de sondes est un indice
+    immédiat.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 760 300" role="img" aria-label="Schéma d'un doublon d'IP : un poste de diagnostic envoie une requête ARP « qui a 192.168.0.20 ? » sur le switch, et deux stations ET 200SP portant la même IP mais des MAC différentes répondent toutes les deux.">
+        <!-- Switch central -->
+        <rect class="node" x="320" y="40" width="120" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="380" y="61" text-anchor="middle">Switch</text>
+        <text class="lbl-s" x="380" y="75" text-anchor="middle">segment OT</text>
+
+        <!-- Poste diag -->
+        <rect class="node" x="320" y="220" width="120" height="42" rx="7" style="stroke:var(--accent-2)"/>
+        <text class="lbl" x="380" y="241" text-anchor="middle">Poste diag</text>
+        <text class="lbl-s" x="380" y="255" text-anchor="middle">.71 🔎</text>
+        <line class="link" x1="380" y1="82" x2="380" y2="220"/>
+        <text class="lbl-s" x="392" y="155" style="fill:var(--accent)">who has .20 ?</text>
+
+        <!-- Répondeur A -->
+        <rect class="node" x="70" y="120" width="150" height="52" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl" x="145" y="141" text-anchor="middle">ET 200SP #1</text>
+        <text class="lbl-s" x="145" y="157" text-anchor="middle">IP .20 · MAC …10:20</text>
+        <line class="link-hot" x1="220" y1="140" x2="320" y2="70"/>
+        <text class="lbl-s" x="255" y="95" style="fill:var(--danger)">« c'est moi »</text>
+
+        <!-- Répondeur B -->
+        <rect class="node" x="540" y="120" width="150" height="52" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl" x="615" y="141" text-anchor="middle">ET 200SP #2</text>
+        <text class="lbl-s" x="615" y="157" text-anchor="middle">IP .20 · MAC …10:AA</text>
+        <line class="link-hot" x1="540" y1="140" x2="440" y2="70"/>
+        <text class="lbl-s" x="470" y="95" text-anchor="middle" style="fill:var(--danger)">« non, c'est moi »</text>
+      </svg>
+      <figcaption><b>Figure 4.1.</b> Le doublon d'IP&nbsp;: une seule requête ARP «&nbsp;qui a
+      <code>192.168.0.20</code>&nbsp;?&nbsp;» déclenche <b>deux</b> réponses avec des MAC différentes
+      (contours rouges). <code>arping -D</code> rend cette collision visible ; le CPU, lui, la vit comme une
+      station qui apparaît et disparaît.</figcaption>
+    </figure>
+
+    <p>D'autres indices convergents, à corréler&nbsp;:</p>
+    <ul>
+      <li>Le noyau lui-même le remarque parfois, dans <code>dmesg</code>&nbsp;:</li>
+    </ul>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo dmesg | grep -i "using our"
+[ 8123.44] eth0: <span class="hi">IPv4 duplicate address 192.168.0.20 detected!</span>
+[ 8123.44] arp: 192.168.0.20 <span class="hi">using our address on eth0</span></code></pre>
+
+    <ul>
+      <li>Un scan ARP du segment liste <strong>deux MAC pour la même IP</strong>&nbsp;:</li>
+    </ul>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo arp-scan -I eth0 192.168.0.0/24 | grep 192.168.0.20
+192.168.0.20   00:1b:1b:2a:10:20   Siemens AG
+192.168.0.20   00:1b:1b:2a:10:aa   (Unknown)   <span class="hi">← doublon</span></code></pre>
+
+    <div class="callout shell">
+      <p>La commande qui tranche un doublon, à connaître par cœur&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> sudo arping -D -I eth0 -c5 192.168.0.20</code></pre>
+      <p>Plus de réponses que de sondes, ou des MAC qui alternent&nbsp;: doublon confirmé. Une seule MAC
+      répétée&nbsp;: pas de doublon, l'IP est bien portée par un seul équipement.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>Côté S7-1500, un doublon d'IP se signale dans le tampon de diagnostic et sur l'IHM par un message
+      explicite de type «&nbsp;<strong>conflit d'adresse IP</strong>&nbsp;» / <em>IP address already used</em>,
+      souvent accompagné d'une perte intermittente de la station Profinet concernée. Quand TIA Portal crie au
+      conflit et que ton <code>arping -D</code> montre deux MAC, tu tiens la même vérité par les deux
+      bouts&nbsp;: reste à débrancher physiquement l'intrus (identifié par sa MAC).</p>
+    </div>
+
+    <div class="callout ot">
+      <p>La bonne pratique préventive&nbsp;: <strong>jamais poser une IP sans l'avoir testée</strong>. Un
+      <code>arping -D -I eth0 &lt;ip&gt;</code> qui ne renvoie <em>aucune</em> réponse confirme que l'adresse
+      est libre. Une seule habitude qui évite la moitié des doublons créés lors des remplacements de
+      matériel.</p>
+    </div>
+
+    <h2>6. traceroute vers l'IT : voir où ça bloque</h2>
+    <p>Quand on veut joindre un serveur du côté IT (supervision, historian, mise à jour) à travers le
+    pare-feu OT, et que ça ne passe pas, <code>traceroute</code> montre le chemin sauté par sauté et
+    <em>où</em> il s'arrête&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> traceroute 192.168.100.10
+traceroute to 192.168.100.10 (192.168.100.10), 30 hops max, 60 byte packets
+ 1  192.168.0.240 (192.168.0.240)  0.51 ms  0.44 ms  0.47 ms   <span class="cmt"># passerelle OT</span>
+ 2  <span class="hi">* * *</span>                                             <span class="cmt"># pare-feu : silence</span>
+ 3  <span class="hi">* * *</span>
+ 4  <span class="hi">* * *</span></code></pre>
+
+    <p>Lecture&nbsp;: le premier saut (la passerelle <code>.240</code>) répond&nbsp;; ensuite, des
+    <code>* * *</code> — le pare-feu IT/OT ne laisse pas passer, ou n'autorise pas ICMP/UDP sur ce trajet.
+    Ce n'est pas forcément une panne&nbsp;: c'est souvent une <strong>règle</strong> qui fait exactement son
+    travail. L'information utile est «&nbsp;ça meurt au saut&nbsp;2, donc au pare-feu&nbsp;», pas sur le
+    câble ni sur le serveur cible.</p>
+
+    <p>Pour un diagnostic vivant et continu, <code>mtr</code> combine <code>traceroute</code> et
+    <code>ping</code> dans un tableau qui se met à jour&nbsp;: on repère d'un coup d'œil le saut où la
+    perte grimpe.</p>
+
+    <pre><code class="language-bash"># Rapport mtr non-interactif, 10 cycles
+mtr --report --report-cycles 10 192.168.100.10</code></pre>
+
+    <div class="callout astuce">
+      <p>Si <code>traceroute</code> meurt au premier saut (même la passerelle ne répond pas), le problème est
+      <strong>local</strong> — route absente, mauvais masque, mauvais subnet. S'il meurt <em>après</em> la
+      passerelle, le problème est <strong>en amont</strong> — pare-feu ou routage IT. Ce simple «&nbsp;avant
+      ou après la passerelle&nbsp;?&nbsp;» oriente la moitié du dépannage L3.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Adresse</strong> : <code>ip -brief addr</code> pour voir, <code>sudo ip addr add
+        192.168.0.71/24 dev eth0</code> pour se placer dans le plan machine, <code>ip addr del</code> pour
+        retirer. Le masque <code>/24</code> définit qui est «&nbsp;local&nbsp;».</li>
+        <li><strong>Routage</strong> : <code>ip route</code>&nbsp;; même subnet = direct (L2), autre subnet =
+        via la <strong>passerelle/pare-feu</strong> (L3). <code>ip route add … via …</code> pour un autre segment.</li>
+        <li><strong>ARP</strong> : <code>ip neigh</code> traduit IP → MAC. États <em>REACHABLE</em> (frais),
+        <em>STALE</em> (à revalider), <em>FAILED</em> (personne). <code>ip neigh flush</code> force une
+        re-résolution après remplacement.</li>
+        <li><strong>Joignabilité</strong> : <code>ping -c4</code> d'abord, mais l'<strong>ICMP est souvent
+        filtré</strong> en OT&nbsp;: <code>arping -I eth0</code> prouve la présence en L2 même sans réponse ICMP.</li>
+        <li><strong>Doublon d'IP</strong> : <code>sudo arping -D -I eth0 &lt;ip&gt;</code> — deux MAC pour une
+        IP = doublon. Corréler avec <code>ip neigh</code> qui oscille, <code>dmesg</code>
+        («&nbsp;duplicate address&nbsp;»), <code>arp-scan</code>, et le «&nbsp;conflit IP&nbsp;» du CPU.</li>
+        <li><strong>Vers l'IT</strong> : <code>traceroute</code> / <code>mtr</code> montrent <em>où</em> ça
+        bloque — avant la passerelle (local) ou après (pare-feu).</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Se placer dans le plan et confirmer le CPU</h3>
+      <p>Ton poste (edge ou WSL miroir) est branché sur le segment mais n'a pas encore d'adresse dans le plan
+      machine. Configure <code>eth0</code> en <code>192.168.0.71/24</code>, puis vérifie la joignabilité du
+      CPU <code>192.168.0.1</code> par <code>ping</code> <strong>et</strong> par <code>arping</code>.
+      Interprète le cas où le ping resterait muet.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> sudo ip addr add 192.168.0.71/24 dev eth0
+<span class="prompt">$</span> ip -brief addr show eth0
+eth0   UP   192.168.0.71/24 ...
+
+<span class="prompt">$</span> ping -c3 192.168.0.1
+64 bytes from 192.168.0.1: icmp_seq=1 ttl=255 time=0.41 ms
+... 0% packet loss
+
+<span class="prompt">$</span> sudo arping -I eth0 -c3 192.168.0.1
+Unicast reply from 192.168.0.1 [00:1B:1B:2A:10:01]  0.70ms
+Received 3 response(s)</code></pre>
+        <p>Le ping répond&nbsp;: le CPU est joignable en L3 et son ICMP est ouvert. Si le ping avait été
+        <strong>muet</strong> (<code>100% packet loss</code>) mais le <code>arping</code> répondu, on ne
+        conclurait <em>pas</em> à une panne&nbsp;: le CPU serait présent sur le lien (MAC
+        <code>00:1b:1b:2a:10:01</code> visible), simplement son ICMP serait filtré. Le verdict «&nbsp;présent&nbsp;»
+        vient de la réponse ARP, pas de l'ICMP.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Détecter un doublon d'IP</h3>
+      <p>Le CPU signale un conflit sur la station <code>192.168.0.20</code> et les échanges Profinet claquent.
+      Lance la <em>Duplicate Address Detection</em> sur cette IP et explique ce que la sortie ci-dessous
+      révèle.</p>
+      <pre class="term"><code><span class="prompt">$</span> sudo arping -D -I eth0 -c3 192.168.0.20
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:20]  0.71ms
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:AA]  0.83ms
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:20]  0.69ms
+Unicast reply from 192.168.0.20 [00:1B:1B:2A:10:AA]  0.80ms
+Sent 3 probes (3 broadcast(s))
+Received 4 response(s)</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Deux adresses MAC <strong>différentes</strong> — <code>00:1B:1B:2A:10:20</code> et
+        <code>00:1B:1B:2A:10:AA</code> — répondent pour la <strong>même</strong> IP <code>192.168.0.20</code>.
+        C'est la signature d'un <strong>doublon d'adresse IP</strong>&nbsp;: deux équipements physiques
+        distincts revendiquent la même adresse. L'indice quantitatif&nbsp;: <code>Received 4 response(s)</code>
+        pour seulement <code>3 probes</code> — plus de réponses que de sondes, impossible avec un seul
+        répondeur.</p>
+        <p>Pour corréler et localiser&nbsp;: <code>ip neigh show 192.168.0.20</code> montrera la MAC osciller,
+        <code>sudo dmesg | grep -i duplicate</code> confirmera côté noyau, et <code>arp-scan</code> listera les
+        deux MAC. La MAC intruse (<code>…:10:AA</code>, non conforme au plan) désigne l'équipement à
+        débrancher.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Lire la table des voisins</h3>
+      <p>À partir de la sortie <code>ip neigh</code> ci-dessous, dis pour chaque voisin ce que son état
+      indique sur la santé du lien, et lequel doit t'inquiéter.</p>
+      <pre class="term"><code><span class="prompt">$</span> ip neigh
+192.168.0.1    dev eth0 lladdr 00:1b:1b:2a:10:01 REACHABLE
+192.168.0.21   dev eth0 lladdr 00:1b:1b:2a:10:21 STALE
+192.168.0.42   dev eth0  FAILED</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>192.168.0.1 — REACHABLE</strong>&nbsp;: le CPU a répondu récemment, entrée fraîche et
+          fiable. Lien sain, rien à signaler.</li>
+          <li><strong>192.168.0.21 — STALE</strong>&nbsp;: l'ET&nbsp;200SP <code>.21</code> est connue (MAC
+          présente) mais le cache a refroidi faute de trafic récent. <strong>Ce n'est pas une panne</strong>&nbsp;:
+          au prochain échange, le noyau revalidera l'entrée (DELAY → REACHABLE). Un simple <code>ping</code>
+          ou <code>arping</code> la «&nbsp;réveille&nbsp;».</li>
+          <li><strong>192.168.0.42 — FAILED</strong>, sans <code>lladdr</code>&nbsp;: personne n'a répondu à
+          l'ARP, aucune MAC n'est associée. Là, <strong>c'est un vrai signal d'absence</strong>&nbsp;: l'IP
+          ne correspond à aucun équipement présent sur le lien (device éteint, débranché, ou IP fantôme).
+          C'est celui-ci qui doit t'inquiéter.</li>
+        </ul>
+        <p>Nuance à garder&nbsp;: <em>STALE</em> décrit un cache, pas un état de santé — il ne faut jamais le
+        confondre avec une panne. Seul <em>FAILED</em> (ou une entrée absente après <code>arping</code>)
+        atteste réellement d'une absence sur le segment.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>Découvrir qui est là, sans IP</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Ports &amp; services</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

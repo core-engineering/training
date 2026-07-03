@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — Découvrir qui est là, sans IP</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>Découvrir qui est là, sans IP</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Cartographier une cellule en <strong>couche 2</strong>, avant même de connaître ou de configurer
+        le moindre plan d'adressage IP.</li>
+        <li>Interroger le <strong>voisinage LLDP</strong> avec <code>lldpctl</code> pour reconstruire la
+        topologie réelle : quel équipement sur quel port de quel switch.</li>
+        <li>Utiliser le <strong>Profinet DCP</strong> (via <code>pnio-dcp</code>) pour faire répondre tous les
+        devices — nom de station, IP, MAC — sans être sur le bon réseau, et faire clignoter une LED pour
+        repérer un équipement physiquement.</li>
+        <li>Compléter l'inventaire avec la <strong>table des voisins</strong> (<code>ip neigh</code>) et
+        <strong>arp-scan</strong>, en reconnaissant les équipements Siemens à leur OUI.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi la découverte L2 d'abord</h2>
+    <p>En OT, on arrive rarement dans un réseau documenté. On branche un câble sur un port libre d'un switch
+    d'armoire et… on ne connaît ni le plan d'adressage, ni les IP des automates, ni même le masque du
+    sous-réseau. Les réflexes IT (« je scanne le <code>/24</code> ») supposent déjà de savoir <em>quel</em>
+    <code>/24</code>. Or ici, on ne le sait pas encore.</p>
+    <p>La bonne nouvelle : les équipements d'automatisme <strong>parlent avant même d'avoir une IP
+    compatible avec la tienne</strong>. Deux protocoles de couche&nbsp;2 le permettent :</p>
+    <ul>
+      <li><strong>LLDP</strong> (<em>Link Layer Discovery Protocol</em>) — chaque switch et device annonce
+      périodiquement son identité à ses voisins directs. On écoute, on obtient la topologie.</li>
+      <li><strong>Profinet DCP</strong> (<em>Discovery and Configuration Protocol</em>) — un appel multicast
+      fait répondre <em>tous</em> les devices Profinet du segment avec leur nom de station et leur config IP,
+      qu'ils soient ou non joignables en IP.</li>
+    </ul>
+    <p>Ces deux moyens sont aussi les plus <strong>non-intrusifs</strong> qui soient : LLDP est purement
+    passif (on lit ce qui passe déjà), et un DCP <em>Identify</em> ne fait qu'une question à laquelle les
+    devices répondent de toute façon en fonctionnement normal. C'est le point de départ de référence, avant
+    tout <code>ping</code>, tout scan, toute config IP.</p>
+
+    <div class="callout astuce">
+      <p>LLDP te dit <strong>où</strong> est branché chaque équipement (topologie physique, port par port).
+      DCP te dit <strong>qui</strong> il est (nom de station, IP, type), même sans adresse compatible.
+      Combinés, ils reconstruisent la vue « Topologie » de TIA Portal — sauf que là, tu la <em>mesures</em>
+      sur le fil au lieu de la lire dans un projet d'ingénierie qui n'est peut-être plus à jour.</p>
+    </div>
+
+    <h2>2. LLDP — le voisinage</h2>
+    <p>Le démon <code>lldpd</code>, installé au chapitre&nbsp;1, tourne en tâche de fond. Il émet les
+    annonces LLDP de <em>ton</em> poste et, surtout, il <strong>collecte</strong> celles des voisins
+    directs : switches Scalance, CPU, IO-devices. On l'interroge avec <code>lldpctl</code> (ou
+    <code>lldpcli show neighbors</code>, équivalent).</p>
+
+    <pre class="term"><code><span class="prompt">$</span> lldpctl
+<span class="cmt">-------------------------------------------------------------------------------</span>
+<span class="cmt">LLDP neighbors:</span>
+<span class="cmt">-------------------------------------------------------------------------------</span>
+Interface:    eth0, via: LLDP
+  Chassis:
+    ChassisID:    mac 00:1b:1b:2a:1f:40
+    SysName:      <span class="hi">SW-A</span>
+    SysDescr:     Siemens, SIMATIC NET, SCALANCE XC208, HW: 4, FW: V4.3
+    MgmtIP:       192.168.0.240
+    Capability:   Bridge, on
+  Port:
+    PortID:       ifname <span class="hi">port-0003</span>
+    PortDescr:    Ethernet Port 3
+    TTL:          120
+<span class="cmt">-------------------------------------------------------------------------------</span>
+Interface:    eth0, via: LLDP
+  Chassis:
+    ChassisID:    mac 00:1b:1b:2a:10:01
+    SysName:      <span class="hi">cpu1500</span>
+    SysDescr:     Siemens, SIMATIC S7-1500, CPU 1516-3 PN/DP
+    MgmtIP:       192.168.0.1
+    Capability:   Station, on
+  Port:
+    PortID:       local <span class="hi">port-001</span>
+    PortDescr:    X1 P1
+    TTL:          20
+<span class="cmt">-------------------------------------------------------------------------------</span></code></pre>
+
+    <p>Lecture de cette sortie. Sur notre <code>eth0</code>, <code>lldpd</code> voit deux annonces&nbsp;: un
+    switch <strong>SW-A</strong> (un Scalance XC208, MAC <code>00:1b:1b:…</code>, IP de gestion
+    <code>.240</code>) et le <strong>CPU cpu1500</strong> (<code>.1</code>). Le champ décisif pour la
+    topologie est le <strong>PortID distant</strong> : le voisin nous dit sur <em>quel port de lui-même</em>
+    nous sommes branchés. Ici, SW-A annonce <code>port-0003</code> — donc notre poste est câblé sur le
+    <strong>port&nbsp;3 du switch A</strong>. En interrogeant chaque équipement de la sorte, on reconstitue
+    l'arbre complet : quel device sur quel port de quel switch.</p>
+
+    <div class="callout note">
+      <p><code>lldpctl</code> ne montre que les voisins <strong>directs</strong> (un saut). Pour la topologie
+      complète, on interroge chaque switch (souvent via SNMP, cf. chapitre ultérieur, ou en s'y branchant
+      tour à tour). Le TTL indique depuis combien de temps l'annonce est valide : une entrée qui disparaît de
+      la liste = un câble débranché ou un voisin qui ne parle pas LLDP.</p>
+    </div>
+
+    <figure class="fig">
+      <svg viewBox="0 0 820 250" role="img" aria-label="Topologie reconstruite depuis LLDP : notre poste est branché sur le port 3 du switch SW-A, qui relie aussi le CPU S7-1500 sur son port 1.">
+        <line class="link" x1="230" y1="90" x2="230" y2="150" style="stroke:var(--l2);stroke-width:2.5"/>
+        <text class="lbl-s" x="245" y="126" text-anchor="start" style="fill:var(--l2)">port-0001</text>
+        <line class="link" x1="410" y1="111" x2="590" y2="111"/>
+        <text class="lbl-s" x="500" y="102" text-anchor="middle">port-0003</text>
+
+        <rect class="node" x="150" y="48" width="160" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="230" y="69" text-anchor="middle">SW-A · Scalance</text>
+        <text class="lbl-s" x="230" y="83" text-anchor="middle">.240 · MRM</text>
+
+        <rect class="node" x="150" y="150" width="160" height="42" rx="7" style="stroke:var(--l7)"/>
+        <text class="lbl" x="230" y="171" text-anchor="middle">cpu1500</text>
+        <text class="lbl-s" x="230" y="185" text-anchor="middle">.1 · S7-1500</text>
+
+        <rect class="node" x="590" y="90" width="160" height="42" rx="7" style="stroke:var(--accent-2)"/>
+        <text class="lbl" x="670" y="111" text-anchor="middle">poste diag 🔎</text>
+        <text class="lbl-s" x="670" y="125" text-anchor="middle">.71 · eth0</text>
+      </svg>
+      <figcaption><b>Figure 3.1.</b> La topologie déduite de la sortie <code>lldpctl</code> ci-dessus. Le
+      <b>PortID distant</b> de chaque voisin (traits) place l'équipement sur un port précis du switch. On
+      obtient ainsi la carte physique <em>mesurée</em>, sans avoir configuré la moindre IP.</figcaption>
+    </figure>
+
+    <div class="callout plc">
+      <p>Le <strong>SysName</strong> annoncé par un device Siemens en LLDP est son <strong>nom de
+      station Profinet</strong> (ici <code>cpu1500</code>, <code>et200sp-1</code>…). Ce nom n'est pas
+      cosmétique : c'est la <em>clé d'identité</em> par laquelle le CPU reconnaît et adresse chaque IO-device
+      au démarrage (on y reviendra au chapitre&nbsp;7). Voir ce nom sur le fil, c'est voir exactement ce que
+      le contrôleur utilise pour attribuer les IP.</p>
+    </div>
+
+    <h2>3. Profinet DCP — « qui es-tu ? » sans IP</h2>
+    <p>LLDP est passif et ne voit que les voisins directs. Le <strong>DCP</strong> va plus loin : c'est un
+    protocole de couche&nbsp;2 (Ethertype <code>0x8892</code>, comme le Profinet temps réel), diffusé en
+    <strong>multicast</strong> sur tout le segment. Un message spécial, <em>Identify&nbsp;All</em>, demande à
+    <strong>tous</strong> les devices Profinet de se présenter. Comme c'est de la couche&nbsp;2 pure, ils
+    répondent <strong>même si leur IP est dans un autre sous-réseau que le tien</strong> — ou s'ils n'ont
+    aucune IP (device neuf sorti du carton).</p>
+    <p>En Python, la bibliothèque <code>pnio-dcp</code> (installée au chapitre&nbsp;1) fait tout le travail
+    de trame&nbsp;:</p>
+
+    <pre><code class="language-python">import pnio_dcp
+
+# On lie le DCP à TON interface : IP locale ou nom d'interface ("eth0").
+dcp = pnio_dcp.DCP("192.168.0.71")
+
+# "Identify All" : tous les devices Profinet du segment répondent.
+for d in dcp.identify_all():
+    print(f"{d.name_of_station:14} {d.IPAddress:15} {d.MAC}")</code></pre>
+
+    <p>Sur notre cellule, on obtient&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> python3 dcp_identify.py
+cpu1500        192.168.0.1     <span class="hi">00:1b:1b:2a:10:01</span>
+et200sp-1      192.168.0.20    <span class="hi">00:1b:1b:2a:10:20</span>
+et200sp-2      192.168.0.21    <span class="hi">00:1b:1b:2a:10:21</span></code></pre>
+
+    <p>En une requête, on a l'inventaire Profinet complet&nbsp;: nom de station, IP, masque, passerelle
+    (attributs <code>d.NetworkMask</code>, <code>d.Gateway</code>), MAC et type de device. Aucune config
+    préalable, aucune connaissance du plan d'adressage.</p>
+
+    <p>Mais le DCP ne fait pas que lire — il permet aussi d'<strong>écrire</strong>. Sur l'objet renvoyé pour
+    un device, on dispose de&nbsp;:</p>
+    <ul>
+      <li><code>dcp.set_ip_address(mac, ip, netmask, gateway)</code> — attribuer une IP (temporaire ou
+      permanente) à un device.</li>
+      <li><code>dcp.set_name_of_station(mac, name)</code> — donner ou changer le nom de station.</li>
+      <li><code>dcp.blink(mac)</code> — faire <strong>clignoter la LED</strong> du device (souvent la LED
+      « signal/MT ») pour le repérer physiquement dans une armoire pleine.</li>
+      <li><code>dcp.reset_to_factory(mac)</code> — remise à zéro des paramètres.</li>
+    </ul>
+    <p>Ce sont des outils de mise en service redoutables&nbsp;: donner nom et IP à un device neuf, ou faire
+    clignoter « celui du milieu de la rangée » pour lever un doute de câblage.</p>
+
+    <div class="callout shell">
+      <p>Repérer physiquement un device dont on connaît la MAC (par exemple <code>et200sp-2</code>)&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> python3 -c "import pnio_dcp; \
+pnio_dcp.DCP('192.168.0.71').blink('00:1b:1b:2a:10:21')"</code></pre>
+      <p>La LED du device se met à clignoter quelques secondes. Idéal pour dire « c'est
+      <em>celui-là</em> » sans compter les câbles.</p>
+    </div>
+
+    <div class="callout ot">
+      <p><code>identify_all()</code> et <code>blink()</code> ne dérangent rien : ce sont des lectures et un
+      voyant. Mais <code>set_ip_address</code>, <code>set_name_of_station</code> et
+      <code>reset_to_factory</code> <strong>écrivent</strong> dans le device. Renommer ou ré-adresser un
+      IO-device <strong>en production</strong>, c'est rompre la clé d'identité que le CPU attend&nbsp;: le
+      device sort de l'échange, l'API passe l'entrée en défaut, la machine peut s'arrêter. Ces trois appels
+      sont réservés au <strong>banc</strong> ou à une intervention planifiée, jamais lancés « pour voir ».</p>
+    </div>
+
+    <h2>4. Capturer le DCP au vol</h2>
+    <p>On n'est pas obligé d'émettre soi-même du DCP&nbsp;: on peut aussi <strong>écouter</strong> celui que
+    les autres génèrent. Dès qu'un outil d'ingénierie (TIA Portal, PRONETA, un autre poste) lance une
+    découverte, des trames DCP <em>Identify</em> et leurs réponses passent sur le fil. On les capture avec
+    <code>tshark</code> en filtrant sur l'Ethertype Profinet&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo tshark -i eth0 -f 'ether proto 0x8892' -Y pn_dcp
+    1  0.000000  00:1b:1b:2a:10:71 → 01:0e:cf:00:00:00  PN-DCP <span class="hi">Ident Req</span>, Xid:0x1, All
+    2  0.004120  00:1b:1b:2a:10:01 → 00:1b:1b:2a:10:71  PN-DCP <span class="hi">Ident Ok</span>, NameOfStation:"cpu1500"
+    3  0.004980  00:1b:1b:2a:10:20 → 00:1b:1b:2a:10:71  PN-DCP <span class="hi">Ident Ok</span>, NameOfStation:"et200sp-1"
+    4  0.005610  00:1b:1b:2a:10:21 → 00:1b:1b:2a:10:71  PN-DCP <span class="hi">Ident Ok</span>, NameOfStation:"et200sp-2"</code></pre>
+
+    <p>Le filtre <strong>de capture</strong> <code>-f 'ether proto 0x8892'</code> ne garde que les trames
+    Profinet (DCP <em>et</em> temps réel partagent cet Ethertype), et le filtre <strong>d'affichage</strong>
+    <code>-Y pn_dcp</code> ne montre que le DCP. On voit ici une requête <em>Identify&nbsp;All</em> (destinée
+    à l'adresse multicast <code>01:0e:cf:00:00:00</code>) suivie des trois réponses unicast. Utile pour
+    diagnostiquer « qui scanne le réseau », ou pour confirmer qu'un device répond bien quand notre propre
+    <code>identify_all()</code> reste muet.</p>
+
+    <div class="callout piege">
+      <p>DCP et Profinet RT utilisent le <strong>même</strong> Ethertype <code>0x8892</code>. Le filtre de
+      capture <code>ether proto 0x8892</code> attrape donc <em>aussi</em> le trafic temps réel cyclique — qui
+      peut être massif (une trame toutes les 1&nbsp;à 4&nbsp;ms par device). D'où le second filtre
+      <code>-Y pn_dcp</code>&nbsp;: sans lui, le DCP se noie dans le flot RT. En capture longue, préfère
+      écrire un <code>.pcap</code> puis filtrer à la lecture.</p>
+    </div>
+
+    <h2>5. Table ARP / voisins</h2>
+    <p>Une fois qu'un peu de trafic IP a circulé (un <code>ping</code>, une session), le noyau Linux garde la
+    correspondance IP↔MAC de ses voisins dans le cache ARP. On le lit avec <code>ip neigh</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ip neigh
+192.168.0.1    dev eth0 lladdr 00:1b:1b:2a:10:01 <span class="hi">REACHABLE</span>
+192.168.0.20   dev eth0 lladdr 00:1b:1b:2a:10:20 <span class="hi">STALE</span>
+192.168.0.240  dev eth0 lladdr 00:1b:1b:2a:1f:40 REACHABLE
+192.168.0.21   dev eth0                          <span class="hi">FAILED</span></code></pre>
+
+    <p>Les états renseignent&nbsp;:</p>
+    <ul>
+      <li><strong>REACHABLE</strong> — voisin confirmé récemment, joignable.</li>
+      <li><strong>STALE</strong> — connu, mais l'entrée n'a pas été rafraîchie depuis un moment (pas
+      forcément un problème&nbsp;: juste pas de trafic récent).</li>
+      <li><strong>FAILED</strong> — l'ARP n'a reçu aucune réponse&nbsp;: l'IP <code>.21</code> ne répond pas
+      (device éteint, mauvaise IP, ou pas sur ce segment).</li>
+    </ul>
+    <p>Contrairement à LLDP/DCP, <code>ip neigh</code> a besoin de <strong>trafic IP</strong> pour se
+    remplir&nbsp;: c'est une photo de « avec qui j'ai parlé en IP récemment », pas une découverte active. Si
+    ton poste est un pont (bridge), <code>bridge fdb show</code> montre en plus la table d'apprentissage
+    MAC↔port de couche&nbsp;2.</p>
+
+    <h2>6. arp-scan — l'inventaire éclair</h2>
+    <p>Pour peupler activement cet inventaire sur un sous-réseau connu, <code>arp-scan</code> envoie une
+    requête ARP à <em>chaque</em> adresse du subnet et liste qui répond&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">$</span> sudo arp-scan --interface=eth0 --localnet
+Interface: eth0, type: EN10MB, MAC: 00:1b:1b:2a:10:71, IPv4: 192.168.0.71
+Starting arp-scan 1.10.0 with 256 hosts
+192.168.0.1     00:1b:1b:2a:10:01   <span class="hi">Siemens AG</span>
+192.168.0.20    00:1b:1b:2a:10:20   <span class="hi">Siemens AG</span>
+192.168.0.21    00:1b:1b:2a:10:21   <span class="hi">Siemens AG</span>
+192.168.0.240   00:1b:1b:2a:1f:40   <span class="hi">Siemens AG</span>
+192.168.0.241   00:1b:1b:2a:1f:41   <span class="hi">Siemens AG</span>
+192.168.0.242   00:1b:1b:2a:1f:42   <span class="hi">Siemens AG</span>
+
+6 packets received by filter, 0 packets dropped
+6 responded</code></pre>
+
+    <p>La troisième colonne est le <strong>constructeur</strong>, déduit de l'<strong>OUI</strong> — les trois
+    premiers octets de la MAC, attribués par l'IEEE à chaque fabricant. Le préfixe <code>00:1b:1b</code> est
+    un OUI Siemens&nbsp;: tous nos équipements ressortent instantanément comme « Siemens AG ». Siemens
+    possède plusieurs OUI (<code>00:1b:1b</code>, <code>8c:f3:19</code>, <code>ac:64:17</code>…)&nbsp;;
+    <code>arp-scan</code> les reconnaît via sa base OUI intégrée. En un scan, on distingue les automates du
+    reste (un PC, une imprimante, un équipement tiers ressortiraient avec un autre constructeur).</p>
+
+    <div class="callout ot">
+      <p><code>arp-scan --localnet</code> émet 256 requêtes ARP d'un coup. Sur un banc, c'est anodin. Sur une
+      cellule <strong>en production</strong>, cette rafale de broadcast reste légère mais n'est pas nulle&nbsp;:
+      privilégie une plage restreinte (<code>--interface=eth0 192.168.0.1-192.168.0.50</code>) et évite les
+      scans répétés en boucle sur un réseau temps réel sensible.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>En OT, on découvre <strong>en couche 2 d'abord</strong>&nbsp;: LLDP et DCP répondent sans qu'on
+        connaisse ni ne configure la moindre IP, et ce sont les moyens les plus non-intrusifs.</li>
+        <li><strong>LLDP</strong> (<code>lldpctl</code>) donne les voisins directs&nbsp;: SysName (= nom de
+        station), IP de gestion, et surtout le <strong>PortID distant</strong> qui reconstruit la topologie
+        physique port par port.</li>
+        <li><strong>DCP</strong> (<code>pnio-dcp</code>, Ethertype <code>0x8892</code>) fait répondre tous les
+        devices Profinet en <em>Identify&nbsp;All</em> (nom, IP, MAC), même hors de ton sous-réseau. Il sait
+        aussi <strong>écrire</strong>&nbsp;: <code>set_ip_address</code>, <code>set_name_of_station</code>,
+        <code>blink</code>, <code>reset_to_factory</code> — puissant mais réservé au banc.</li>
+        <li>On capture le DCP des autres avec <code>tshark -f 'ether proto 0x8892' -Y pn_dcp</code>.</li>
+        <li><strong><code>ip neigh</code></strong> lit le cache ARP (états REACHABLE/STALE/FAILED, nécessite
+        du trafic IP)&nbsp;; <strong><code>arp-scan --localnet</code></strong> peuple activement l'inventaire
+        IP+MAC+constructeur et repère les Siemens par leur <strong>OUI</strong> (<code>00:1b:1b</code>…).</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Reconstruire la topologie depuis LLDP</h3>
+      <p>Un collègue te transmet cette sortie <code>lldpctl</code> prise sur son poste (branché sur
+      <code>eth0</code>). Décris précisément&nbsp;: quels équipements sont visibles, sur quel port de quel
+      switch chacun est câblé, et où se trouve le poste du collègue.</p>
+      <pre class="term"><code>Interface: eth0, via: LLDP
+  Chassis: SysName: SW-B   MgmtIP: 192.168.0.241   Capability: Bridge
+  Port:    PortID: ifname port-0005
+Interface: eth0, via: LLDP
+  Chassis: SysName: et200sp-1   MgmtIP: 192.168.0.20   Capability: Station
+  Port:    PortID: local port-002</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Deux voisins directs sont visibles depuis <code>eth0</code>&nbsp;:</p>
+        <ul>
+          <li>Le switch <strong>SW-B</strong> (Scalance, IP de gestion <code>192.168.0.241</code>), qui
+          annonce nous voir arriver sur <strong>son port&nbsp;5</strong> (<code>port-0005</code>). Autrement
+          dit, <em>le poste du collègue est branché sur le port&nbsp;5 de SW-B</em>.</li>
+          <li>L'IO-device <strong>et200sp-1</strong> (<code>192.168.0.20</code>, capacité « Station » = c'est
+          un device, pas un switch), joignable directement — il partage donc le même domaine de collision/port
+          voisin. Son PortID <code>port-002</code> est <em>son</em> port à lui.</li>
+        </ul>
+        <p>Topologie déduite&nbsp;: <code>poste → port-5 de SW-B</code>, et <code>et200sp-1</code> voisin
+        direct sur ce segment. Le <strong>PortID distant</strong> d'un switch localise toujours <em>ton</em>
+        point de branchement&nbsp;; le SysName + MgmtIP identifient l'équipement. En interrogeant SW-B
+        lui-même (SNMP), on obtiendrait la liste complète de ce qui pend à ses autres ports.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Identify All puis clignotement ciblé</h3>
+      <p>Écris un court script <code>pnio-dcp</code> qui liste tous les devices Profinet (nom, IP, MAC) depuis
+      l'interface <code>192.168.0.71</code>, puis fais clignoter la LED de la station nommée
+      <code>et200sp-2</code> pour la repérer dans l'armoire.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-python">import pnio_dcp
+
+dcp = pnio_dcp.DCP("192.168.0.71")
+
+# 1) Inventaire complet
+devices = dcp.identify_all()
+for d in devices:
+    print(f"{d.name_of_station:14} {d.IPAddress:15} {d.MAC}")
+
+# 2) Retrouver et200sp-2, puis faire clignoter sa LED
+cible = next(d for d in devices if d.name_of_station == "et200sp-2")
+dcp.blink(cible.MAC)
+print(f"Clignotement de {cible.name_of_station} ({cible.MAC})…")</code></pre>
+        <pre class="term"><code><span class="prompt">$</span> python3 exo2.py
+cpu1500        192.168.0.1     00:1b:1b:2a:10:01
+et200sp-1      192.168.0.20    00:1b:1b:2a:10:20
+et200sp-2      192.168.0.21    00:1b:1b:2a:10:21
+Clignotement de et200sp-2 (00:1b:1b:2a:10:21)…</code></pre>
+        <p>On récupère la MAC via <code>identify_all()</code> plutôt que de la coder en dur&nbsp;: c'est plus
+        robuste si le device a été remplacé. <code>blink()</code> ne modifie <strong>rien</strong> dans le
+        device (juste un voyant), donc c'est sûr même en production — contrairement à
+        <code>set_name_of_station</code>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — arp-scan, OUI Siemens, et portée vs DCP</h3>
+      <p>Lance un <code>arp-scan</code> sur ton segment, repère les équipements Siemens à leur OUI, puis
+      explique en quoi la <strong>portée</strong> de <code>arp-scan</code> diffère de celle d'un DCP
+      <em>Identify&nbsp;All</em>. Dans quel cas un device apparaît-il en DCP mais <em>pas</em> en
+      <code>arp-scan</code>&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> sudo arp-scan --interface=eth0 --localnet
+192.168.0.1     00:1b:1b:2a:10:01   Siemens AG
+192.168.0.20    00:1b:1b:2a:10:20   Siemens AG
+192.168.0.240   00:1b:1b:2a:1f:40   Siemens AG
+...</code></pre>
+        <p>Les équipements dont la MAC commence par <code>00:1b:1b</code> (ou <code>8c:f3:19</code>,
+        <code>ac:64:17</code>) sont des Siemens&nbsp;: la colonne constructeur, tirée de la base OUI, le dit
+        directement.</p>
+        <p><strong>Différence de portée&nbsp;:</strong></p>
+        <ul>
+          <li><code>arp-scan</code> travaille en <strong>IP sur le subnet local</strong>&nbsp;: il envoie un
+          ARP à chaque adresse du <em>même</em> sous-réseau que ton interface. Un device dont l'IP est dans
+          un <em>autre</em> plan (par ex. <code>10.0.0.5</code> alors que tu es en <code>192.168.0.71/24</code>)
+          <strong>ne répondra pas</strong> à ton ARP&nbsp;: il est invisible pour <code>arp-scan</code>. De
+          même, un device neuf sans IP configurée reste muet.</li>
+          <li>Le DCP <em>Identify&nbsp;All</em> est de la <strong>couche 2 pure</strong> (multicast Ethernet,
+          sans IP). Il fait répondre <em>tout</em> device Profinet du segment, <strong>quelle que soit son
+          IP</strong> — voire sans IP du tout. C'est justement pour ça qu'on l'utilise pour retrouver un
+          device « perdu » sur un mauvais plan d'adressage&nbsp;: DCP le voit, <code>arp-scan</code> non.</li>
+        </ul>
+        <p><strong>Conclusion&nbsp;:</strong> un device Profinet mal adressé (IP hors subnet) ou vierge
+        apparaît en <strong>DCP</strong> mais <strong>pas</strong> en <code>arp-scan</code>. Les deux sont
+        complémentaires&nbsp;: DCP pour l'identité L2 exhaustive, <code>arp-scan</code> pour un inventaire IP
+        rapide avec constructeur une fois le plan d'adressage connu.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>Couche physique &amp; liaison (L1/L2)</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>Adressage, ARP, routage</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 08 — L'anneau MRP</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🔌 Diagnostic réseau OT/IT <span>· au shell Linux</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 08</span><br>L'anneau MRP</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre la <strong>redondance média MRP</strong> (IEC&nbsp;62439-2) : pourquoi câbler les switches
+        en boucle, et pourquoi le trafic ne tourne pourtant jamais en rond.</li>
+        <li>Repérer et lire les <strong>trames de test MRP</strong> sur le fil (Ethertype <code>0x88E3</code>)
+        avec <code>tshark</code>.</li>
+        <li>Détecter un <strong>anneau ouvert</strong> — une faute critique mais silencieuse côté procédé —
+        et distinguer un anneau sain d'un anneau qui « flappe ».</li>
+        <li>Mesurer le <strong>temps de reconvergence</strong> réel en corrélant la coupure MRP au trou dans le
+        cyclique Profinet.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi un anneau</h2>
+    <p>Une ligne câblée « en étoile » a un talon d'Achille&nbsp;: chaque câble est un point unique de
+    défaillance. Coupe le lien entre deux switches et tout ce qui est derrière tombe. En automatisme, où un
+    arrêt de production coûte cher, on préfère câbler les switches <strong>en boucle</strong>&nbsp;: chaque
+    switch a deux chemins vers le reste du réseau. Si un câble lâche, le trafic emprunte l'autre sens.
+    C'est la <strong>redondance média</strong>.</p>
+    <p>Mais une boucle physique de commutateurs, laissée telle quelle, est une catastrophe&nbsp;: une trame
+    broadcast tourne indéfiniment et sature le réseau en quelques millisecondes — la fameuse
+    <em>tempête de boucle</em>. Il faut donc un protocole qui garde la boucle <strong>physiquement fermée</strong>
+    (pour la redondance) tout en la maintenant <strong>logiquement ouverte</strong> (pour éviter la tempête).
+    Côté Siemens, ce protocole est <strong>MRP</strong> — <em>Media Redundancy Protocol</em>, normalisé
+    IEC&nbsp;62439-2.</p>
+    <p>Dans un anneau MRP, un switch joue le rôle de <strong>MRM</strong> (<em>Media Redundancy Manager</em>) —
+    ici <strong>SW-A</strong> (<code>192.168.0.240</code>) — et tous les autres sont des <strong>MRC</strong>
+    (<em>Media Redundancy Clients</em>) — <strong>SW-B</strong> (<code>.241</code>) et <strong>SW-C</strong>
+    (<code>.242</code>). Chaque switch dédie deux ports à l'anneau, ses <em>ring ports</em>. L'astuce
+    est là&nbsp;: en fonctionnement normal, le MRM <strong>bloque logiquement l'un de ses deux ring ports</strong>.
+    L'anneau est bien un cercle de câbles, mais du point de vue du trafic c'est une ligne ouverte à un
+    endroit — chez le manager. Aucune trame ne fait le tour.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 820 300" role="img" aria-label="À gauche, l'anneau MRP en fonctionnement normal : trois switches SW-A (MRM), SW-B et SW-C câblés en triangle, l'un des deux ring ports du MRM est bloqué logiquement, marqué en rouge. À droite, le même anneau après une coupure de câble entre SW-B et SW-C : le lien coupé est barré en rouge, et le MRM a débloqué son port secondaire pour rétablir le passage.">
+        <!-- ====== ÉTAT NORMAL (gauche) ====== -->
+        <text class="lbl" x="200" y="24" text-anchor="middle" style="fill:var(--ok)">Anneau FERMÉ — normal</text>
+
+        <!-- liens anneau -->
+        <line class="link" x1="200" y1="70" x2="90"  y2="200" style="stroke:var(--l2);stroke-width:2.5"/>
+        <line class="link" x1="90"  y1="230" x2="310" y2="230" style="stroke:var(--l2);stroke-width:2.5"/>
+        <!-- lien MRM secondaire, BLOQUÉ -->
+        <line x1="200" y1="70" x2="310" y2="200" style="stroke:var(--danger);stroke-width:2.5;stroke-dasharray:6 5"/>
+        <!-- pastille de blocage -->
+        <circle cx="255" cy="135" r="11" style="fill:var(--bg);stroke:var(--danger);stroke-width:2.5"/>
+        <line x1="249" y1="129" x2="261" y2="141" style="stroke:var(--danger);stroke-width:2.5"/>
+        <line x1="261" y1="129" x2="249" y2="141" style="stroke:var(--danger);stroke-width:2.5"/>
+        <text class="lbl-s" x="295" y="128" text-anchor="middle" style="fill:var(--danger)">port bloqué</text>
+
+        <rect class="node" x="150" y="45" width="100" height="42" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl" x="200" y="66" text-anchor="middle">SW-A</text>
+        <text class="lbl-s" x="200" y="80" text-anchor="middle" style="fill:var(--danger)">MRM</text>
+
+        <rect class="node" x="40"  y="200" width="100" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="90" y="221" text-anchor="middle">SW-B</text>
+        <text class="lbl-s" x="90" y="235" text-anchor="middle">MRC</text>
+
+        <rect class="node" x="260" y="200" width="100" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="310" y="221" text-anchor="middle">SW-C</text>
+        <text class="lbl-s" x="310" y="235" text-anchor="middle">MRC</text>
+
+        <!-- ====== ÉTAT GUÉRI (droite) ====== -->
+        <text class="lbl" x="620" y="24" text-anchor="middle" style="fill:var(--warn)">Anneau OUVERT — guéri</text>
+
+        <line class="link" x1="620" y1="70" x2="510" y2="200" style="stroke:var(--l2);stroke-width:2.5"/>
+        <!-- lien SW-B–SW-C COUPÉ -->
+        <line x1="510" y1="230" x2="730" y2="230" style="stroke:var(--danger);stroke-width:2.5;stroke-dasharray:2 6"/>
+        <!-- éclair de coupure -->
+        <text x="620" y="238" text-anchor="middle" style="fill:var(--danger);font-size:20px">✂</text>
+        <!-- lien MRM secondaire, DÉBLOQUÉ (passe maintenant) -->
+        <line class="link" x1="620" y1="70" x2="730" y2="200" style="stroke:var(--l2);stroke-width:2.5"/>
+        <text class="lbl-s" x="715" y="128" text-anchor="middle" style="fill:var(--ok)">débloqué ✓</text>
+
+        <rect class="node" x="570" y="45" width="100" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="620" y="66" text-anchor="middle">SW-A</text>
+        <text class="lbl-s" x="620" y="80" text-anchor="middle">MRM</text>
+
+        <rect class="node" x="460" y="200" width="100" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="510" y="221" text-anchor="middle">SW-B</text>
+        <text class="lbl-s" x="510" y="235" text-anchor="middle">MRC</text>
+
+        <rect class="node" x="680" y="200" width="100" height="42" rx="7" style="stroke:var(--l2)"/>
+        <text class="lbl" x="730" y="221" text-anchor="middle">SW-C</text>
+        <text class="lbl-s" x="730" y="235" text-anchor="middle">MRC</text>
+      </svg>
+      <figcaption><b>Figure 8.1.</b> À gauche, l'anneau en <b>fonctionnement normal</b>&nbsp;: le MRM
+      (<b>SW-A</b>) tient l'un de ses deux ring ports <b>bloqué</b> (croix rouge). La boucle est fermée
+      physiquement, mais le trafic circule en ligne, jamais en rond. À droite, un câble a lâché entre SW-B et
+      SW-C&nbsp;: le MRM <b>débloque</b> son port secondaire et le passage est rétabli. Le procédé continue —
+      mais la redondance est maintenant <b>consommée</b>.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>Retiens l'image d'un anneau MRP sain&nbsp;: <strong>le manager garde toujours un port fermé</strong>.
+      Le trafic ne tourne <em>jamais</em> en rond. Un anneau où « tout passe partout » n'est pas un anneau
+      redondant, c'est une boucle non protégée — et tu le sentiras vite passer.</p>
+    </div>
+
+    <h2>2. Les trames de test MRP</h2>
+    <p>Comment le MRM sait-il que sa boucle est intacte&nbsp;? Il ne fait pas confiance à l'état des liens
+    vu port par port&nbsp;: il <strong>teste le tour complet</strong>. Périodiquement, le MRM émet une trame
+    <strong>MRP_Test</strong> par <em>chacun</em> de ses deux ring ports — donc dans les deux sens de
+    l'anneau. Ces trames portent l'Ethertype <strong><code>0x88E3</code></strong> et sont envoyées en
+    <strong>multicast</strong> ; les MRC les relaient de proche en proche sans les traiter.</p>
+    <ul>
+      <li>Si le MRM <strong>reçoit ses propres MRP_Test en retour</strong> sur le port opposé → le tour est
+      complet → <strong>anneau FERMÉ</strong> (sain, redondance disponible). Il maintient son port secondaire
+      bloqué.</li>
+      <li>Si les MRP_Test <strong>cessent de revenir</strong> (plusieurs manqués d'affilée) → le tour est rompu →
+      <strong>anneau OUVERT</strong> → le MRM <strong>débloque son port secondaire</strong> pour rétablir le
+      passage, puis prévient tout le monde.</li>
+    </ul>
+    <p>Ce « prévenir tout le monde » se fait avec des trames <strong>MRP_TopologyChange</strong>&nbsp;: le MRM
+    ordonne aux MRC de <em>vider leur table d'adresses MAC</em>, sans quoi les switches continueraient à
+    envoyer le trafic vers l'ancien chemin, désormais mort. On croise aussi des <strong>MRP_LinkChange</strong>
+    (<em>LinkUp</em>/<em>LinkDown</em>), qu'un MRC émet vers le MRM pour signaler qu'un de ses ring ports vient
+    de changer d'état — c'est souvent ce qui déclenche la reconfiguration avant même que les MRP_Test ne
+    manquent.</p>
+    <p>Les ordres de grandeur à avoir en tête&nbsp;:</p>
+    <table>
+      <thead><tr><th>Paramètre</th><th>Valeur typique</th><th>Remarque</th></tr></thead>
+      <tbody>
+        <tr><td>Période des MRP_Test</td><td>~20&nbsp;ms</td><td>par ring port ; configurable</td></tr>
+        <tr><td>Reconfiguration MRP standard</td><td>&lt; 200&nbsp;ms</td><td>classe par défaut IEC&nbsp;62439-2</td></tr>
+        <tr><td>MRP « rapide » (Siemens)</td><td>~10–30&nbsp;ms</td><td>période de test réduite, matériel compatible</td></tr>
+        <tr><td>Ethertype</td><td><code>0x88E3</code></td><td>toutes trames MRP</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <p>Le nombre de switches dans l'anneau compte&nbsp;: plus l'anneau est grand, plus une trame MRP_Test
+      met de temps à faire le tour, et plus la reconvergence sera lente. La classe MRP (200&nbsp;ms vs
+      rapide) et le nombre de nœuds sont deux paramètres que l'on confronte à la mesure au §6.</p>
+    </div>
+
+    <h2>3. Observer MRP avec tshark</h2>
+    <p>Tout se joue sur l'Ethertype <code>0x88E3</code>. On filtre à la capture (filtre <em>BPF</em>
+    <code>ether proto</code>) et on affiche le dissecteur <code>mrp</code>&nbsp;:</p>
+
+    <pre><code class="language-bash"># Capturer uniquement les trames MRP sur l'interface machine
+sudo tshark -i eth0 -f 'ether proto 0x88E3' -Y mrp</code></pre>
+
+    <p>Sur un anneau <strong>sain</strong>, on obtient un flux régulier de MRP_Test, deux « pistes » qui
+    alternent (une par ring port du MRM), espacées d'environ 20&nbsp;ms&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># Anneau FERMÉ : MRP_Test réguliers, rien d'autre</span>
+<span class="prompt">$</span> sudo tshark -i eth0 -f 'ether proto 0x88E3' -Y mrp
+  1  0.000000  Siemens_A0:24:0a → MRP-Test  MRP  60  MRP_Test, Prio 40960, Ring closed
+  2  0.019987  Siemens_A0:24:0a → MRP-Test  MRP  60  MRP_Test, Prio 40960, Ring closed
+  3  0.040012  Siemens_A0:24:0a → MRP-Test  MRP  60  MRP_Test, Prio 40960, Ring closed
+  4  0.059998  Siemens_A0:24:0a → MRP-Test  MRP  60  MRP_Test, Prio 40960, Ring closed
+  5  0.080003  Siemens_A0:24:0a → MRP-Test  MRP  60  MRP_Test, Prio 40960, <span class="hi">Ring closed</span></code></pre>
+
+    <p>Une seule MAC source (celle du MRM, <code>SW-A</code>), un intervalle stable, l'état <em>Ring closed</em>&nbsp;:
+    c'est exactement ce qu'on veut voir. Maintenant, débranchons un câble d'anneau et regardons la
+    <strong>coupure</strong>&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># Instant de la coupure : rafale de LinkChange puis TopologyChange</span>
+<span class="prompt">$</span> sudo tshark -i eth0 -f 'ether proto 0x88E3' -Y mrp
+ 42  0.840010  Siemens_A0:24:0a → MRP-Test    MRP  60  MRP_Test, Ring closed
+ 43  0.851203  Siemens_B1:07:c2 → MRP-Ctrl    MRP  60  <span class="hi">MRP_LinkChange, LinkDown</span>
+ 44  0.851560  Siemens_A0:24:0a → MRP-Ctrl    MRP  60  <span class="hi">MRP_TopologyChange</span>, Interval 20
+ 45  0.853102  Siemens_A0:24:0a → MRP-Ctrl    MRP  60  MRP_TopologyChange, Interval 20
+ 46  0.856050  Siemens_A0:24:0a → MRP-Ctrl    MRP  60  MRP_TopologyChange, Interval 20
+ 47  0.860018  Siemens_A0:24:0a → MRP-Test    MRP  60  MRP_Test, <span class="hi">Ring open</span>
+ 48  0.880004  Siemens_A0:24:0a → MRP-Test    MRP  60  MRP_Test, Ring open</code></pre>
+
+    <p>La séquence est lisible&nbsp;: un MRC (<code>SW-B</code>) signale un <em>LinkDown</em>, le MRM émet
+    aussitôt une salve de <strong>MRP_TopologyChange</strong> (pour purger les tables MAC), débloque son
+    port, et ses MRP_Test repartent en <em>Ring open</em>. Après la réparation physique du câble, on verrait
+    la séquence miroir&nbsp;: <em>LinkUp</em>, nouvelle salve de TopologyChange, retour en <em>Ring closed</em>.</p>
+
+    <div class="callout piege">
+      <p>Un <strong>flot continu</strong> de MRP_TopologyChange — pas une salve isolée, mais des rafales qui
+      reviennent toutes les quelques secondes — n'est pas une coupure franche&nbsp;: c'est un anneau qui
+      <strong>« flappe »</strong>. Un câble à moitié enfiché, un connecteur RJ45 oxydé, un SFP fatigué&nbsp;:
+      le lien monte et tombe sans arrêt, et le MRM reconfigure en boucle. À corréler avec les
+      <strong>compteurs d'erreurs de port</strong> du chapitre&nbsp;2 (<code>ethtool -S</code>, CRC/carrier).</p>
+    </div>
+
+    <h2>4. Détecter l'anneau ouvert — la faute silencieuse</h2>
+    <p>Voici le point le plus important du chapitre. Quand <strong>une</strong> coupure survient, MRP fait son
+    travail&nbsp;: en moins de 200&nbsp;ms (souvent bien moins), le passage est rétabli et le procédé continue
+    de tourner. Aucun voyant rouge sur la machine, aucun arrêt, aucune alarme process évidente. Tout va
+    bien… en apparence.</p>
+    <p>Sauf que la <strong>redondance a été consommée</strong>. L'anneau est désormais <strong>ouvert</strong>&nbsp;:
+    il ne reste qu'un seul chemin. Une <strong>seconde</strong> faute — un autre câble, un autre switch qui
+    redémarre — et cette fois il n'y a plus de secours&nbsp;: c'est l'arrêt de production. L'anneau ouvert est
+    donc une <strong>faute silencieuse mais critique</strong>&nbsp;: elle ne fait pas de bruit, mais elle a mis
+    l'installation à un pas du gouffre.</p>
+
+    <div class="callout piege">
+      <p>« Le procédé tourne » ne veut pas dire « l'anneau est sain ». Un anneau ouvert produit exactement le
+      même comportement machine qu'un anneau fermé — jusqu'à la deuxième panne. Ne te fie jamais à l'absence
+      d'alarme process pour juger de l'état de la redondance&nbsp;: il faut aller la <strong>lire
+      explicitement</strong>.</p>
+    </div>
+
+    <p>Deux façons de la débusquer&nbsp;:</p>
+    <ul>
+      <li><strong>Sur le fil</strong> — les MRP_Test qui restent en <em>Ring open</em> (au lieu de
+      <em>Ring closed</em>) sont le signe direct que le manager n'a pas retrouvé son tour complet. Un
+      <code>tshark -Y mrp</code> de quelques secondes suffit à trancher.</li>
+      <li><strong>Sur le switch</strong> — l'état de l'anneau est exposé en <strong>SNMP</strong> par le
+      manager. La <em>MRP-MIB</em> publie notamment <code>mrpRingState</code> (valeurs <em>open(1)</em> /
+      <em>closed(2)</em>), le rôle du nœud (<em>manager</em> / <em>client</em>) et les numéros des deux ring
+      ports. On peut donc surveiller l'état d'anneau <em>sans même capturer</em>, et l'intégrer à une
+      supervision.</li>
+    </ul>
+
+    <div class="callout note">
+      <p>La lecture SNMP de la MRP-MIB (<code>snmpget</code>/<code>snmpwalk</code> sur <code>mrpRingState</code>)
+      est détaillée au <strong>chapitre&nbsp;10</strong>. Retiens ici l'idée&nbsp;: interroger le MRM
+      (<code>192.168.0.240</code>) pour obtenir <em>open/closed</em> est la façon la plus fiable et la moins
+      intrusive de surveiller la redondance en continu.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>Dans TIA Portal, le rôle (<em>MRP Manager</em> / <em>Client</em>), le <em>domaine MRP</em> et les
+      deux ring ports de chaque switch sont configurés dans les propriétés « Media redundancy » de l'appareil.
+      Le CPU peut aussi remonter une alarme de diagnostic « <strong>redondance perdue</strong> » quand
+      l'anneau s'ouvre&nbsp;: si elle existe et qu'elle est câblée vers la supervision, c'est le meilleur signal.
+      Le shell reste utile pour <em>vérifier la réalité</em> quand cette alarme n'a pas été configurée — ce qui
+      est fréquent.</p>
+    </div>
+
+    <h2>5. Reconstituer la topologie de l'anneau</h2>
+    <p>Pour raisonner sur l'anneau, il faut connaître son <strong>ordre physique</strong>&nbsp;: quel switch est
+    voisin de quel switch, et par quels ports. On ne le devine pas depuis le plan d'adressage IP (l'ordre des
+    adresses ne dit rien du câblage). On le lit avec <strong>LLDP</strong> (chapitre&nbsp;3), qui expose chaque
+    voisinage physique port par port.</p>
+
+    <pre class="term"><code><span class="prompt">$</span> lldpctl SW-A | grep -A2 -E 'Interface|SysName'
+Interface:    port-1, via: LLDP
+  Chassis:  SysName: SW-B
+Interface:    port-2, via: LLDP
+  Chassis:  SysName: SW-C</code></pre>
+
+    <p>En croisant les voisinages des trois switches, on reconstitue la boucle&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># Voisinage LLDP consolidé (qui parle à qui, par quel port)</span>
+SW-A port-1 ─── port-2 SW-B       ← ring port
+SW-B port-1 ─── port-2 SW-C       ← ring port
+SW-C port-1 ─── port-2 SW-A       ← ring port  → la boucle se referme</code></pre>
+
+    <p>La boucle se referme sur elle-même&nbsp;: <code>A → B → C → A</code>. Les deux ports par lesquels chaque
+    switch participe à cette boucle sont ses <strong>ring ports</strong> ; tous les autres ports mènent à des
+    équipements terminaux (CPU, ET&nbsp;200SP, poste de diagnostic <code>.71</code>) et ne comptent pas dans
+    l'anneau. Avec ce schéma en main, une trame <em>LinkDown</em> vue au §3 se localise immédiatement&nbsp;:
+    « <code>SW-B</code> a perdu son <code>port-2</code> » désigne précisément le câble <code>SW-B ↔ SW-C</code>.</p>
+
+    <div class="callout astuce">
+      <p>Dessine l'anneau <strong>une fois</strong>, à froid, quand tout va bien, et garde-le. Le jour d'un
+      incident, tu ne veux pas reconstruire la topologie sous pression&nbsp;: tu veux juste pointer le lien
+      mort sur un schéma déjà connu. La sortie LLDP consolidée fait un excellent document de référence
+      d'armoire.</p>
+    </div>
+
+    <h2>6. Mesurer la reconvergence</h2>
+    <p>La théorie annonce « &lt; 200&nbsp;ms » ou « ~20&nbsp;ms en rapide ». Mais ce qui compte vraiment, c'est
+    le <strong>trou vu par le procédé</strong>&nbsp;: pendant combien de temps le cyclique Profinet
+    (chapitre&nbsp;7) s'est-il réellement interrompu&nbsp;? On le mesure en capturant <strong>en parallèle</strong>
+    les trames Profinet RT et l'événement MRP, sur le même horodatage.</p>
+
+    <pre><code class="language-bash"># Capturer côté cyclique : trames Profinet RT (0x8892) + MRP (0x88E3)
+sudo tshark -i eth0 -f 'ether proto 0x8892 or ether proto 0x88E3' \
+     -T fields -e frame.time_relative -e eth.type -e _ws.col.Info</code></pre>
+
+    <p>On débranche un câble d'anneau (sur banc&nbsp;!), on laisse tourner quelques secondes, on rebranche, puis
+    on cherche le plus grand <strong>écart entre deux trames RT consécutives</strong> — c'est le trou&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># Extrait autour de la coupure — on isole le cyclique (0x8892)</span>
+1.203  0x8892  RT_CLASS_1  ...        <span class="cmt"># dernier échange avant la coupure</span>
+1.204  0x88e3  MRP_LinkChange, LinkDown
+1.205  0x88e3  MRP_TopologyChange
+<span class="hi">... trou : plus aucune 0x8892 ...</span>
+1.271  0x8892  RT_CLASS_1  ...        <span class="cmt"># reprise du cyclique</span></code></pre>
+
+    <p>Ici, dernière trame RT à <code>1.203&nbsp;s</code>, reprise à <code>1.271&nbsp;s</code>&nbsp;: le procédé a
+    subi un trou de <strong>~67&nbsp;ms</strong>. On compare cette valeur à deux références&nbsp;: la
+    <strong>classe MRP configurée</strong> (67&nbsp;ms est cohérent avec une classe 200&nbsp;ms, largement dans
+    les clous), et le <strong>temps de surveillance du device Profinet</strong> (le <em>watchdog</em>, typiquement
+    3&nbsp;× la période cyclique). Tant que le trou reste sous le watchdog, le device ne déclare pas de défaut
+    de communication et le procédé ne bronche pas. S'il le dépasse, on verrait une coupure Profinet franche —
+    et là, la reconvergence MRP est trop lente pour la période cyclique choisie.</p>
+
+    <div class="callout ot">
+      <p>Couper un câble d'anneau, c'est <strong>consommer la redondance volontairement</strong>&nbsp;: pendant
+      tout l'essai, l'installation n'a plus de secours. Sur un <strong>banc de test</strong>, aucun souci —
+      c'est même l'essai à faire pour valider la classe MRP. <strong>En production, on ne débranche pas un
+      ring port pour « voir »</strong>&nbsp;: on lit l'état par SNMP et on planifie ce test pendant un arrêt.</p>
+    </div>
+
+    <div class="callout shell">
+      <p>Pour trouver le trou automatiquement plutôt qu'à l'œil, filtre le seul cyclique et calcule les deltas
+      inter-trames avec <code>awk</code>&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> sudo tshark -i eth0 -f 'ether proto 0x8892' -T fields -e frame.time_relative \
+   | awk 'NR>1{d=$1-p; if(d>max){max=d}} {p=$1} END{printf "trou max = %.1f ms\n", max*1000}'
+trou max = 67.4 ms</code></pre>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>MRP</strong> (IEC&nbsp;62439-2) donne la redondance média&nbsp;: la boucle est
+        <strong>physiquement fermée</strong>, mais le <strong>MRM</strong> (ici SW-A) <strong>bloque un ring
+        port</strong> pour éviter la tempête — le trafic ne tourne jamais en rond.</li>
+        <li>Le MRM émet des <strong>MRP_Test</strong> (Ethertype <code>0x88E3</code>, ~20&nbsp;ms) dans les deux
+        sens&nbsp;: s'ils reviennent → <em>Ring closed</em>&nbsp;; sinon il débloque son port secondaire et
+        passe en <em>Ring open</em>, avec une salve de <strong>MRP_TopologyChange</strong>.</li>
+        <li>On observe tout ça avec <code>sudo tshark -i eth0 -f 'ether proto 0x88E3' -Y mrp</code>. Un
+        <strong>flot continu de TopologyChange</strong> = anneau qui <strong>flappe</strong> (défaut L1).</li>
+        <li><strong>Anneau ouvert = faute silencieuse</strong>&nbsp;: le procédé tourne, mais la redondance est
+        consommée&nbsp;; une 2ᵉ faute = arrêt. Le détecter par les MRP_Test en <em>Ring open</em> ou par
+        <strong>SNMP</strong> (<code>mrpRingState</code>, ch.&nbsp;10).</li>
+        <li>La topologie de l'anneau se reconstruit avec <strong>LLDP</strong> (ch.&nbsp;3) — voisinages et ring
+        ports.</li>
+        <li>On mesure la <strong>reconvergence</strong> réelle = le <strong>trou dans le cyclique Profinet</strong>
+        (ch.&nbsp;7), à comparer à la classe MRP et au watchdog du device.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Période des MRP_Test et état de l'anneau</h3>
+      <p>On te fournit une capture filtrée sur <code>0x88E3</code>. Voici les premières lignes&nbsp;:</p>
+      <pre class="term"><code>1  0.000000  Siemens_A0:24:0a  MRP_Test, Ring closed
+2  0.020015  Siemens_A0:24:0a  MRP_Test, Ring closed
+3  0.039992  Siemens_A0:24:0a  MRP_Test, Ring closed
+4  0.060008  Siemens_A0:24:0a  MRP_Test, Ring closed</code></pre>
+      <p>Détermine la <strong>période des MRP_Test</strong> et l'<strong>état de l'anneau</strong>. Comment
+      distinguerais-tu, dans une telle capture, un anneau stable d'un anneau <em>en cours de reconfiguration</em>&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Les horodatages sont espacés d'environ <strong>20&nbsp;ms</strong> (0.020, 0.040, 0.060…)&nbsp;:
+        c'est la période de test. Toutes les trames portent <em>Ring closed</em> et une seule MAC source (le
+        MRM)&nbsp;: l'anneau est <strong>fermé et stable</strong>, la redondance est disponible.</p>
+        <p>Un anneau <strong>en cours de reconfiguration</strong> se trahirait par&nbsp;: (a) l'apparition de
+        <code>MRP_TopologyChange</code> et/ou <code>MRP_LinkChange</code> au milieu des MRP_Test, et (b) le
+        basculement de l'état de test en <strong><em>Ring open</em></strong>. Si l'état reste durablement
+        <em>Ring open</em> après la salve, l'anneau est <strong>resté ouvert</strong> (redondance consommée,
+        cf. §4) — à corréler avec l'état SNMP du switch.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Anneau sain ou anneau qui flappe&nbsp;?</h3>
+      <p>Deux captures de 30&nbsp;s, comptées par type de trame MRP&nbsp;:</p>
+      <pre class="term"><code><span class="cmt"># Capture X</span>
+MRP_Test          1500
+MRP_TopologyChange   0
+
+<span class="cmt"># Capture Y</span>
+MRP_Test          1490
+MRP_TopologyChange  84</code></pre>
+      <p>Laquelle correspond à un anneau sain&nbsp;? Que se passe-t-il dans l'autre, et par quoi le confirmes-tu
+      côté couche&nbsp;1&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Capture X</strong> est saine&nbsp;: uniquement des MRP_Test réguliers, <em>zéro</em>
+        TopologyChange sur 30&nbsp;s — l'anneau n'a pas bougé.</p>
+        <p><strong>Capture Y</strong> montre 84 TopologyChange en 30&nbsp;s, soit des rafales récurrentes&nbsp;:
+        l'anneau <strong>flappe</strong>. Un lien monte et tombe sans cesse, et le MRM reconfigure en boucle.
+        Cause probable côté <strong>L1</strong>&nbsp;: câble mal enfiché ou endommagé, RJ45/connecteur oxydé,
+        SFP défaillant, ou perturbation CEM. On le confirme avec les <strong>compteurs de port</strong> du
+        chapitre&nbsp;2&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> ethtool -S eth0 | grep -iE 'crc|carrier|error'
+     rx_crc_errors: <span class="hi">2417</span>
+     carrier_changes: <span class="hi">168</span></code></pre>
+        <p>Des <code>carrier_changes</code> qui grimpent et des erreurs CRC en hausse pointent le port fautif&nbsp;;
+        LLDP (§5) permet de nommer le câble exact (ex. <code>SW-B port-2 ↔ SW-C</code>) à remplacer.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Mesurer le temps de reconvergence</h3>
+      <p>Sur un banc, tu captures en parallèle le Profinet cyclique (<code>0x8892</code>) et le MRP
+      (<code>0x88E3</code>), puis tu débranches un câble d'anneau. Propose la commande de capture, et explique
+      comment tu obtiens le <strong>temps réel d'interruption vu par le procédé</strong>.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Capturer les deux Ethertypes avec horodatage&nbsp;:</p>
+        <pre><code class="language-bash">sudo tshark -i eth0 -f 'ether proto 0x8892 or ether proto 0x88E3' \
+     -T fields -e frame.time_relative -e eth.type -e _ws.col.Info</code></pre>
+        <p>Le trou = le plus grand écart entre deux trames <strong>RT (0x8892) consécutives</strong>, encadrant
+        la salve MRP. On l'extrait automatiquement en ne gardant que le cyclique&nbsp;:</p>
+        <pre class="term"><code><span class="prompt">$</span> sudo tshark -i eth0 -f 'ether proto 0x8892' -T fields -e frame.time_relative \
+   | awk 'NR>1{d=$1-p; if(d>max)max=d} {p=$1} END{printf "trou = %.1f ms\n", max*1000}'
+trou = 67.4 ms</code></pre>
+        <p>On compare ce <strong>~67&nbsp;ms</strong> à&nbsp;: (1) la <strong>classe MRP configurée</strong>
+        (ici cohérent avec 200&nbsp;ms, marge confortable)&nbsp;; (2) le <strong>watchdog Profinet</strong> du
+        device (souvent 3&nbsp;× la période cyclique). Tant que le trou &lt; watchdog, le device ne déclare
+        aucun défaut et le procédé ne s'en aperçoit pas. Si le trou dépassait le watchdog, la reconvergence MRP
+        serait trop lente pour cette période cyclique&nbsp;: il faudrait passer en MRP rapide ou allonger le
+        watchdog.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-07.html"><span class="lbl">← Précédent</span>Diagnostiquer Profinet</a>
+    <a class="next" href="chapitre-09.html"><span class="lbl">Suivant →</span>OPC-UA au shell</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic réseau OT/IT au shell Linux 🔌
+  </footer>
+</body>
+</html>
