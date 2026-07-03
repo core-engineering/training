@@ -189,6 +189,16 @@ Settings for eth0:
     <strong>monte régulièrement</strong> même à faible cadence = dégradation en cours, à corriger avant qu'elle
     ne provoque des pertes de cycle Profinet.</p>
 
+    <div class="callout piege">
+      <p><code>ethtool</code> ne voit que <strong>ta propre carte</strong> et le <strong>seul segment</strong> qui
+      la relie à son port de switch. Il ne dit rien des autres liens du réseau. Si un
+      <strong>ET&nbsp;200SP distant</strong> décroche à cause de <em>son</em> câble (segment « switch ↔ device »
+      auquel ton poste n'appartient pas), tu ne verras <em>rien</em> monter dans <code>ethtool -S eth0</code> —
+      c'est normal. Les erreurs de ce segment sont comptées par le <strong>port du switch managé</strong> en face
+      du device : on les lit en <strong>SNMP</strong> (<code>ifInErrors</code>, cf. <a href="chapitre-10.html">chapitre&nbsp;10</a>),
+      avec le même raisonnement de delta. Règle simple : <em>un port n'observe que le lien auquel il touche</em>.</p>
+    </div>
+
     <h2>4. Identifier la carte… et le port physique</h2>
     <p>Quel pilote, quelle puce&nbsp;? <code>ethtool -i</code> le dit — utile pour chercher un bug de driver ou
     vérifier une version de firmware&nbsp;:</p>
@@ -345,9 +355,11 @@ sudo ip link delete eth0.100</code></pre>
 
     <div class="exercice">
       <h3>Exercice 2 — Erreur ponctuelle ou dérive&nbsp;?</h3>
-      <p>Un device ET&nbsp;200SP « décroche » par intermittence. Tu suspectes le câble. Relève les erreurs CRC
-      du port, attends, relève à nouveau, et conclus : s'agit-il d'un vieil incident figé ou d'une dégradation
-      active&nbsp;? Donne la commande et le raisonnement.</p>
+      <p>Le lien entre ton <strong>edge et son port de switch</strong> est instable : la connexion se dégrade
+      par moments et tu suspectes <em>ton</em> câble. Relève les erreurs CRC de <strong>ton</strong> interface,
+      attends, relève à nouveau, et conclus : s'agit-il d'un vieil incident figé ou d'une dégradation active&nbsp;?
+      Donne la commande et le raisonnement. Enfin&nbsp;: si c'était le câble d'un <strong>ET&nbsp;200SP distant</strong>
+      qu'on suspectait, pourquoi <code>ethtool</code> ne suffirait-il pas, et quel outil faudrait-il&nbsp;?</p>
       <details>
         <summary>Voir la solution</summary>
         <pre class="term"><code><span class="prompt">$</span> ethtool -S eth0 | grep rx_crc_errors; sleep 30; \
@@ -356,11 +368,17 @@ sudo ip link delete eth0.100</code></pre>
      <span class="hi">rx_crc_errors: 40794</span>     <span class="cmt"># +223 en 30 s</span></code></pre>
         <p>La valeur absolue (40&nbsp;571) ne dit rien seule : elle a pu s'accumuler sur des mois. Le
         <strong>delta</strong>, lui, est parlant : <strong>+223 CRC en 30 secondes</strong>, soit une dérive
-        franche et continue → couche physique en cause (câble, blindage, ou EMI d'un variateur voisin). Si le
-        second relevé avait donné exactement 40&nbsp;571 (delta nul), on aurait conclu à un incident
-        <em>ancien</em> et figé, sans rapport avec le décrochage actuel. Pour confirmer visuellement pendant
-        qu'on bouge le câble :</p>
+        franche et continue sur <em>ton</em> lien → couche physique en cause (câble, blindage, ou EMI d'un
+        variateur voisin). Si le second relevé avait donné exactement 40&nbsp;571 (delta nul), on aurait conclu
+        à un incident <em>ancien</em> et figé, sans rapport avec l'instabilité actuelle. Pour confirmer
+        visuellement pendant qu'on bouge le câble :</p>
         <pre class="term"><code><span class="prompt">$</span> watch -n1 -d 'ethtool -S eth0 | grep -i crc'</code></pre>
+        <p><strong>Et pour un ET&nbsp;200SP distant&nbsp;?</strong> <code>ethtool</code> ne lit que les compteurs de
+        <em>ta</em> carte, donc uniquement le segment « ton port ↔ ton port de switch ». Le câble
+        « switch ↔ ET&nbsp;200SP » est un <em>autre</em> segment, auquel tu n'appartiens pas : ses CRC sont comptés
+        par le <strong>port du switch managé</strong> qui fait face au device. On les lit alors en <strong>SNMP</strong>
+        sur le switch (<code>ifInErrors</code>, <code>ifOperStatus</code> — cf. <a href="chapitre-10.html">chapitre&nbsp;10</a>),
+        avec <em>exactement</em> le même raisonnement de delta : commande différente, logique identique.</p>
       </details>
     </div>
 
