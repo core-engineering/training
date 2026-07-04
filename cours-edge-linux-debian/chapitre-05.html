@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Temps &amp; NTP (chrony)</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Temps &amp; NTP (chrony)</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre pourquoi <strong>l'heure juste</strong> est un enjeu OT, et le rôle de <strong>stratum</strong>
+        dans une hiérarchie NTP.</li>
+        <li>Lire l'état d'un client&nbsp;: <code>chronyc tracking</code>, <code>sources</code>,
+        <code>sourcestats</code>.</li>
+        <li>Configurer l'edge en <strong>serveur NTP</strong> pour la cellule et vérifier ses
+        <strong>clients</strong> (<code>chronyc clients</code>).</li>
+        <li>Diagnostiquer un client — S7-1500, switch — qui <strong>ne se synchronise pas</strong>, et
+        maîtriser le saut d'horloge (<code>makestep</code>).</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi le temps compte en OT</h2>
+    <p>Une heure fausse ne fait pas planter une machine&nbsp;; elle rend le diagnostic <em>impossible</em>. Si
+    l'edge est à 08:03 et le CPU S7-1500 à 08:05, corréler un défaut automate avec un événement dans le
+    journal de l'edge (chapitre&nbsp;4) devient un casse-tête&nbsp;: les mêmes faits portent des heures
+    différentes. Pire, certains protocoles et certificats en dépendent&nbsp;:</p>
+    <ul>
+      <li><strong>Horodatage des alarmes et des données</strong>&nbsp;: une remontée OPC-UA ou un log
+      d'historian n'a de valeur que si tous les acteurs partagent la même heure.</li>
+      <li><strong>Certificats TLS/OPC-UA</strong>&nbsp;: une horloge trop décalée fait échouer la validation
+      d'un certificat (période de validité «&nbsp;pas encore commencée&nbsp;» ou «&nbsp;expirée&nbsp;») —
+      panne déroutante qui n'a rien de réseau.</li>
+      <li><strong>Analyse d'incident</strong>&nbsp;: sans horloge commune, impossible d'établir la chronologie
+      d'une panne à travers edge, automate et switch.</li>
+    </ul>
+
+    <div class="callout note">
+      <p>Sur beaucoup de cellules, l'edge joue le rôle de <strong>référence de temps locale</strong>&nbsp;:
+      il se synchronise vers le haut (NTP de l'usine, ou sa propre horloge à défaut) et sert l'heure vers le
+      bas à l'automate et aux switches. Bien régler chrony sur l'edge, c'est mettre toute la cellule à la même
+      montre.</p>
+    </div>
+
+    <h2>2. Stratum&nbsp;: la hiérarchie NTP en un mot</h2>
+    <p>NTP organise les sources de temps en <strong>strates</strong> (<em>stratum</em>). Le stratum&nbsp;0
+    est une horloge de référence (GPS, atomique)&nbsp;; le stratum&nbsp;1 est un serveur directement branché
+    dessus&nbsp;; chaque niveau qui s'en éloigne incrémente le numéro. Plus le stratum est bas, plus la source
+    est «&nbsp;proche&nbsp;» de la référence. Notre edge sera typiquement stratum&nbsp;3 ou 4 (il suit le NTP
+    de l'usine), et il servira l'automate en tant que tel.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 800 300" role="img" aria-label="Hiérarchie NTP : une horloge GPS stratum 0 alimente le NTP usine stratum 2, qui synchronise l'edge stratum 3, qui à son tour sert de serveur NTP au CPU S7-1500 et aux switches de la cellule.">
+        <rect class="node" x="330" y="15" width="140" height="40" rx="7" style="stroke:var(--c-time)"/>
+        <text class="lbl" x="400" y="35" text-anchor="middle">Horloge GPS</text>
+        <text class="lbl-s" x="400" y="49" text-anchor="middle">stratum 0/1</text>
+
+        <rect class="node" x="330" y="95" width="140" height="40" rx="7"/>
+        <text class="lbl" x="400" y="115" text-anchor="middle">NTP usine</text>
+        <text class="lbl-s" x="400" y="129" text-anchor="middle">stratum 2</text>
+        <line class="link" x1="400" y1="55" x2="400" y2="95" style="stroke:var(--c-time)"/>
+
+        <rect class="node" x="325" y="175" width="150" height="46" rx="8" style="stroke:var(--c-edge);stroke-width:2.5"/>
+        <text class="lbl" x="400" y="196" text-anchor="middle" style="fill:var(--c-edge);font-weight:700">Edge (chrony)</text>
+        <text class="lbl-s" x="400" y="211" text-anchor="middle">stratum 3 · client + serveur</text>
+        <line class="link" x1="400" y1="135" x2="400" y2="175" style="stroke:var(--c-time)"/>
+        <text class="lbl-s" x="470" y="160" text-anchor="start" style="fill:var(--c-time)">client ↑</text>
+
+        <rect class="node" x="150" y="255" width="150" height="40" rx="7" style="stroke:var(--c-svc)"/>
+        <text class="lbl" x="225" y="280" text-anchor="middle">CPU S7-1500</text>
+        <rect class="node" x="500" y="255" width="150" height="40" rx="7" style="stroke:var(--c-net)"/>
+        <text class="lbl" x="575" y="280" text-anchor="middle">Switches OT</text>
+        <line class="link" x1="360" y1="221" x2="240" y2="255" style="stroke:var(--c-time)"/>
+        <line class="link" x1="440" y1="221" x2="560" y2="255" style="stroke:var(--c-time)"/>
+        <text class="lbl-s" x="400" y="245" text-anchor="middle" style="fill:var(--c-time)">serveur ↓ (l'edge sert l'heure à la cellule)</text>
+      </svg>
+      <figcaption><b>Figure 5.1.</b> L'edge est à la fois <b>client</b> (il suit le NTP de l'usine, vers le
+      haut) et <b>serveur</b> (il sert l'heure au CPU et aux switches, vers le bas). Un seul démon,
+      <code>chrony</code>, remplit les deux rôles.</figcaption>
+    </figure>
+
+    <h2>3. chrony&nbsp;: le démon de temps de Debian</h2>
+    <p>Debian moderne utilise <strong>chrony</strong> (démon <code>chronyd</code>, client <code>chronyc</code>).
+    Il est plus robuste que l'ancien <code>ntpd</code> sur les réseaux instables et les machines qui ne
+    tournent pas 24/7 — exactement le profil d'un edge. On vérifie qu'il tourne (chapitre&nbsp;3)&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemctl status chronyd
+     Active: <span class="good">active (running)</span> since Tue 2026-04-08 06:14:02 CEST; 87 days ago</code></pre>
+
+    <h3><code>chronyc tracking</code>&nbsp;: suis-je à l'heure&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> chronyc tracking
+Reference ID    : C0A8000A (ntp.usine.local)
+Stratum         : 3
+Ref time (UTC)  : Sat Jul 04 06:22:14 2026
+System time     : <span class="good">0.000041 seconds slow of NTP time</span>
+Last offset     : -0.000012 seconds
+RMS offset      : 0.000208 seconds
+Frequency       : 12.340 ppm slow
+Skew            : 0.045 ppm
+Root delay      : 0.004120 seconds
+Leap status     : <span class="good">Normal</span></code></pre>
+
+    <p>Les lignes qui comptent&nbsp;:</p>
+    <ul>
+      <li><strong>System time … slow/fast of NTP time</strong>&nbsp;: l'écart courant entre l'horloge locale
+      et la source. Ici 41&nbsp;microsecondes — excellent. Au-delà de quelques dizaines de millisecondes sur
+      un edge stable, on s'interroge.</li>
+      <li><strong>Stratum</strong>&nbsp;: 3, cohérent avec la figure. Un stratum <code>16</code> signifie
+      «&nbsp;non synchronisé&nbsp;» — l'edge n'a <em>aucune</em> source valide (§6).</li>
+      <li><strong>Leap status: Normal</strong>&nbsp;: la synchro est saine. <code>Not synchronised</code> est
+      le drapeau rouge.</li>
+    </ul>
+
+    <h3><code>chronyc sources</code>&nbsp;: à qui je fais confiance&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> chronyc sources -v
+MS Name/IP address         Stratum Poll Reach LastRx Last sample
+===============================================================================
+<span class="good">^*</span> ntp.usine.local               2   10   377   412   +18us[ +21us] +/-  2.1ms
+^- ntp2.usine.local              2   10   377   377   -1.2ms[ -1.2ms] +/-  8.4ms
+^? 192.168.0.1                  0    8     0     -    +0ns[  +0ns] +/-    0ns</code></pre>
+
+    <p>La colonne <strong>M/S</strong> (le symbole en tête) est la clé&nbsp;:</p>
+    <table>
+      <thead><tr><th>Symbole</th><th>Sens</th></tr></thead>
+      <tbody>
+        <tr><td><code>^*</code></td><td>source <strong>actuellement sélectionnée</strong> (la référence retenue)</td></tr>
+        <tr><td><code>^+</code></td><td>source acceptable, combinée avec la sélectionnée</td></tr>
+        <tr><td><code>^-</code></td><td>source acceptable mais écartée (redondante)</td></tr>
+        <tr><td><code>^?</code></td><td>source injoignable / pas encore de mesure</td></tr>
+        <tr><td><code>^x</code></td><td>source considérée <em>fausse</em> (falseticker)</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Reach</strong> est un registre octal de joignabilité&nbsp;: <code>377</code> (= 8 bits à 1)
+    signifie «&nbsp;les 8 derniers sondages ont répondu&nbsp;» — parfait. <code>0</code> = injoignable&nbsp;;
+    une valeur qui monte progressivement (1, 3, 7, 17…) indique une synchro en cours d'établissement.</p>
+
+    <h2>4. Configurer l'edge en serveur NTP</h2>
+    <p>Pour que l'edge serve l'heure à la cellule, on édite <code>/etc/chrony/chrony.conf</code>&nbsp;:</p>
+
+    <pre><code class="language-ini"># /etc/chrony/chrony.conf (sur l'edge)
+
+# --- Rôle CLIENT : d'où l'edge tient l'heure (vers le haut) ---
+server ntp.usine.local iburst
+server ntp2.usine.local iburst
+
+# --- Rôle SERVEUR : à qui l'edge sert l'heure (vers le bas) ---
+allow 192.168.0.0/24        # autorise le segment OT à interroger l'edge
+
+# Si l'edge perd sa source amont, il continue de servir sa propre horloge
+# à un stratum dégradé (utile pour un îlot isolé) :
+local stratum 10
+
+# Corriger un gros décalage au démarrage d'un seul coup (voir §6)
+makestep 1.0 3
+rtcsync                     # resynchronise l'horloge matérielle (RTC)
+driftfile /var/lib/chrony/chrony.drift</code></pre>
+
+    <p>Les deux directives structurantes&nbsp;: <code>server</code> (l'edge est <em>client</em> de ces
+    serveurs) et <code>allow</code> (l'edge <em>sert</em> ce sous-réseau). Après édition, on recharge&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl restart chronyd
+<span class="prompt-edge">maint@edge-cell12:~$</span> chronyc sources    <span class="cmt"># vérifier que les serveurs amont répondent</span></code></pre>
+
+    <div class="callout piege">
+      <p>Le piège nº&nbsp;1 du serveur NTP&nbsp;: oublier <code>allow</code>. Sans lui, chrony reste un
+      <em>client</em> pur et refuse toute requête entrante&nbsp;— les automates interrogent l'edge et
+      n'obtiennent rien, sans message d'erreur explicite de leur côté. Symptôme&nbsp;: «&nbsp;l'edge est à
+      l'heure mais les clients ne se synchronisent pas&nbsp;». Vérifie toujours qu'<code>allow</code> couvre
+      bien le sous-réseau OT.</p>
+    </div>
+
+    <h3><code>chronyc clients</code>&nbsp;: qui me demande l'heure&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo chronyc clients
+Hostname                      NTP   Drop Int IntL Last     Cmd
+===============================================================
+192.168.0.1                   142      0   6   -    23      0
+192.168.0.20                   88      0   6   -    9       0
+192.168.0.30                    0      0   -   -    -       0</code></pre>
+    <p>Cette commande (qui demande <code>sudo</code>) liste les clients qui ont interrogé l'edge. Ici le CPU
+    (<code>.1</code>) et un switch (<code>.20</code>) se synchronisent bien&nbsp;; le switch <code>.30</code>
+    à <strong>0 requête NTP</strong> ne parle pas à l'edge — c'est lui qu'on va diagnostiquer.</p>
+
+    <h2>5. Diagnostiquer un client qui ne se synchronise pas</h2>
+    <p>«&nbsp;Le switch <code>.30</code> n'est pas à l'heure&nbsp;». La démarche, du plus probable au moins
+    probable&nbsp;:</p>
+    <ol>
+      <li><strong>L'edge sert-il vraiment&nbsp;?</strong> <code>chronyc tracking</code> sur l'edge&nbsp;: si
+      lui-même est en stratum&nbsp;16 / <em>Not synchronised</em>, il ne peut servir personne. On règle
+      l'amont d'abord.</li>
+      <li><strong>Le client est-il autorisé&nbsp;?</strong> Vérifier que son IP tombe dans un <code>allow</code>
+      de <code>chrony.conf</code>.</li>
+      <li><strong>Le réseau laisse-t-il passer le NTP&nbsp;?</strong> NTP est en <strong>UDP port 123</strong>.
+      Un pare-feu OT ou une règle VLAN peut le bloquer. Test rapide côté edge&nbsp;:</li>
+    </ol>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo ss -ulpn | grep :123
+UDP  UNCONN  0  0  0.0.0.0:123  0.0.0.0:*  users:(("chronyd",pid=612,fd=5))
+<span class="cmt"># chronyd écoute bien sur 123 → le serveur est prêt. Reste le client / le réseau.</span></code></pre>
+
+    <ol start="4">
+      <li><strong>Le client pointe-t-il vers la bonne IP&nbsp;?</strong> C'est la cause la plus fréquente et
+      elle est <em>côté client</em>&nbsp;: le switch ou l'automate a été configuré avec l'ancienne adresse du
+      serveur NTP, ou aucune. Cela se règle dans <em>sa</em> configuration, pas sur l'edge.</li>
+    </ol>
+
+    <div class="callout plc">
+      <p>Sur le <strong>S7-1500</strong>, le serveur NTP se déclare dans TIA Portal&nbsp;: propriétés du CPU →
+      «&nbsp;Synchronisation de l'heure&nbsp;» → activer NTP et saisir l'IP de l'edge
+      (<code>192.168.0.10</code>) + l'intervalle. Un oubli classique&nbsp;: le fuseau/décalage. Le CPU
+      travaille souvent en <strong>UTC</strong> en interne et applique un décalage local à l'affichage&nbsp;;
+      un «&nbsp;écart de 2&nbsp;heures&nbsp;» entre l'edge (heure locale CEST) et l'automate est presque
+      toujours un problème de fuseau, pas de synchro NTP. Compare toujours en UTC pour lever le doute.</p>
+    </div>
+
+    <h2>6. Le saut d'horloge&nbsp;: <code>makestep</code></h2>
+    <p>chrony corrige normalement l'heure en <em>ralentissant/accélérant</em> doucement l'horloge (pour ne
+    jamais la faire reculer, ce qui perturberait les applications). Mais au démarrage, si l'edge est décalé de
+    plusieurs secondes (RTC déchargée, machine restée éteinte longtemps), la correction douce prendrait des
+    heures. <code>makestep 1.0 3</code> autorise un <strong>saut brutal</strong> pour les 3 premières mises à
+    jour si l'écart dépasse 1&nbsp;seconde. On peut aussi forcer à la main&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo chronyc makestep
+200 OK
+<span class="prompt-edge">maint@edge-cell12:~$</span> chronyc tracking | grep "System time"
+System time     : <span class="good">0.000018 seconds slow of NTP time</span></code></pre>
+
+    <div class="callout ot">
+      <p>Un saut d'horloge est un <strong>événement à ne pas prendre à la légère en production</strong>&nbsp;:
+      faire bondir l'heure de plusieurs secondes pendant qu'une ligne tourne peut désordonner des horodatages,
+      déclencher des timeouts applicatifs, invalider une session. On force un <code>makestep</code> de
+      préférence à froid (au démarrage, machine pas encore en service) — pas sur un edge en pleine remontée de
+      données. En marche, on laisse chrony corriger en douceur.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>En OT, l'heure juste rend le diagnostic <strong>corrélable</strong> et fait marcher les
+        certificats&nbsp;; l'edge est souvent la <strong>référence de temps locale</strong> de la cellule.</li>
+        <li><strong>chrony</strong> est à la fois client (<code>server …</code>) et serveur (<code>allow …</code>).
+        <code>chronyc tracking</code> (suis-je à l'heure&nbsp;: stratum, offset, Leap status),
+        <code>sources</code> (mes sources&nbsp;: <code>^*</code> = sélectionnée, Reach 377 = OK),
+        <code>clients</code> (qui me demande l'heure).</li>
+        <li>Serveur NTP&nbsp;: ne pas oublier <code>allow &lt;sous-réseau&gt;</code> — sinon les clients
+        n'obtiennent rien.</li>
+        <li>Client qui ne synchronise pas&nbsp;: vérifier (1) l'edge lui-même est synchro, (2) le client est
+        <code>allow</code>é, (3) UDP/123 passe (<code>ss -ulpn | grep :123</code>), (4) le client pointe la
+        bonne IP&nbsp;; sur S7-1500, se méfier du <strong>fuseau UTC vs local</strong>.</li>
+        <li><code>makestep</code> = saut d'horloge&nbsp;: utile à froid, <strong>dangereux en marche</strong>.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Suis-je synchronisé&nbsp;?</h3>
+      <p>En une commande sur l'edge, comment sais-tu si l'horloge est correctement synchronisée et à quel
+      stratum&nbsp;? Quels champs regardes-tu&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> chronyc tracking</code></pre>
+        <p>Trois champs&nbsp;: <strong>Leap status</strong> doit être <code>Normal</code> (pas
+        <code>Not synchronised</code>)&nbsp;; <strong>Stratum</strong> doit être bas (3–4 typiquement, jamais
+        16)&nbsp;; <strong>System time … of NTP time</strong> doit être petit (µs à quelques ms). Si le stratum
+        est 16 ou le Leap status «&nbsp;Not synchronised&nbsp;», l'edge n'a pas de source valide — on regarde
+        <code>chronyc sources</code>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — L'edge est à l'heure mais l'automate non</h3>
+      <p><code>chronyc tracking</code> sur l'edge est nickel, pourtant le S7-1500 dérive. Liste les vérifs, de
+      l'edge vers le client.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ol>
+          <li>Sur l'edge&nbsp;: <code>allow 192.168.0.0/24</code> présent dans <code>chrony.conf</code>&nbsp;?
+          (sans lui, l'edge ne répond pas aux requêtes).</li>
+          <li>Sur l'edge&nbsp;: <code>sudo chronyc clients</code> — le CPU apparaît-il avec des requêtes NTP
+          &gt; 0&nbsp;? Si 0, il ne l'interroge pas (config client ou réseau).</li>
+          <li>Réseau&nbsp;: UDP/123 passe-t-il&nbsp;? <code>sudo ss -ulpn | grep :123</code> confirme que
+          l'edge écoute&nbsp;; un pare-feu OT peut bloquer entre les deux.</li>
+          <li>Côté CPU (TIA)&nbsp;: NTP activé avec l'IP de l'edge&nbsp;? Et surtout, l'écart est-il de
+          «&nbsp;2&nbsp;heures pile&nbsp;»&nbsp;? Alors c'est le <strong>fuseau</strong> (UTC vs local), pas la
+          synchro.</li>
+        </ol>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Reach à 0</h3>
+      <p><code>chronyc sources</code> montre ta source amont avec <code>^?</code> et <code>Reach 0</code>. Que
+      signifie-t-il, et quelles causes envisages-tu&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><code>Reach 0</code> = aucun des 8 derniers sondages n'a reçu de réponse&nbsp;: la source est
+        <strong>injoignable</strong>. <code>^?</code> confirme «&nbsp;pas de mesure exploitable&nbsp;». Causes
+        possibles&nbsp;: le serveur NTP amont est éteint ou a changé d'IP&nbsp;; le réseau bloque UDP/123 vers
+        l'amont&nbsp;; le nom <code>ntp.usine.local</code> ne résout plus (DNS)&nbsp;; l'edge n'a pas de route
+        vers le segment usine. On teste la joignabilité de base (<code>ping</code>, résolution DNS) puis on
+        remonte&nbsp;; tant que l'edge n'a pas de source, il ne peut servir personne (stratum&nbsp;16).</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>Journaux avec journalctl</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>Docker sur l'edge — état &amp; diagnostic</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

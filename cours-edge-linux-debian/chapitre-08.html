@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 08 — Sauvegarde &amp; restauration</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 08</span><br>Sauvegarde &amp; restauration</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Identifier <strong>ce qui doit être sauvegardé</strong> sur un edge&nbsp;: config, volumes Docker,
+        compose, unités — et ce qui ne sert à rien de sauvegarder.</li>
+        <li>Fabriquer une sauvegarde cohérente avec <code>tar</code>, et la <strong>tirer sur le
+        laptop</strong> avec <code>rsync</code>/<code>scp</code>.</li>
+        <li>Automatiser avec un <strong>timer systemd</strong> et une politique de rétention.</li>
+        <li>Surtout&nbsp;: <strong>tester la restauration</strong> — une sauvegarde jamais restaurée n'est pas
+        une sauvegarde.</li>
+      </ul>
+    </div>
+
+    <h2>1. Quoi sauvegarder&nbsp;? (et quoi ignorer)</h2>
+    <p>La bonne question n'est pas «&nbsp;comment tout copier&nbsp;» mais «&nbsp;qu'est-ce qui est
+    <strong>irremplaçable</strong> et <strong>propre à cet edge</strong>&nbsp;?&nbsp;». On distingue trois
+    catégories.</p>
+
+    <table>
+      <thead><tr><th>Catégorie</th><th>Exemples</th><th>Sauvegarder&nbsp;?</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Config &amp; définitions</strong></td><td><code>/opt/edge/compose.yml</code>, <code>gateway.yml</code>, unités systemd, <code>chrony.conf</code>, <code>sshd_config</code></td><td>✅ oui — petit, critique, propre à la machine</td></tr>
+        <tr><td><strong>Données persistantes</strong></td><td>volumes Docker (<code>gateway-data</code>, <code>mqtt-data</code>)</td><td>✅ oui — l'état/historique local, irremplaçable</td></tr>
+        <tr><td><strong>Reconstructible</strong></td><td>images Docker (dans le registry), paquets APT, l'OS</td><td>❌ non — se re-télécharge / réinstalle</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout astuce">
+      <p>Le principe directeur&nbsp;: on sauvegarde ce qu'on ne peut pas <strong>reconstruire à partir d'une
+      source</strong>. L'image Docker est dans le registry&nbsp;: inutile de la sauvegarder (mais garde le
+      <em>numéro de version</em> déployé, lui, dans le compose — d'où l'intérêt de sauvegarder le compose).
+      Les données du volume, elles, n'existent nulle part ailleurs&nbsp;: c'est le cœur de la sauvegarde.</p>
+    </div>
+
+    <h2>2. Où vivent les volumes&nbsp;?</h2>
+    <p>Un volume Docker nommé vit sous <code>/var/lib/docker/volumes/&lt;nom&gt;/_data</code>. On peut le
+    localiser avec <code>inspect</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker volume inspect edge_gateway-data --format '{{.Mountpoint}}'
+/var/lib/docker/volumes/edge_gateway-data/_data</code></pre>
+
+    <div class="callout piege">
+      <p>Copier un volume «&nbsp;à chaud&nbsp;», conteneur en marche, risque de capturer des données
+      <strong>incohérentes</strong> (fichier à moitié écrit, base en cours de transaction). Pour une
+      sauvegarde vraiment fiable, on met le service en pause le temps du snapshot&nbsp;: <code>docker compose
+      stop gateway</code> → sauvegarde → <code>docker compose start gateway</code>. Sur un edge en production,
+      cette courte interruption se planifie en fenêtre de maintenance. Si l'arrêt est impossible, privilégie
+      un mécanisme de dump applicatif cohérent (ex. l'app exporte elle-même son état) plutôt qu'une copie
+      brute du volume vivant.</p>
+    </div>
+
+    <h2>3. Fabriquer la sauvegarde avec <code>tar</code></h2>
+    <p>On rassemble config + volumes dans une archive horodatée. Le nom de fichier inclut la date pour la
+    rétention&nbsp;:</p>
+
+    <pre><code class="language-bash">#!/usr/bin/env bash
+# /usr/local/sbin/edge-backup.sh — sauvegarde locale de l'edge
+set -euo pipefail
+
+STAMP=$(date +%Y%m%d-%H%M)
+DEST=/var/backups/edge
+mkdir -p "$DEST"
+
+# 1. Arrêt bref pour un snapshot cohérent des volumes
+docker compose -f /opt/edge/compose.yml stop
+
+# 2. Archive : config + volumes Docker, compressée
+tar czf "$DEST/edge-$STAMP.tar.gz" \
+    -C / \
+    opt/edge \
+    etc/systemd/system/edge-gateway.service \
+    etc/chrony/chrony.conf \
+    var/lib/docker/volumes/edge_gateway-data/_data \
+    var/lib/docker/volumes/edge_mqtt-data/_data
+
+# 3. Relance immédiate du service
+docker compose -f /opt/edge/compose.yml start
+
+# 4. Rétention : ne garder que les 7 dernières archives
+ls -1t "$DEST"/edge-*.tar.gz | tail -n +8 | xargs -r rm --
+
+echo "Sauvegarde OK : $DEST/edge-$STAMP.tar.gz"</code></pre>
+
+    <p>On le rend exécutable et on l'essaie une fois à la main&nbsp;:</p>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo chmod +x /usr/local/sbin/edge-backup.sh
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo /usr/local/sbin/edge-backup.sh
+Sauvegarde OK : /var/backups/edge/edge-20260704-0930.tar.gz
+<span class="prompt-edge">maint@edge-cell12:~$</span> ls -lh /var/backups/edge/
+-rw-r--r-- 1 root root 214M Jul  4 09:30 edge-20260704-0930.tar.gz</code></pre>
+
+    <div class="callout astuce">
+      <p><code>set -euo pipefail</code> en tête de script est une bonne habitude&nbsp;: <code>-e</code>
+      arrête au premier échec (on ne veut pas «&nbsp;réussir&nbsp;» une sauvegarde à moitié faite),
+      <code>-u</code> refuse les variables non définies, <code>pipefail</code> propage l'échec dans un
+      pipe. Sans <code>-e</code>, un <code>tar</code> qui échoue (disque plein&nbsp;!) passerait inaperçu et
+      tu croirais avoir une sauvegarde.</p>
+    </div>
+
+    <h2>4. Tirer la sauvegarde <em>hors</em> de l'edge</h2>
+    <p>Point capital&nbsp;: une sauvegarde qui reste <strong>sur l'edge</strong> ne protège de rien. Si le
+    disque meurt ou la machine est volée, elle part avec. On la copie ailleurs — typiquement, on la
+    <strong>tire depuis le laptop</strong> (l'edge n'a pas forcément le droit d'écrire vers l'IT).</p>
+
+    <pre class="term"><code><span class="cmt"># Depuis le LAPTOP : rapatrier la dernière archive</span>
+<span class="prompt">laptop:~$</span> rsync -avz --progress \
+    edge12:/var/backups/edge/edge-20260704-0930.tar.gz \
+    ~/backups/edge-cell12/
+edge-20260704-0930.tar.gz    214.00M  100%   28.4MB/s
+
+<span class="cmt"># Ou tout le dossier de sauvegardes, en miroir incrémental :</span>
+<span class="prompt">laptop:~$</span> rsync -avz edge12:/var/backups/edge/ ~/backups/edge-cell12/</code></pre>
+
+    <p><code>rsync</code> est préférable à <code>scp</code> pour du récurrent&nbsp;: il ne transfère que les
+    différences (les nouvelles archives), reprend un transfert interrompu, et compresse (<code>-z</code>) —
+    utile sur une liaison OT lente. Il passe par la config SSH du chapitre&nbsp;2 (l'alias <code>edge12</code>).</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 800 220" role="img" aria-label="Flux de sauvegarde : sur l'edge, config et volumes Docker sont archivés en tar.gz dans /var/backups ; le laptop tire cette archive par rsync ; une copie part vers un stockage réseau. La restauration remonte de l'archive vers l'edge.">
+        <rect class="node" x="40" y="60" width="200" height="110" rx="9" style="stroke:var(--c-edge)"/>
+        <text class="lbl" x="140" y="52" text-anchor="middle" style="fill:var(--c-edge)">Edge</text>
+        <text class="lbl-s" x="140" y="88" text-anchor="middle">/opt/edge (config)</text>
+        <text class="lbl-s" x="140" y="108" text-anchor="middle">volumes Docker</text>
+        <text class="lbl-s" x="140" y="140" text-anchor="middle" style="fill:var(--c-svc)">→ tar.gz /var/backups</text>
+
+        <rect class="node" x="320" y="80" width="160" height="66" rx="9" style="stroke:var(--accent-2)"/>
+        <text class="lbl" x="400" y="108" text-anchor="middle">Laptop</text>
+        <text class="lbl-s" x="400" y="126" text-anchor="middle">~/backups/edge-cell12</text>
+        <line class="link" x1="240" y1="113" x2="320" y2="113" style="stroke:var(--accent-2);stroke-width:2.5"/>
+        <text class="lbl-s" x="280" y="103" text-anchor="middle" style="fill:var(--accent-2)">rsync ←</text>
+
+        <rect class="node" x="580" y="80" width="180" height="66" rx="9"/>
+        <text class="lbl" x="670" y="108" text-anchor="middle">Stockage réseau</text>
+        <text class="lbl-s" x="670" y="126" text-anchor="middle">NAS / coffre IT</text>
+        <line class="link" x1="480" y1="113" x2="580" y2="113"/>
+
+        <path d="M400 150 Q250 210 140 172" class="link-hot"/>
+        <text class="lbl-s" x="270" y="205" text-anchor="middle" style="fill:var(--danger)">restauration →</text>
+      </svg>
+      <figcaption><b>Figure 8.1.</b> Règle du 3-2-1 en pratique&nbsp;: l'archive existe sur l'edge, sur le
+      laptop, et sur un stockage réseau. La <b>restauration</b> (trait rouge) fait le chemin inverse — c'est
+      elle qu'il faut avoir répétée <em>avant</em> d'en avoir besoin.</figcaption>
+    </figure>
+
+    <h2>5. Automatiser&nbsp;: un timer systemd</h2>
+    <p>On veut que la sauvegarde tourne seule, chaque nuit. Plutôt que cron, on utilise un
+    <strong>timer systemd</strong> (chapitre&nbsp;3)&nbsp;: mêmes logs (journald), même outillage. Deux
+    fichiers.</p>
+
+    <pre><code class="language-ini"># /etc/systemd/system/edge-backup.service
+[Unit]
+Description=Sauvegarde de l'edge
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/edge-backup.sh</code></pre>
+
+    <pre><code class="language-ini"># /etc/systemd/system/edge-backup.timer
+[Unit]
+Description=Sauvegarde quotidienne de l'edge
+[Timer]
+OnCalendar=*-*-* 02:30:00     # tous les jours à 02h30
+Persistent=true               # rattrape si l'edge était éteint à l'heure prévue
+[Install]
+WantedBy=timers.target</code></pre>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl daemon-reload
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl enable --now edge-backup.timer
+<span class="prompt-edge">maint@edge-cell12:~$</span> systemctl list-timers edge-backup.timer
+NEXT                        LEFT       UNIT               ACTIVATES
+Sat 2026-07-05 02:30:00 CEST 16h left   edge-backup.timer  edge-backup.service</code></pre>
+
+    <p><code>Persistent=true</code> est important sur un edge susceptible d'être éteint&nbsp;: si l'heure
+    prévue est manquée (machine hors tension à 02h30), la sauvegarde se lance au démarrage suivant, au lieu
+    d'être simplement sautée.</p>
+
+    <div class="callout note">
+      <p>On vérifie qu'une sauvegarde automatique a bien tourné exactement comme un service&nbsp;:
+      <code>systemctl status edge-backup.service</code> (dernier résultat) et <code>journalctl -u
+      edge-backup.service</code> (le «&nbsp;Sauvegarde OK…&nbsp;» du script). Une automatisation qu'on ne
+      surveille pas est une automatisation qui vous lâche en silence le jour où le disque est plein.</p>
+    </div>
+
+    <h2>6. Restaurer&nbsp;: le seul test qui compte</h2>
+    <p>Une sauvegarde n'a de valeur que si on sait la restaurer. La restauration type, après un incident ou
+    sur un edge de remplacement&nbsp;:</p>
+
+    <pre class="term"><code><span class="cmt"># 1. Arrêter la stack (si elle tourne)</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker compose -f /opt/edge/compose.yml down
+
+<span class="cmt"># 2. Restaurer config + volumes depuis l'archive (à la racine)</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo tar xzf edge-20260704-0930.tar.gz -C /
+
+<span class="cmt"># 3. Recharger les unités (au cas où une unité a été restaurée) et redémarrer</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl daemon-reload
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker compose -f /opt/edge/compose.yml up -d
+
+<span class="cmt"># 4. Vérifier que le service repart ET que les données sont là</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker compose ps
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker logs --tail 20 edge-gateway</code></pre>
+
+    <div class="callout ot">
+      <p><strong>Teste la restauration sur un banc, pas sur l'edge de production.</strong> Restaurer une
+      archive «&nbsp;à la racine&nbsp;» avec <code>tar -C /</code> écrase des fichiers système&nbsp;: sur un
+      edge en marche, une archive mal fabriquée (chemins absolus inattendus, version incompatible) peut
+      casser la config vivante. La bonne pratique&nbsp;: monter un edge de test, y dérouler la procédure de
+      restauration complète, chronométrer, noter les pièges. Le jour d'un vrai sinistre, tu exécutes une
+      procédure <em>déjà éprouvée</em>, pas une improvisation.</p>
+    </div>
+
+    <div class="callout piege">
+      <p>L'erreur classique&nbsp;: sauvegarder pendant des mois… sans jamais avoir restauré une seule fois.
+      On découvre le jour J que l'archive est tronquée (disque plein pendant le <code>tar</code>), qu'un
+      volume manquait dans la liste, ou que le script <code>stop</code>ait le mauvais service. Une sauvegarde
+      non testée est une <strong>hypothèse</strong>, pas une garantie. Planifie un test de restauration
+      périodique (par ex. trimestriel) au même titre que la sauvegarde elle-même.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Sauvegarder <strong>ce qui est irremplaçable et propre à la machine</strong>&nbsp;: config
+        (<code>/opt/edge</code>, unités, <code>chrony.conf</code>) + <strong>volumes Docker</strong>. Pas
+        l'OS ni les images (reconstructibles depuis le registry).</li>
+        <li>Snapshot <strong>cohérent</strong>&nbsp;: <code>stop</code> bref des conteneurs avant le
+        <code>tar czf</code>, puis <code>start</code>.</li>
+        <li><strong>Sortir la sauvegarde de l'edge</strong> (<code>rsync</code> tiré depuis le laptop → NAS)&nbsp;;
+        règle 3-2-1.</li>
+        <li>Automatiser avec un <strong>timer systemd</strong> (<code>OnCalendar</code>,
+        <code>Persistent=true</code>) + rétention&nbsp;; surveiller via <code>journalctl -u
+        edge-backup</code>.</li>
+        <li><strong>Tester la restauration</strong> sur un banc — une sauvegarde jamais restaurée n'en est
+        pas une. Attention&nbsp;: le rollback d'image (chapitre&nbsp;7) ne restaure pas les données&nbsp;;
+        seule la sauvegarde du volume le fait.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Le tri</h3>
+      <p>Sur l'edge, on te propose de sauvegarder&nbsp;: (a) <code>/opt/edge/compose.yml</code>, (b) l'image
+      <code>registry.local/edge:1.8.2</code>, (c) le volume <code>edge_gateway-data</code>, (d)
+      <code>/usr/bin</code>. Lesquels, et pourquoi&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Oui&nbsp;: (a) et (c).</strong> Le compose est la définition propre à cet edge (dont le
+        numéro de version déployé)&nbsp;; le volume contient l'état/historique irremplaçable.
+        <strong>Non&nbsp;: (b)</strong> l'image est dans le registry, on la re-pull (il suffit de connaître son
+        tag, donné par le compose). <strong>Non&nbsp;: (d)</strong> <code>/usr/bin</code> vient des paquets
+        Debian, réinstallables. On sauvegarde ce qui ne se reconstruit pas depuis une source.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Sauvegarde à chaud, données corrompues</h3>
+      <p>Ton script fait <code>tar</code> du volume sans arrêter le conteneur, et à la restauration la base du
+      service est corrompue. Pourquoi, et comment corriger le script&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Le <code>tar</code> a copié le volume <em>pendant</em> que l'application écrivait&nbsp;: fichiers à
+        moitié écrits, transaction en cours — incohérence. On encadre l'archive d'un arrêt bref&nbsp;:</p>
+        <pre><code class="language-bash">docker compose -f /opt/edge/compose.yml stop
+tar czf "$DEST/edge-$STAMP.tar.gz" ...
+docker compose -f /opt/edge/compose.yml start</code></pre>
+        <p>Si l'arrêt est inacceptable, on s'appuie sur un export applicatif cohérent (l'app dumpe elle-même
+        sa base) plutôt qu'une copie brute du volume vivant.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — «&nbsp;On a des sauvegardes&nbsp;»</h3>
+      <p>Un edge meurt. On sort la dernière archive… et la restauration échoue. Cite deux causes probables que
+      seul un <em>test de restauration</em> préalable aurait révélées.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Par exemple&nbsp;: <strong>(1)</strong> l'archive est tronquée — le disque était plein pendant le
+        <code>tar</code> et, sans <code>set -e</code>, le script a rapporté «&nbsp;OK&nbsp;» quand même&nbsp;;
+        <strong>(2)</strong> un volume manquait dans la liste des chemins <code>tar</code> (on sauvegardait
+        <code>gateway-data</code> mais pas <code>mqtt-data</code>)&nbsp;; <strong>(3)</strong> les chemins de
+        l'archive ne correspondent pas à l'emplacement réel des volumes sur l'edge de remplacement&nbsp;;
+        <strong>(4)</strong> l'archive était restée sur l'edge mort, jamais tirée ailleurs. Chacune se serait
+        vue lors d'un test de restauration à blanc — d'où la règle&nbsp;: on teste la restauration, pas
+        seulement la sauvegarde.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-07.html"><span class="lbl">← Précédent</span>Déploiement Docker</a>
+    <a class="next" href="chapitre-09.html"><span class="lbl">Suivant →</span>Remise en route de bout en bout &amp; méthodologie</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

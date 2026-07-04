@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 09 — Remise en route de bout en bout &amp; méthodologie</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 09</span><br>Remise en route de bout en bout &amp; méthodologie</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Assembler tout le cours en une <strong>démarche de diagnostic</strong> ordonnée, du laptop
+        jusqu'au conteneur relancé.</li>
+        <li>Suivre un <strong>arbre de décision</strong> «&nbsp;le service edge ne répond plus&nbsp;».</li>
+        <li>Dérouler un <strong>cas complet</strong> de bout en bout, commande par commande.</li>
+        <li>Repartir avec une <strong>checklist réutilisable</strong> et savoir ce qu'on écrit avant de
+        raccrocher.</li>
+      </ul>
+    </div>
+
+    <h2>1. La démarche&nbsp;: de l'extérieur vers l'intérieur</h2>
+    <p>Le fil rouge de tout le cours&nbsp;: on diagnostique <strong>en couches</strong>, de l'accès vers
+    l'application, en ne descendant d'un cran qu'une fois le précédent validé. Sauter des étapes, c'est
+    «&nbsp;redémarrer pour voir&nbsp;» — et détruire les indices.</p>
+
+    <ol>
+      <li><strong>Accès</strong> — est-ce que je joins l'edge en SSH&nbsp;? (chapitre&nbsp;2)</li>
+      <li><strong>Machine</strong> — est-elle saine&nbsp;? disque, charge, uptime (chapitres&nbsp;1, 4)</li>
+      <li><strong>Services système</strong> — Docker, chrony tournent-ils&nbsp;? (chapitres&nbsp;3, 5)</li>
+      <li><strong>Service edge</strong> — le conteneur tourne-t-il et est-il <em>healthy</em>&nbsp;? (chapitre&nbsp;6)</li>
+      <li><strong>Application</strong> — que disent les logs applicatifs&nbsp;? (chapitres&nbsp;4, 6)</li>
+      <li><strong>En amont</strong> — l'automate, le réseau, le broker répondent-ils&nbsp;? (cours réseau)</li>
+    </ol>
+
+    <div class="callout note">
+      <p>À chaque niveau, une seule question&nbsp;: «&nbsp;est-ce sain&nbsp;?&nbsp;». Si oui, on descend&nbsp;;
+      si non, on a trouvé la couche fautive et on s'y arrête pour agir. La panne est presque toujours au
+      <strong>premier niveau qui répond «&nbsp;non&nbsp;»</strong> — inutile de creuser plus bas.</p>
+    </div>
+
+    <h2>2. Arbre de décision&nbsp;: «&nbsp;le service edge ne répond plus&nbsp;»</h2>
+
+    <figure class="fig">
+      <svg viewBox="0 0 800 560" role="img" aria-label="Arbre de décision. SSH répond-il ? Non : réseau/edge injoignable, voir cours réseau. Oui : df -h, disque plein ? Oui : purger journaux/logs Docker. Non : docker ps, conteneur Up ? Non : docker ps -a et logs, restart. Oui mais unhealthy : lire healthcheck et docker logs, souvent OPC-UA/MQTT en amont. Oui et healthy : le problème est en amont (automate, réseau, NTP).">
+        <!-- start -->
+        <rect class="node" x="300" y="10" width="200" height="40" rx="7" style="stroke:var(--c-edge)"/>
+        <text class="lbl" x="400" y="35" text-anchor="middle">« plus de données »</text>
+
+        <!-- ssh -->
+        <rect class="node" x="300" y="80" width="200" height="40" rx="7"/>
+        <text class="lbl" x="400" y="105" text-anchor="middle">ssh edge12 répond ?</text>
+        <line class="link" x1="400" y1="50" x2="400" y2="80"/>
+        <line class="link" x1="300" y1="100" x2="150" y2="100"/>
+        <rect class="node" x="20" y="80" width="130" height="46" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl-s" x="85" y="100" text-anchor="middle" style="fill:var(--danger)">NON → réseau /</text>
+        <text class="lbl-s" x="85" y="115" text-anchor="middle" style="fill:var(--danger)">edge down (ch. réseau)</text>
+
+        <!-- disk -->
+        <rect class="node" x="300" y="160" width="200" height="40" rx="7"/>
+        <text class="lbl" x="400" y="185" text-anchor="middle">df -h : disque plein ?</text>
+        <line class="link" x1="400" y1="120" x2="400" y2="160"/>
+        <text class="lbl-s" x="415" y="145" text-anchor="start" style="fill:var(--c-svc)">oui, SSH ok ↓</text>
+        <line class="link" x1="500" y1="180" x2="650" y2="180"/>
+        <rect class="node" x="650" y="158" width="130" height="46" rx="7" style="stroke:var(--warn)"/>
+        <text class="lbl-s" x="715" y="178" text-anchor="middle" style="fill:var(--warn)">OUI → purger</text>
+        <text class="lbl-s" x="715" y="193" text-anchor="middle" style="fill:var(--warn)">journaux / logs</text>
+
+        <!-- docker ps -->
+        <rect class="node" x="300" y="240" width="200" height="40" rx="7"/>
+        <text class="lbl" x="400" y="265" text-anchor="middle">docker ps : Up ?</text>
+        <line class="link" x1="400" y1="200" x2="400" y2="240"/>
+        <line class="link" x1="300" y1="260" x2="150" y2="260"/>
+        <rect class="node" x="20" y="238" width="130" height="46" rx="7" style="stroke:var(--danger)"/>
+        <text class="lbl-s" x="85" y="258" text-anchor="middle" style="fill:var(--danger)">NON → ps -a,</text>
+        <text class="lbl-s" x="85" y="273" text-anchor="middle" style="fill:var(--danger)">logs, restart</text>
+
+        <!-- healthy -->
+        <rect class="node" x="300" y="320" width="200" height="40" rx="7"/>
+        <text class="lbl" x="400" y="345" text-anchor="middle">healthy ?</text>
+        <line class="link" x1="400" y1="280" x2="400" y2="320"/>
+        <line class="link" x1="500" y1="340" x2="650" y2="340"/>
+        <rect class="node" x="620" y="318" width="160" height="46" rx="7" style="stroke:var(--warn)"/>
+        <text class="lbl-s" x="700" y="338" text-anchor="middle" style="fill:var(--warn)">unhealthy → docker</text>
+        <text class="lbl-s" x="700" y="353" text-anchor="middle" style="fill:var(--warn)">logs (OPC-UA/MQTT)</text>
+
+        <!-- amont -->
+        <rect class="node" x="280" y="400" width="240" height="54" rx="8" style="stroke:var(--c-net)"/>
+        <text class="lbl" x="400" y="423" text-anchor="middle" style="fill:var(--c-net)">healthy → le problème est EN AMONT</text>
+        <text class="lbl-s" x="400" y="441" text-anchor="middle">automate, réseau OT, NTP, broker</text>
+        <line class="link" x1="400" y1="360" x2="400" y2="400"/>
+
+        <text class="lbl-s" x="400" y="500" text-anchor="middle">On s'arrête au PREMIER « non » : c'est la couche fautive.</text>
+      </svg>
+      <figcaption><b>Figure 9.1.</b> L'arbre suit exactement l'ordre des chapitres&nbsp;: accès → machine →
+      Docker → conteneur → santé → amont. Chaque embranchement mène soit à une action ciblée, soit au niveau
+      suivant. On ne redémarre jamais avant d'avoir localisé la couche fautive.</figcaption>
+    </figure>
+
+    <h2>3. Cas complet&nbsp;: du laptop au conteneur relancé</h2>
+    <p>Scénario réel&nbsp;: à 09h12, la supervision signale «&nbsp;plus de données de la cellule&nbsp;12&nbsp;
+    depuis 8 minutes&nbsp;». On est sur le laptop. On déroule l'arbre.</p>
+
+    <h3>Étape 1 — Est-ce que je joins l'edge&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt">laptop:~$</span> ssh edge12
+<span class="prompt-edge">maint@edge-cell12:~$</span>   <span class="good"># SSH OK → l'edge est vivant et joignable. On descend.</span></code></pre>
+
+    <h3>Étape 2 — La machine est-elle saine&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> uptime; df -h /
+ 09:13:44 up 88 days, load average: 0.31, 0.28, 0.25
+Filesystem  Size Used Avail Use% Mounted on
+/dev/sda1    58G  20G   35G  <span class="good">37%</span> /
+<span class="cmt"># Charge normale, disque OK. La machine va bien. On descend.</span></code></pre>
+
+    <h3>Étape 3 — Les services système&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemctl --failed
+0 loaded units listed.        <span class="good"># Docker, chrony : rien en échec côté systemd. On descend.</span></code></pre>
+
+    <h3>Étape 4 — Le conteneur du service&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker ps
+CONTAINER ID   IMAGE                       STATUS                   NAMES
+b1f9a2c3d4e5   registry.local/edge:1.8.2   <span class="hi">Up 2 hours (unhealthy)</span>   edge-gateway
+7a2b1c9d8e6f   eclipse-mosquitto:2.0.18    Up 88 days               edge-mqtt
+<span class="cmt"># Le conteneur tourne MAIS il est unhealthy. Voilà le premier « non ». On s'arrête ici.</span></code></pre>
+
+    <h3>Étape 5 — Que dit l'application&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker logs --tail 8 edge-gateway
+09:05:02Z INFO  publish ok (128 tags)
+09:05:33Z <span class="bad">WARN  opc-ua read timeout on opc.tcp://192.168.0.1:4840</span>
+09:06:04Z <span class="bad">ERROR opc-ua session lost, reconnecting…</span>
+09:06:35Z <span class="bad">ERROR reconnect failed: connection refused</span>
+<span class="cmt"># L'app n'a pas planté : elle n'arrive plus à joindre le CPU (OPC-UA). Le problème est EN AMONT.</span></code></pre>
+
+    <h3>Étape 6 — Confirmer que c'est bien l'amont</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> ping -c2 192.168.0.1
+2 packets transmitted, 0 received, <span class="bad">100% packet loss</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> chronyc tracking | grep "Leap\|Stratum"
+Stratum : 3
+Leap status : Normal        <span class="cmt"># l'heure est bonne, ce n'est pas le NTP</span></code></pre>
+
+    <p><strong>Diagnostic&nbsp;:</strong> l'edge est sain, son service tourne&nbsp;; c'est le <strong>CPU
+    S7-1500 (192.168.0.1) qui ne répond plus</strong> — injoignable en ping. La panne n'est pas <em>sur</em>
+    l'edge&nbsp;: elle est en amont (automate en STOP, câble, port switch). Redémarrer l'edge ou le conteneur
+    n'aurait <strong>rien changé</strong> — et aurait fait perdre du temps. On bascule sur le diagnostic
+    réseau/automate (cours réseau OT) et on prévient l'automaticien.</p>
+
+    <div class="callout astuce">
+      <p>La leçon de ce cas&nbsp;: <strong>le symptôme «&nbsp;l'edge ne remonte plus rien&nbsp;» ne veut pas
+      dire «&nbsp;l'edge est en panne&nbsp;»</strong>. Neuf fois sur dix où l'on est tenté de redémarrer
+      l'edge, la démarche en couches montre que l'edge va très bien et que la cause est ailleurs. Le
+      diagnostic ordonné évite le redémarrage inutile <em>et</em> désigne le bon interlocuteur.</p>
+    </div>
+
+    <h3>Variante — quand c'est bien l'edge</h3>
+    <p>Si à l'étape 4 le conteneur avait été en <code>Restarting</code> ou <code>Exited</code>, on aurait lu
+    la dernière erreur (chapitre&nbsp;6), traité la cause (port occupé, config manquante, OOM…), puis&nbsp;:</p>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker logs --tail 20 edge-gateway        <span class="cmt"># cause</span>
+<span class="cmt"># … correction ciblée …</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker compose -f /opt/edge/compose.yml up -d
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker logs -f edge-gateway               <span class="cmt"># confirmer la remontée</span></code></pre>
+
+    <h2>4. Checklist réutilisable</h2>
+    <div class="callout shell">
+      <p><strong>Diagnostic edge — les 6 niveaux (à garder sous la main)</strong></p>
+      <table>
+        <thead><tr><th>#</th><th>Question</th><th>Commande</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Je joins l'edge&nbsp;?</td><td><code>ssh edge12</code></td></tr>
+          <tr><td>2</td><td>Machine saine&nbsp;?</td><td><code>uptime; df -h /</code></td></tr>
+          <tr><td>3</td><td>Services système OK&nbsp;?</td><td><code>systemctl --failed</code></td></tr>
+          <tr><td>4</td><td>Conteneur Up &amp; healthy&nbsp;?</td><td><code>docker ps</code> (puis <code>-a</code> si absent)</td></tr>
+          <tr><td>5</td><td>Que dit l'app&nbsp;?</td><td><code>docker logs --tail 30 edge-gateway</code></td></tr>
+          <tr><td>6</td><td>L'amont répond&nbsp;?</td><td><code>ping 192.168.0.1</code> ; <code>chronyc tracking</code></td></tr>
+        </tbody>
+      </table>
+      <p>Corréler dans le temps si besoin&nbsp;: <code>journalctl --since "09:00" --until "09:15"</code> tous
+      services confondus (chapitre&nbsp;4).</p>
+    </div>
+
+    <div class="callout ot">
+      <p><strong>Avant tout redémarrage, trois questions&nbsp;:</strong> (1) ai-je <em>lu</em> la cause, ou
+      je redémarre à l'aveugle&nbsp;? (2) le redémarrage va-t-il détruire des indices que je n'ai pas encore
+      recueillis&nbsp;? (3) si la machine ne remonte pas, ai-je un accès physique de secours&nbsp;? Un
+      <code>reboot</code> d'edge en production est un dernier recours, jamais un premier réflexe.</p>
+    </div>
+
+    <h2>5. Ce qu'on écrit avant de raccrocher</h2>
+    <p>Un diagnostic non consigné est à moitié perdu&nbsp;: le prochain qui tombe sur la même panne repart de
+    zéro. Avant de refermer la session, on note — dans le cahier de maintenance, un ticket, un
+    <em>runbook</em>&nbsp;:</p>
+    <ul>
+      <li><strong>Symptôme &amp; heure</strong>&nbsp;: «&nbsp;09h12, plus de données cellule&nbsp;12&nbsp;».</li>
+      <li><strong>Cause identifiée</strong>&nbsp;: «&nbsp;CPU 192.168.0.1 injoignable (ping 100&nbsp;% perte)&nbsp;;
+      edge et service sains&nbsp;».</li>
+      <li><strong>Action &amp; résultat</strong>&nbsp;: «&nbsp;escaladé à l'automaticien&nbsp;; aucune action
+      sur l'edge&nbsp;».</li>
+      <li><strong>À améliorer</strong>&nbsp;: «&nbsp;ajouter une alerte healthcheck → notification&nbsp;».</li>
+    </ul>
+
+    <div class="callout note">
+      <p>Le meilleur runbook est <strong>écrit à froid</strong>, après l'incident, quand on a compris. Il
+      transforme un diagnostic d'une heure en une procédure de cinq minutes pour la fois suivante. La
+      checklist du §4 est le squelette&nbsp;; chaque incident réel y ajoute une branche.</p>
+    </div>
+
+    <h2>6. Là où ce cours rejoint les autres</h2>
+    <p>L'étape 6 du cas ci-dessus t'a fait sortir de l'edge&nbsp;: ping vers l'automate, état du réseau OT.
+    C'est le territoire du cours <a href="../cours-diagnostic-reseau-ot/index.html">Diagnostic réseau
+    OT/IT</a>, qui prend le relais exactement là où celui-ci s'arrête — la capture Profinet, le DCP, l'anneau
+    MRP, l'OPC-UA sur le fil. Les deux cours forment une chaîne&nbsp;: <strong>de l'edge (cette formation)
+    au câble (la formation réseau)</strong>, tu as de quoi diagnostiquer une cellule de bout en bout, depuis
+    ton laptop.</p>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>On diagnostique <strong>en couches, de l'extérieur vers l'intérieur</strong>&nbsp;: accès →
+        machine → services système → conteneur → application → amont. On s'arrête au premier «&nbsp;non&nbsp;».</li>
+        <li>L'arbre de décision «&nbsp;plus de données&nbsp;»&nbsp;: SSH&nbsp;? disque&nbsp;? Docker Up&nbsp;?
+        healthy&nbsp;? — chaque branche mène à une action ciblée ou au niveau suivant.</li>
+        <li>Cas type&nbsp;: le plus souvent, <strong>l'edge est sain et la cause est en amont</strong>
+        (automate, réseau, NTP)&nbsp;; le diagnostic ordonné évite le redémarrage inutile.</li>
+        <li>Checklist en 6 niveaux à garder sous la main&nbsp;; <strong>lire avant de redémarrer</strong>,
+        toujours.</li>
+        <li>Consigner symptôme / cause / action / amélioration&nbsp;: un runbook à froid vaut de l'or à la
+        prochaine panne.</li>
+        <li>Ce cours (l'edge) et le cours réseau (le fil) se relaient pour couvrir la cellule de bout en
+        bout.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Où s'arrêter&nbsp;?</h3>
+      <p>Tu déroules l'arbre&nbsp;: SSH OK, disque OK, <code>systemctl --failed</code> vide,
+      <code>docker ps</code> montre <code>edge-gateway</code> en <code>Up (healthy)</code>. La supervision ne
+      reçoit toujours rien. Quelle est la couche fautive, et que fais-tu&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Tous les niveaux <em>sur l'edge</em> répondent «&nbsp;oui&nbsp;», y compris le healthcheck&nbsp;: le
+        service edge fonctionne et croit remonter les données. La couche fautive est donc <strong>en
+        aval/amont de l'edge</strong> — soit la liaison vers l'IT (broker MQTT, historian, pare-feu) ne passe
+        plus, soit la supervision elle-même. On teste la cible de la remontée&nbsp;: joignabilité du broker
+        (<code>docker logs edge-gateway</code> confirme-t-il des «&nbsp;publish ok&nbsp;»&nbsp;?), du historian,
+        et on regarde côté supervision. On ne touche pas à l'edge&nbsp;: il fait son travail.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — La tentation du reboot</h3>
+      <p>Sous pression, on te demande de rebooter l'edge «&nbsp;pour gagner du temps&nbsp;». Tu n'as pas encore
+      regardé les logs. Donne l'argument en une phrase, et les deux commandes que tu lances à la place.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><em>Argument&nbsp;:</em> «&nbsp;Un reboot efface les indices et ne corrige rien si la cause est en
+        amont&nbsp;; 30&nbsp;secondes de lecture nous diront si c'est même l'edge le problème.&nbsp;»</p>
+        <pre class="term"><code><span class="prompt-edge">$</span> docker ps                        <span class="cmt"># conteneur Up/healthy ?</span>
+<span class="prompt-edge">$</span> docker logs --tail 30 edge-gateway   <span class="cmt"># que dit l'app ?</span></code></pre>
+        <p>Ces deux commandes tranchent en général immédiatement entre «&nbsp;panne sur l'edge&nbsp;» (on
+        traite et on relance le conteneur, pas la machine) et «&nbsp;panne en amont&nbsp;» (le reboot n'y
+        aurait rien changé).</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Ton runbook</h3>
+      <p>Rédige, en 4 lignes, l'entrée de runbook pour l'incident du §3 (perte de données à 09h12, CPU
+      injoignable). Quelles rubriques&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Quatre rubriques, factuelles&nbsp;:</p>
+        <pre><code class="language-text">Symptôme : 2026-07-04 09h12, arrêt remontée cellule 12 (supervision).
+Cause    : CPU S7-1500 192.168.0.1 injoignable (ping 100% perte).
+           Edge, service, NTP sains — diagnostic en 6 niveaux, arrêt à l'étape 6.
+Action   : aucune sur l'edge ; escaladé automaticien (CPU en STOP suite défaut).
+Suivi    : ajouter alerte sur healthcheck edge-gateway → notification maintenance.</code></pre>
+        <p>L'essentiel&nbsp;: consigner que <strong>l'edge était sain</strong> (pour que le prochain ne perde
+        pas de temps à le suspecter) et l'action d'amélioration (transformer la détection manuelle en
+        alerte). C'est ce qui fait progresser l'installation d'un incident à l'autre.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-08.html"><span class="lbl">← Précédent</span>Sauvegarde &amp; restauration</a>
+    <a class="next disabled" href="#">Fin du cours 🐧</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

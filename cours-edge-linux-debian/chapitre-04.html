@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — Journaux avec journalctl</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>Journaux avec <code>journalctl</code></h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre le journal <strong>systemd</strong> (journald)&nbsp;: un seul endroit pour tous les
+        logs du système et des services.</li>
+        <li>Filtrer efficacement&nbsp;: par unité (<code>-u</code>), par priorité (<code>-p</code>), par
+        temps (<code>--since</code>, <code>-b</code>), suivre en direct (<code>-f</code>).</li>
+        <li>Rendre le journal <strong>persistant</strong> (survivre aux reboots) et maîtriser sa
+        <strong>rotation</strong> pour ne pas remplir le disque.</li>
+        <li><strong>Corréler un incident</strong> dans le temps&nbsp;: relier une panne du service edge à ce
+        qui s'est passé juste avant.</li>
+      </ul>
+    </div>
+
+    <h2>1. Un journal unique pour tout le système</h2>
+    <p>Sur une Debian moderne, on ne court plus après une dizaine de fichiers dans <code>/var/log</code>. Le
+    démon <strong>journald</strong> collecte au même endroit&nbsp;: la sortie de chaque service géré par
+    systemd, les messages du noyau (<code>dmesg</code>), l'authentification, le démarrage… le tout indexé et
+    interrogeable par <code>journalctl</code>. Sans argument, il déroule tout, du plus ancien au plus
+    récent&nbsp;; on ne fait jamais ça sur un edge qui tourne depuis 87&nbsp;jours&nbsp;— on filtre.</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl -e
+<span class="cmt"># -e (end) saute directement à la fin, les messages les plus récents</span>
+Jul 04 08:20:41 edge-cell12 edge-gateway[834]: OPC-UA session established (ns=3;s=Line12)
+Jul 04 08:20:42 edge-cell12 edge-gateway[834]: published 128 tags to mqtt://localhost:1883</code></pre>
+
+    <div class="callout astuce">
+      <p>Chaque ligne de journal porte les mêmes colonnes&nbsp;: <em>horodatage</em>, <em>hostname</em>,
+      <em>identifiant du service</em><code>[PID]</code>, puis le message. C'est cette régularité qui rend le
+      filtrage puissant&nbsp;: on peut trancher par n'importe laquelle de ces dimensions.</p>
+    </div>
+
+    <h2>2. Filtrer par unité&nbsp;: <code>-u</code></h2>
+    <p>Le filtre le plus utile&nbsp;: ne voir que les lignes d'<strong>un service</strong>.</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl -u edge-gateway -e
+Jul 04 08:03:09 edge-cell12 systemd[1]: Starting Edge Gateway (OPC-UA → MQTT)...
+Jul 04 08:03:11 edge-cell12 docker[21874]: Error: port 1883 already allocated
+Jul 04 08:03:11 edge-cell12 systemd[1]: edge-gateway.service: Failed with result 'exit-code'.
+Jul 04 08:05:22 edge-cell12 systemd[1]: Starting Edge Gateway (OPC-UA → MQTT)...
+Jul 04 08:05:24 edge-cell12 edge-gateway[834]: OPC-UA session established</code></pre>
+
+    <p>On lit toute la vie du service&nbsp;: l'échec de 08:03 (port occupé), puis la reprise réussie de 08:05.
+    C'est exactement le fil qu'on veut après un <code>systemctl status … failed</code> (chapitre&nbsp;3).</p>
+
+    <div class="callout note">
+      <p>Sur un edge, les logs applicatifs sont souvent doubles&nbsp;: <code>journalctl -u edge-gateway</code>
+      montre ce que <em>systemd</em> et le lanceur voient, mais l'intérieur du conteneur se lit plutôt avec
+      <code>docker logs</code> (chapitre&nbsp;6). Les deux sont complémentaires&nbsp;: journald pour
+      «&nbsp;le service a-t-il démarré/planté&nbsp;?&nbsp;», <code>docker logs</code> pour «&nbsp;que dit
+      l'application à l'intérieur&nbsp;?&nbsp;».</p>
+    </div>
+
+    <h2>3. Filtrer par priorité&nbsp;: <code>-p</code></h2>
+    <p>Chaque message porte une <strong>priorité</strong> (niveau de gravité, hérité de syslog), de 0 (le
+    plus grave) à 7 (le plus verbeux)&nbsp;:</p>
+
+    <table>
+      <thead><tr><th>N°</th><th>Nom</th><th>Sens</th></tr></thead>
+      <tbody>
+        <tr><td>0–2</td><td><code>emerg</code>, <code>alert</code>, <code>crit</code></td><td>critique&nbsp;: système/matériel en péril</td></tr>
+        <tr><td>3</td><td><code>err</code></td><td>erreur&nbsp;: un service a échoué</td></tr>
+        <tr><td>4</td><td><code>warning</code></td><td>avertissement</td></tr>
+        <tr><td>5–6</td><td><code>notice</code>, <code>info</code></td><td>information normale</td></tr>
+        <tr><td>7</td><td><code>debug</code></td><td>détail de mise au point</td></tr>
+      </tbody>
+    </table>
+
+    <p><code>-p err</code> ne garde que le niveau <em>err</em> et au-dessus (donc err, crit, alert, emerg) —
+    la façon la plus rapide de voir «&nbsp;qu'est-ce qui a vraiment cloché&nbsp;»&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl -p err -b
+Jul 04 08:03:11 edge-cell12 docker[21874]: <span class="bad">Error: port 1883 already allocated</span>
+Jul 04 06:14:55 edge-cell12 kernel: <span class="bad">EXT4-fs warning: ext4_dx_add_entry: Directory index full</span></code></pre>
+
+    <h2>4. Filtrer par temps&nbsp;: <code>-b</code>, <code>--since</code></h2>
+    <p>Le temps est la dimension reine du diagnostic. Deux outils&nbsp;:</p>
+
+    <h3>Par démarrage&nbsp;: <code>-b</code></h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl --list-boots | tail -3
+ -2 8f3c... Tue 2026-04-08 06:13:40 CEST—...
+ -1 a10d... Fri 2026-06-20 22:01:11 CEST—...
+  0 7a1e... Sat 2026-07-04 06:14:02 CEST—Sat 2026-07-04 08:22:10 CEST</code></pre>
+    <ul>
+      <li><code>journalctl -b</code> = journal depuis le <strong>dernier</strong> démarrage (le boot courant, index 0).</li>
+      <li><code>journalctl -b -1</code> = le boot <strong>précédent</strong>&nbsp;— précieux pour voir ce qui
+      s'est passé <em>juste avant</em> un redémarrage inattendu.</li>
+    </ul>
+
+    <h3>Par fenêtre&nbsp;: <code>--since</code> / <code>--until</code></h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl -u edge-gateway --since "08:00" --until "08:10"
+<span class="prompt-edge">maint@edge-cell12:~$</span> journalctl --since "2 hours ago" -p warning
+<span class="prompt-edge">maint@edge-cell12:~$</span> journalctl --since yesterday -u chronyd</code></pre>
+    <p><code>--since</code> accepte l'heure, la date, ou des expressions humaines (<code>"2 hours ago"</code>,
+    <code>yesterday</code>, <code>"09:15"</code>). C'est ce qui permet de <em>zoomer</em> sur la minute d'un
+    incident.</p>
+
+    <h2>5. Suivre en direct&nbsp;: <code>-f</code></h2>
+    <p>Pour observer un service pendant qu'on agit (redémarrage, test), on suit le journal en temps réel,
+    comme un <code>tail -f</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl -u edge-gateway -f
+Jul 04 08:24:01 edge-cell12 edge-gateway[834]: published 128 tags to mqtt://localhost:1883
+Jul 04 08:24:03 edge-cell12 edge-gateway[834]: published 128 tags to mqtt://localhost:1883
+<span class="cmt">^C  (Ctrl-C pour arrêter de suivre)</span></code></pre>
+
+    <div class="callout astuce">
+      <p>Le combo gagnant pour tester une remise en route&nbsp;: ouvrir <code>journalctl -u edge-gateway -f</code>
+      dans une session, et lancer <code>sudo systemctl restart edge-gateway</code> dans une autre. Tu vois
+      défiler en direct l'arrêt, le redémarrage et le rétablissement (ou l'échec) — bien plus parlant qu'un
+      <code>status</code> figé.</p>
+    </div>
+
+    <h2>6. Rendre le journal persistant</h2>
+    <p>Par défaut, sur certaines installations, journald garde ses logs <strong>en RAM</strong> (dans
+    <code>/run/log/journal</code>) — ils disparaissent à chaque reboot. Pour un edge, c'est un handicap&nbsp;:
+    après un redémarrage nocturne inexpliqué, on n'a plus rien pour comprendre. On rend le journal
+    <strong>persistant</strong> sur disque&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl --disk-usage
+Archived and active journals take up 48.0M in the file system.
+<span class="cmt"># S'il répond « in /run/... », c'est volatile. On persiste : </span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo mkdir -p /var/log/journal
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemd-tmpfiles --create --prefix /var/log/journal
+<span class="cmt"># ou : Storage=persistent dans /etc/systemd/journald.conf, puis restart systemd-journald</span></code></pre>
+
+    <h2>7. Rotation&nbsp;: ne pas remplir le disque</h2>
+    <p>Un journal persistant qui grossit sans limite finit par… remplir le disque — la panne nº&nbsp;1 du
+    chapitre&nbsp;1. On borne sa taille dans <code>/etc/systemd/journald.conf</code>&nbsp;:</p>
+
+    <pre><code class="language-ini"># /etc/systemd/journald.conf — bornes de taille
+[Journal]
+Storage=persistent
+SystemMaxUse=500M          # le journal ne dépassera pas 500 Mo au total
+SystemMaxFileSize=50M      # chaque fichier segment plafonne à 50 Mo
+MaxRetentionSec=1month     # et on ne garde pas plus d'un mois</code></pre>
+
+    <p>On peut aussi purger à la demande&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo journalctl --vacuum-size=200M   <span class="cmt"># réduit à 200 Mo</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo journalctl --vacuum-time=2weeks  <span class="cmt"># efface plus vieux que 2 semaines</span></code></pre>
+
+    <div class="callout piege">
+      <p>Attention au piège inverse&nbsp;: sur un edge à faible disque, un service applicatif <em>trop
+      bavard</em> (qui logue chaque cycle) peut, même avec la rotation, écraser en continu les logs utiles —
+      tu perds les erreurs importantes noyées sous le bruit, ou la rotation efface le passé en quelques
+      heures. Deux réponses&nbsp;: réduire la verbosité de l'application, et pour les conteneurs, borner leurs
+      logs Docker (option <code>max-size</code>, chapitre&nbsp;6) séparément du journal systemd.</p>
+    </div>
+
+    <h2>8. Corréler un incident dans le temps</h2>
+    <p>Le vrai pouvoir de journald&nbsp;: mettre côte à côte, <em>à la même minute</em>, ce qu'ont dit tous
+    les services. Scénario&nbsp;: le service edge est tombé à 08:03&nbsp;; qu'y avait-il autour&nbsp;?</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> journalctl --since "08:02" --until "08:04"
+Jul 04 08:02:58 edge-cell12 systemd[1]: Stopping Docker Application Container Engine...
+Jul 04 08:03:01 edge-cell12 kernel: <span class="hi">Out of memory: Killed process 811 (mqtt-broker)</span>
+Jul 04 08:03:11 edge-cell12 docker[21874]: <span class="bad">Error: port 1883 already allocated</span>
+Jul 04 08:03:11 edge-cell12 systemd[1]: edge-gateway.service: Failed with result 'exit-code'.</code></pre>
+
+    <p>Sans filtre par unité, on voit la <strong>chaîne causale</strong>&nbsp;: le noyau a tué le broker MQTT
+    par manque de mémoire (08:03:01), ce qui a laissé le port 1883 dans un état bancal, d'où l'échec du
+    redémarrage (08:03:11). La cause racine n'est pas «&nbsp;port occupé&nbsp;» mais «&nbsp;OOM&nbsp;» — on ne
+    l'aurait pas vue en filtrant seulement sur <code>edge-gateway</code>. <strong>Élargir la fenêtre, croiser
+    les services&nbsp;: c'est là que le diagnostic se joue.</strong></p>
+
+    <div class="callout plc">
+      <p>Côté S7-1500, le <strong>tampon de diagnostic</strong> (buffer de diag dans TIA) joue exactement ce
+      rôle&nbsp;: un journal horodaté des événements du CPU (défauts, passages STOP, alarmes). La démarche est
+      identique — on lit le buffer autour de l'heure de l'incident. L'edge et l'automate ont chacun leur
+      journal&nbsp;; un bon diagnostic croise souvent les deux, à condition qu'ils soient <em>à la même
+      heure</em> — d'où l'importance du NTP, prochain chapitre.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>journald</strong> centralise tous les logs&nbsp;; on interroge avec
+        <code>journalctl</code>, toujours en filtrant.</li>
+        <li>Filtres clés&nbsp;: <code>-u &lt;unité&gt;</code> (service), <code>-p err</code> (gravité),
+        <code>-b</code>/<code>-b -1</code> (boot courant/précédent), <code>--since/--until</code> (fenêtre),
+        <code>-f</code> (suivi direct), <code>-e</code> (aller à la fin).</li>
+        <li>Rendre le journal <strong>persistant</strong> (<code>/var/log/journal</code>,
+        <code>Storage=persistent</code>) pour survivre aux reboots.</li>
+        <li>Borner sa taille (<code>SystemMaxUse</code>, <code>--vacuum-size</code>) pour ne pas remplir le
+        disque.</li>
+        <li>Diagnostic&nbsp;: <strong>élargir la fenêtre temporelle et croiser les services</strong> révèle la
+        chaîne causale (ex. un OOM qui provoque un «&nbsp;port occupé&nbsp;» en aval).</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Les erreurs depuis le dernier boot</h3>
+      <p>Tu arrives sur un edge et veux, en une commande, ne voir que les <em>erreurs</em> survenues depuis le
+      dernier démarrage. Laquelle&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> journalctl -p err -b</code></pre>
+        <p><code>-p err</code> garde err et au-dessus&nbsp;; <code>-b</code> limite au boot courant. C'est le
+        premier coup d'œil «&nbsp;quelque chose a-t-il cassé depuis qu'on a démarré&nbsp;?&nbsp;». Pour inclure
+        le boot précédent (utile après un reboot surprise)&nbsp;: <code>journalctl -p err -b -1</code>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Que s'est-il passé juste avant le reboot&nbsp;?</h3>
+      <p>L'edge a redémarré tout seul cette nuit. Tu veux lire les toutes dernières lignes de journal
+      <em>d'avant</em> le redémarrage. Comment&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> journalctl --list-boots        <span class="cmt"># repérer l'index du boot d'avant (-1)</span>
+<span class="prompt-edge">$</span> journalctl -b -1 -e            <span class="cmt"># fin du journal du boot précédent</span>
+<span class="prompt-edge">$</span> journalctl -b -1 -p warning    <span class="cmt"># ou seulement warnings+erreurs</span></code></pre>
+        <p>Cela suppose que le journal est <strong>persistant</strong> (§6)&nbsp;: sinon, le journal du boot
+        précédent a disparu au redémarrage et <code>--list-boots</code> ne montre que le boot courant. C'est
+        exactement la situation qui justifie de persister le journal sur un edge.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Le disque se remplit de logs</h3>
+      <p><code>df -h</code> montre <code>/</code> à 95&nbsp;%, et <code>journalctl --disk-usage</code> annonce
+      6&nbsp;Go de journaux. Que fais-tu dans l'immédiat, puis pour que ça ne se reproduise pas&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Immédiat</strong> — récupérer de la place sans tout perdre&nbsp;:</p>
+        <pre class="term"><code><span class="prompt-edge">$</span> sudo journalctl --vacuum-size=500M</code></pre>
+        <p><strong>Durable</strong> — borner dans <code>/etc/systemd/journald.conf</code>&nbsp;:
+        <code>SystemMaxUse=500M</code> (+ éventuellement <code>MaxRetentionSec=1month</code>), puis
+        <code>sudo systemctl restart systemd-journald</code>. Et si la cause est un conteneur bavard, borner
+        aussi ses logs Docker (chapitre&nbsp;6). On traite à la fois le symptôme (place) et la cause
+        (volume de logs).</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>systemd — état des services &amp; remise en route</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Temps &amp; NTP (chrony)</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

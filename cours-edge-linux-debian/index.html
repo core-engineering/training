@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnostic &amp; exploitation d'un edge Linux Debian — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Diagnostic &amp; exploitation d'un edge Linux Debian</h1>
+      <p class="sub">Administrer et dépanner un <strong>edge device Debian</strong> installé dans l'armoire
+      d'une cellule d'automatisme — <strong>SSH, systemd, journaux, NTP, Docker, sauvegarde</strong> — depuis
+      le <strong>laptop d'ingénierie</strong>. On part de l'accès, on inspecte l'état, on remet le service en
+      route et on sécurise la reprise. 9 chapitres en français, sorties de commandes réelles commentées,
+      figures et exercices de labo à solutions repliables.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Comment lire ce cours ?</strong> Les chapitres se suivent de l'accès à la résilience : on se
+      connecte (SSH), on lit l'état du système (systemd, journaux, temps/NTP), on exploite le service
+      conteneurisé (Docker, déploiement), puis on protège et on remet en route (sauvegarde, méthodologie de
+      reprise). Les encarts « 💡 Intuition », « ⚠️ Piège », « 🖥️ Sur l'edge », « 💻 Depuis le laptop »,
+      « 🔧 Côté OT / automate » et « 🛡️ Prudence OT » balisent le texte. Chaque chapitre finit par des
+      <strong>exercices de labo</strong> avec solution repliable. Aucun prérequis Linux avancé : on introduit
+      chaque commande.
+    </div>
+
+    <div class="callout shell">
+      <p>Le décor est le même que le cours <a href="../cours-diagnostic-reseau-ot/index.html">Diagnostic
+      réseau OT/IT</a>, vu cette fois depuis l'edge lui-même. Deux acteurs tout au long du cours&nbsp;:</p>
+      <ul>
+        <li><strong>L'edge Debian</strong> — un petit PC industriel (<code>edge-cell12</code>, Debian&nbsp;12)
+        câblé dans l'armoire, sur le réseau machine <code>192.168.0.0/24</code>. Il fait passerelle&nbsp;:
+        il lit l'automate S7-1500 en OPC-UA et remonte les données ; il sert aussi d'horloge NTP à la
+        cellule. Le service applicatif tourne en <strong>conteneurs Docker</strong>.</li>
+        <li><strong>Le laptop d'ingénierie</strong> — ton poste, d'où tu ouvres une session
+        <code>ssh</code> vers l'edge. Tu n'as (presque) jamais de clavier sur l'edge&nbsp;: tout se fait à
+        distance.</li>
+      </ul>
+    </div>
+
+    <ul class="klegend" aria-hidden="true">
+      <li><span class="sw sw-edge"></span> l'edge</li>
+      <li><span class="sw sw-svc"></span> service / conteneur</li>
+      <li><span class="sw sw-time"></span> temps / NTP</li>
+      <li><span class="sw sw-net"></span> réseau OT</li>
+      <li><span class="sw sw-warn"></span> point d'attention</li>
+    </ul>
+
+    <div class="part-title">Partie A — Le terrain &amp; l'accès</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html"><span class="num">01</span><span><strong>Contexte edge &amp; poste d'ingénierie</strong><span class="desc">à quoi sert un edge device dans une cellule, l'architecture (S7-1500, OPC-UA, historian/MQTT), Debian &amp; <code>systemd</code> comme socle, se connecter la première fois, prendre ses repères (<code>hostnamectl</code>, <code>uptime</code>, <code>df</code>)</span></span></a></li>
+      <li><a href="chapitre-02.html"><span class="num">02</span><span><strong>SSH — gérer &amp; sécuriser l'accès</strong><span class="desc">clés vs mot de passe, <code>~/.ssh/config</code>, rebond par jump host, tunnels (<code>-L</code>) vers le web du CPU, durcissement de <code>sshd</code>, et diagnostiquer une connexion qui échoue avec <code>ssh -v</code></span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie B — État &amp; santé du système</div>
+    <ul class="toc">
+      <li><a href="chapitre-03.html"><span class="num">03</span><span><strong>systemd — état des services &amp; remise en route</strong><span class="desc"><code>systemctl status/list-units</code>, unités &amp; dépendances, lire un service <em>failed</em>, <code>restart</code>/<code>enable</code>, <code>systemd-analyze</code>, écrire une unité pour le service edge</span></span></a></li>
+      <li><a href="chapitre-04.html"><span class="num">04</span><span><strong>Journaux avec <code>journalctl</code></strong><span class="desc">journal systemd, filtrer par unité/priorité/temps (<code>-u</code>, <code>-p</code>, <code>-b</code>, <code>--since</code>), suivre en direct (<code>-f</code>), persistance &amp; rotation, corréler un incident dans le temps</span></span></a></li>
+      <li><a href="chapitre-05.html"><span class="num">05</span><span><strong>Temps &amp; NTP (chrony)</strong><span class="desc">pourquoi le temps compte en OT, l'edge comme <strong>serveur NTP</strong> de la cellule, <code>chronyc tracking/sources/clients</code>, dérive &amp; <code>makestep</code>, diagnostiquer un client (S7-1500, switch) qui ne se synchronise pas</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie C — Le service edge en conteneur</div>
+    <ul class="toc">
+      <li><a href="chapitre-06.html"><span class="num">06</span><span><strong>Docker sur l'edge — état &amp; diagnostic</strong><span class="desc"><code>docker ps</code>, <code>logs</code>, <code>inspect</code>, <code>stats</code>, healthcheck, réseaux &amp; volumes, comprendre pourquoi un conteneur redémarre en boucle (<em>restart loop</em>)</span></span></a></li>
+      <li><a href="chapitre-07.html"><span class="num">07</span><span><strong>Déploiement Docker</strong><span class="desc"><code>docker compose</code>, images &amp; tags (jamais <code>latest</code>), registry &amp; <code>pull</code>, mise à jour propre, <em>restart policies</em>, <strong>rollback</strong> sur incident, service edge piloté par systemd</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie D — Résilience &amp; synthèse</div>
+    <ul class="toc">
+      <li><a href="chapitre-08.html"><span class="num">08</span><span><strong>Sauvegarde &amp; restauration</strong><span class="desc">quoi sauvegarder (config, volumes Docker, compose, unités), <code>tar</code>/<code>rsync</code>, tirer une sauvegarde sur le laptop, automatiser avec un <em>timer</em> systemd, et surtout <strong>tester la restauration</strong></span></span></a></li>
+      <li><a href="chapitre-09.html"><span class="num">09</span><span><strong>Remise en route de bout en bout &amp; méthodologie</strong><span class="desc">arbre de décision « le service edge ne répond plus », cas complet du laptop jusqu'au conteneur relancé, runbook &amp; checklist réutilisable, ce qu'on écrit avant de raccrocher</span></span></a></li>
+    </ul>
+
+    <div class="callout ot">
+      L'edge est souvent le seul point d'entrée numérique d'une cellule en marche. Un <code>reboot</code>
+      hâtif, un <code>docker system prune</code> trop large ou un <code>sshd</code> mal reconfiguré peuvent te
+      couper l'accès à distance — ou couper la remontée de données d'une ligne en production. Les encarts
+      « Prudence OT » signalent ces gestes à ne pas faire à l'aveugle&nbsp;; travaille sur un <strong>banc de
+      test</strong> avant de toucher au terrain.
+    </div>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian · à suivre dans l'ordre 🐧
+  </footer>
+</body>
+</html>

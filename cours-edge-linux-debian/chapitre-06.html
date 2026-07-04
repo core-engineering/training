@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — Docker sur l'edge : état &amp; diagnostic</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>Docker sur l'edge : état &amp; diagnostic</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Distinguer les quatre objets Docker&nbsp;: <strong>image</strong>, <strong>conteneur</strong>,
+        <strong>volume</strong>, <strong>réseau</strong>.</li>
+        <li>Lire l'état du service edge&nbsp;: <code>docker ps</code>, <code>logs</code>, <code>inspect</code>,
+        <code>stats</code>, et le <strong>healthcheck</strong>.</li>
+        <li>Diagnostiquer les deux pannes classiques&nbsp;: le conteneur qui <strong>redémarre en
+        boucle</strong> et le conteneur qui a <strong>disparu</strong>.</li>
+        <li>Comprendre pourquoi les <strong>volumes</strong> sont là où vivent les données à sauvegarder
+        (chapitre&nbsp;8), et borner les logs pour ne pas remplir le disque.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le vocabulaire minimal</h2>
+    <table>
+      <thead><tr><th>Objet</th><th>Ce que c'est</th><th>Analogie</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Image</strong></td><td>un modèle figé en lecture seule (app + dépendances), versionné par un <em>tag</em></td><td>le «&nbsp;programme installé&nbsp;», une version précise</td></tr>
+        <tr><td><strong>Conteneur</strong></td><td>une instance <em>en cours d'exécution</em> d'une image</td><td>le programme «&nbsp;lancé&nbsp;»</td></tr>
+        <tr><td><strong>Volume</strong></td><td>un stockage persistant, hors du conteneur</td><td>le disque de données, qui survit au conteneur</td></tr>
+        <tr><td><strong>Réseau</strong></td><td>le réseau virtuel qui relie les conteneurs entre eux</td><td>le switch interne de la stack</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout astuce">
+      <p>La distinction <strong>image ≠ conteneur</strong> est le socle&nbsp;: une image ne «&nbsp;tourne&nbsp;»
+      pas, elle sert de moule&nbsp;; un conteneur est une image en train de s'exécuter, avec son état propre.
+      Et surtout&nbsp;: <strong>tout ce qu'un conteneur écrit hors d'un volume est perdu à sa
+      recréation</strong>. C'est pour ça que les données vivent dans des volumes — retiens-le pour le
+      chapitre&nbsp;8 (sauvegarde).</p>
+    </div>
+
+    <h2>2. Voir ce qui tourne&nbsp;: <code>docker ps</code></h2>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker ps
+CONTAINER ID   IMAGE                       STATUS                    PORTS                    NAMES
+b1f9a2c3d4e5   registry.local/edge:1.8.2   Up 87 days (healthy)      0.0.0.0:8080->8080/tcp   edge-gateway
+7a2b1c9d8e6f   eclipse-mosquitto:2.0.18    Up 87 days                0.0.0.0:1883->1883/tcp   edge-mqtt</code></pre>
+
+    <p>Chaque colonne dit quelque chose d'utile&nbsp;:</p>
+    <ul>
+      <li><strong>IMAGE</strong>&nbsp;: <code>registry.local/edge:1.8.2</code> — l'image <em>et son tag</em>.
+      Le tag <code>1.8.2</code> est explicite&nbsp;; méfie-toi d'un <code>:latest</code> (chapitre&nbsp;7).</li>
+      <li><strong>STATUS</strong>&nbsp;: <code>Up 87 days (healthy)</code> — tourne depuis 87&nbsp;jours et son
+      healthcheck est vert. <code>Restarting</code>, <code>Exited (1)</code>, <code>unhealthy</code> sont les
+      états qui alertent.</li>
+      <li><strong>PORTS</strong>&nbsp;: <code>0.0.0.0:8080->8080/tcp</code> — le port 8080 du conteneur est
+      publié sur toutes les interfaces de l'edge.</li>
+    </ul>
+
+    <div class="callout piege">
+      <p><code>docker ps</code> ne montre que les conteneurs <strong>en cours d'exécution</strong>. Un
+      conteneur qui a planté n'apparaît pas — et on croit à tort qu'«&nbsp;il n'existe pas&nbsp;». Pour voir
+      <em>aussi</em> les morts, il faut <code>docker ps -a</code>&nbsp;: c'est là qu'on découvre un
+      <code>Exited (137)</code> révélateur. Réflexe&nbsp;: quand un conteneur «&nbsp;a disparu&nbsp;», la
+      première commande est <code>docker ps -a</code>, pas <code>docker ps</code>.</p>
+    </div>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker ps -a
+CONTAINER ID   IMAGE                       STATUS                       NAMES
+b1f9a2c3d4e5   registry.local/edge:1.8.2   Up 87 days (healthy)         edge-gateway
+7a2b1c9d8e6f   eclipse-mosquitto:2.0.18    <span class="bad">Exited (137) 4 minutes ago</span>   edge-mqtt</code></pre>
+
+    <h2>3. Que dit le conteneur&nbsp;: <code>docker logs</code></h2>
+    <p>La sortie de l'application <em>à l'intérieur</em> du conteneur (que journald ne montre pas) se lit
+    avec <code>docker logs</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker logs --tail 20 -f edge-gateway
+2026-07-04T08:24:01Z INFO  connected to opc.tcp://192.168.0.1:4840
+2026-07-04T08:24:01Z INFO  subscribed 128 nodes, publish interval 1000ms
+2026-07-04T08:24:02Z INFO  → mqtt localhost:1883 (128 tags)
+<span class="cmt">^C</span></code></pre>
+
+    <p>Les options utiles&nbsp;: <code>--tail 20</code> (les 20 dernières lignes), <code>-f</code> (suivre en
+    direct, comme <code>journalctl -f</code>), <code>--since 10m</code> (fenêtre temporelle),
+    <code>--timestamps</code> (forcer l'horodatage).</p>
+
+    <div class="callout note">
+      <p>Rappel de la répartition&nbsp;: <code>journalctl -u edge-gateway</code> répond «&nbsp;le
+      <em>service</em> a-t-il démarré/planté&nbsp;?&nbsp;» (vu par systemd)&nbsp;; <code>docker logs
+      edge-gateway</code> répond «&nbsp;que dit l'<em>application</em> dedans&nbsp;?&nbsp;». Sur un service
+      edge qui remonte des données, la panne applicative (session OPC-UA refusée, broker injoignable) se lit
+      dans <code>docker logs</code>.</p>
+    </div>
+
+    <h2>4. Le healthcheck&nbsp;: sain ou malade&nbsp;?</h2>
+    <p>Un conteneur peut être <em>Up</em> (le processus tourne) tout en étant <strong>incapable de rendre son
+    service</strong> (bloqué, déconnecté). Le <strong>healthcheck</strong> est une sonde définie dans l'image
+    ou le compose qui teste périodiquement la santé applicative. On voit son verdict dans <code>STATUS</code>
+    (<code>healthy</code>/<code>unhealthy</code>) et son détail avec <code>inspect</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker inspect --format '{{json .State.Health}}' edge-gateway | python3 -m json.tool
+{
+    "Status": "healthy",
+    "FailingStreak": 0,
+    "Log": [
+        { "ExitCode": 0, "Output": "OPC-UA up; MQTT up\n" }
+    ]
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>Un conteneur <code>Up … (unhealthy)</code> est un signal <em>précieux</em>&nbsp;: le processus n'est
+      pas mort, donc <code>docker ps</code> paraît normal, mais la sonde applicative échoue. C'est
+      typiquement l'edge qui «&nbsp;tourne&nbsp;» mais ne remonte plus rien&nbsp;: la session OPC-UA est
+      tombée, ou le broker MQTT ne répond plus. Sans healthcheck, cette panne serait invisible jusqu'à ce que
+      quelqu'un remarque l'absence de données côté supervision.</p>
+    </div>
+
+    <h2>5. Consommation&nbsp;: <code>docker stats</code></h2>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker stats --no-stream
+CONTAINER      CPU %   MEM USAGE / LIMIT   MEM %   NET I/O         BLOCK I/O
+edge-gateway   3.2%    142MiB / 512MiB     27.7%   88MB / 44MB     12MB / 0B
+edge-mqtt      0.8%    18MiB / 128MiB      14.1%   44MB / 88MB     2MB / 0B</code></pre>
+    <p><code>--no-stream</code> donne un instantané (sans lui, l'affichage se rafraîchit en continu). On
+    surveille surtout la colonne <strong>MEM USAGE / LIMIT</strong>&nbsp;: un conteneur qui frôle sa limite
+    mémoire est candidat à se faire tuer par le noyau (l'<em>OOM kill</em> du chapitre&nbsp;4), avec un code
+    de sortie <code>137</code>.</p>
+
+    <h2>6. Panne classique nº&nbsp;1&nbsp;: le <em>restart loop</em></h2>
+    <p><code>docker ps</code> montre le conteneur en <code>Restarting</code> en boucle. La démarche&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker ps
+CONTAINER ID   IMAGE                       STATUS                          NAMES
+b1f9a2c3d4e5   registry.local/edge:1.8.2   <span class="bad">Restarting (1) 8 seconds ago</span>    edge-gateway
+
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker logs --tail 5 edge-gateway
+2026-07-04T09:01:14Z FATAL config file /cfg/gateway.yml: no such file or directory
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker inspect --format '{{.State.ExitCode}} {{.RestartCount}}' edge-gateway
+1 214</code></pre>
+
+    <p>Lecture&nbsp;: le conteneur sort en erreur (<code>ExitCode 1</code>), la politique de redémarrage le
+    relance, il replante — 214 fois. La cause est dans <code>docker logs</code>&nbsp;: un fichier de config
+    manquant (un volume mal monté&nbsp;? un chemin renommé&nbsp;?). <strong>Le <em>restart loop</em> n'est
+    pas la maladie, c'est le symptôme&nbsp;: on lit toujours la <em>dernière</em> erreur avant le
+    redémarrage.</strong></p>
+
+    <div class="callout piege">
+      <p>Les codes de sortie les plus parlants&nbsp;: <strong>137</strong> = tué par SIGKILL, presque
+      toujours un <em>OOM kill</em> (manque de mémoire) — croise avec <code>journalctl -k | grep -i oom</code>
+      et <code>docker stats</code>. <strong>139</strong> = segfault (SIGSEGV), un bug applicatif.
+      <strong>143</strong> = arrêt propre par SIGTERM (normal lors d'un stop). <strong>1</strong> = erreur
+      applicative générique — la vraie raison est dans les logs.</p>
+    </div>
+
+    <h2>7. Réseaux &amp; volumes en un coup d'œil</h2>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker volume ls
+DRIVER    VOLUME NAME
+local     edge_gateway-data      <span class="cmt"># ← les données à sauvegarder (ch. 8)</span>
+local     edge_mqtt-data
+
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker network ls
+NETWORK ID     NAME          DRIVER    SCOPE
+3f1a...        edge_default  bridge    local
+<span class="cmt"># Les conteneurs de la stack se parlent par leur nom sur ce réseau :</span>
+<span class="cmt"># edge-gateway atteint le broker via « edge-mqtt:1883 », pas via une IP.</span></code></pre>
+
+    <div class="callout astuce">
+      <p>Sur le réseau d'une stack compose, les conteneurs se résolvent <strong>par leur nom de service</strong>
+      (DNS interne Docker). Si le gateway ne joint plus le broker, avant de suspecter le réseau OT, vérifie que
+      les deux sont bien sur le <em>même</em> réseau Docker et que le nom de service n'a pas changé&nbsp;: une
+      erreur «&nbsp;<code>could not resolve edge-mqtt</code>&nbsp;» est interne à Docker, pas un problème de
+      câble.</p>
+    </div>
+
+    <h2>8. Borner les logs Docker (place disque)</h2>
+    <p>Par défaut, le pilote de logs <code>json-file</code> de Docker écrit sans limite&nbsp;: un conteneur
+    bavard peut remplir <code>/var/lib/docker</code> et donc le disque. On borne, globalement dans
+    <code>/etc/docker/daemon.json</code>&nbsp;:</p>
+
+    <pre><code class="language-json">{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "20m", "max-file": "5" }
+}</code></pre>
+    <p>Chaque conteneur garde alors au plus 5 fichiers de 20&nbsp;Mo. On applique par
+    <code>sudo systemctl restart docker</code> — <strong>ce qui redémarre tous les conteneurs</strong>, donc à
+    faire dans une fenêtre de maintenance. On peut aussi mettre ces options par service dans le compose
+    (chapitre&nbsp;7), ce qui évite le restart global.</p>
+
+    <div class="callout ot">
+      <p><strong>Le geste à ne jamais faire à l'aveugle sur un edge&nbsp;:</strong> <code>docker system
+      prune -a</code>. Il supprime <em>toutes</em> les images non utilisées par un conteneur actif — y compris
+      l'image de la version précédente que tu gardais exprès pour un rollback (chapitre&nbsp;7), et
+      potentiellement une image dont dépend un conteneur arrêté que tu comptais relancer. Sur un edge sans
+      accès facile au registry, tu peux te retrouver incapable de redéployer. Purge de façon ciblée
+      (<code>docker image rm &lt;tag précis&gt;</code>), jamais en masse.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Quatre objets&nbsp;: <strong>image</strong> (modèle figé + tag), <strong>conteneur</strong>
+        (instance qui tourne), <strong>volume</strong> (données persistantes), <strong>réseau</strong> (lien
+        interne). Hors volume, tout est perdu à la recréation.</li>
+        <li><code>docker ps</code> (ce qui tourne) mais <code>docker ps -a</code> pour voir les
+        <strong>morts</strong>&nbsp;; <code>docker logs -f</code> (ce que dit l'app), <code>inspect</code>
+        (healthcheck, exit code, restart count), <code>stats</code> (CPU/mémoire).</li>
+        <li>Un conteneur <code>Up (unhealthy)</code> tourne mais ne rend pas son service&nbsp;— signal
+        précieux.</li>
+        <li><em>Restart loop</em>&nbsp;: lire la <strong>dernière erreur</strong> dans <code>docker logs</code>&nbsp;;
+        exit <strong>137</strong> = OOM, <strong>143</strong> = SIGTERM normal, <strong>1</strong> = erreur
+        applicative.</li>
+        <li>Borner les logs (<code>max-size</code>) pour la place disque&nbsp;; <strong>jamais</strong> de
+        <code>docker system prune -a</code> à l'aveugle (il tue tes images de rollback).</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — «&nbsp;Le conteneur a disparu&nbsp;»</h3>
+      <p>Un collègue dit que <code>edge-mqtt</code> «&nbsp;n'existe plus&nbsp;» car <code>docker ps</code> ne
+      le montre pas. Comment vérifies-tu s'il a planté, et pourquoi&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> docker ps -a | grep edge-mqtt
+7a2b1c9d8e6f  eclipse-mosquitto:2.0.18  <span class="bad">Exited (137) 4 minutes ago</span>  edge-mqtt
+<span class="prompt-edge">$</span> docker logs --tail 20 edge-mqtt      <span class="cmt"># que disait-il avant de mourir ?</span>
+<span class="prompt-edge">$</span> journalctl -k | grep -i oom          <span class="cmt"># le noyau l'a-t-il tué (OOM) ?</span></code></pre>
+        <p><code>docker ps -a</code> révèle le conteneur mort (que <code>docker ps</code> cache). Le
+        <code>Exited (137)</code> oriente vers un OOM kill&nbsp;; on confirme avec les logs du noyau et
+        <code>docker stats</code> sur les conteneurs restants. Le conteneur n'a pas «&nbsp;disparu&nbsp;», il
+        s'est arrêté — on peut le relancer une fois la cause traitée.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Up mais rien ne remonte</h3>
+      <p>La supervision ne reçoit plus de données, pourtant <code>docker ps</code> montre
+      <code>edge-gateway</code> en <code>Up</code>. Où regardes-tu&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Le mot-clé est le healthcheck&nbsp;: regarde si le STATUS dit <code>(unhealthy)</code>, et lis la
+        sonde&nbsp;:</p>
+        <pre class="term"><code><span class="prompt-edge">$</span> docker ps                      <span class="cmt"># Up ... (unhealthy) ?</span>
+<span class="prompt-edge">$</span> docker inspect --format '{{json .State.Health}}' edge-gateway
+<span class="prompt-edge">$</span> docker logs --tail 30 edge-gateway   <span class="cmt"># session OPC-UA tombée ? broker injoignable ?</span></code></pre>
+        <p>«&nbsp;Up&nbsp;» ne veut pas dire «&nbsp;fonctionne&nbsp;». Le healthcheck et les logs applicatifs
+        disent la vérité&nbsp;: souvent la session OPC-UA vers le CPU est tombée (redémarrage automate,
+        certificat, réseau) ou le broker MQTT ne répond plus. La cause peut même être en dehors de l'edge
+        (l'automate) — d'où l'intérêt du cours réseau en complément.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Pourquoi pas <code>prune -a</code>&nbsp;?</h3>
+      <p>Le disque se remplit d'images Docker. Un collègue lance <code>docker system prune -a</code>. Quel
+      risque, et quelle alternative&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><code>prune -a</code> supprime toutes les images qu'aucun conteneur <em>actif</em> n'utilise —
+        dont l'image de la version précédente gardée exprès pour un <strong>rollback</strong>
+        (chapitre&nbsp;7). Sur un edge coupé du registry, on peut alors ne plus pouvoir redéployer l'ancienne
+        version. Alternative ciblée&nbsp;: <code>docker images</code> pour lister, puis
+        <code>docker image rm registry.local/edge:1.7.0</code> pour retirer <em>une</em> image précise dont on
+        est sûr de ne plus avoir besoin. On peut aussi <code>docker image prune</code> (sans <code>-a</code>)
+        qui ne retire que les couches «&nbsp;dangling&nbsp;» (orphelines), bien plus sûr.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Temps &amp; NTP (chrony)</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>Déploiement Docker</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

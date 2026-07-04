@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Contexte edge &amp; poste d'ingénierie</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Contexte edge &amp; poste d'ingénierie</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre ce qu'est un <strong>edge device</strong> et le rôle qu'il joue dans une cellule
+        d'automatisme&nbsp;: passerelle de données, horloge, point d'accès distant.</li>
+        <li>Situer les briques logicielles qu'on va manipuler tout au long du cours&nbsp;:
+        <strong>Debian</strong>, <strong>systemd</strong>, <strong>Docker</strong>, <strong>chrony</strong>,
+        <strong>SSH</strong>.</li>
+        <li>Se connecter la première fois depuis le laptop d'ingénierie et <strong>prendre ses repères</strong>
+        sur une machine qu'on n'a pas installée soi-même.</li>
+        <li>Adopter le réflexe de base de l'exploitation d'un edge en production&nbsp;: <em>observer avant
+        d'agir</em>.</li>
+      </ul>
+    </div>
+
+    <h2>1. Qu'est-ce qu'un edge device&nbsp;?</h2>
+    <p>Un <strong>edge device</strong> (ou <em>edge gateway</em>) est un petit ordinateur industriel placé
+    <em>au plus près</em> de la machine — dans l'armoire électrique, sur le réseau OT — dont le rôle est de
+    faire le pont entre le monde de l'automate et le monde informatique. Concrètement, sur notre cellule il
+    fait trois choses&nbsp;:</p>
+    <ul>
+      <li><strong>Passerelle de données</strong>&nbsp;: il lit des variables dans le CPU S7-1500 (en OPC-UA,
+      port 4840) et les republie vers un historian ou un broker MQTT — pour la supervision, la maintenance
+      prédictive, un tableau de bord.</li>
+      <li><strong>Serveur de temps</strong>&nbsp;: il porte une horloge <code>chrony</code> et distribue
+      l'heure par NTP à l'automate et aux switches de la cellule (chapitre&nbsp;5). Un edge bien réglé est
+      souvent la référence de temps <em>locale</em> de l'îlot.</li>
+      <li><strong>Point d'accès distant</strong>&nbsp;: câblé en permanence, il est le seul élément de la
+      cellule sur lequel on peut ouvrir une session <code>ssh</code> et faire tourner des outils. C'est
+      depuis lui qu'on diagnostique le réseau (cf. le cours réseau), qu'on capture, qu'on scanne.</li>
+    </ul>
+    <p>Matériellement, c'est souvent un PC industriel fanless (type IPC Siemens, Advantech, ou un Raspberry
+    Pi durci) sous <strong>Debian</strong> ou une Debian dérivée. Peu de RAM, un disque SSD ou une carte
+    industrielle, pas d'écran&nbsp;: on l'administre <strong>uniquement à distance</strong>.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 820 430" role="img" aria-label="Architecture : le laptop d'ingénierie ouvre une session SSH vers l'edge Debian. L'edge est sur le réseau OT avec le CPU S7-1500 et un switch ; il lit l'automate en OPC-UA, distribue le NTP, et remonte les données vers un historian/broker MQTT côté IT à travers un pare-feu.">
+        <!-- réseau IT (haut) -->
+        <rect class="node" x="600" y="20" width="150" height="46" rx="7"/>
+        <text class="lbl" x="675" y="41" text-anchor="middle">Historian / MQTT</text>
+        <text class="lbl-s" x="675" y="56" text-anchor="middle">côté IT / supervision</text>
+        <rect class="node" x="620" y="120" width="110" height="40" rx="7"/>
+        <text class="lbl" x="675" y="145" text-anchor="middle">Pare-feu IT/OT</text>
+        <line class="link" x1="675" y1="66" x2="675" y2="120"/>
+
+        <!-- l'edge, au centre -->
+        <rect class="node" x="330" y="180" width="160" height="70" rx="9" style="stroke:var(--c-edge);stroke-width:2.5"/>
+        <text class="lbl" x="410" y="205" text-anchor="middle" style="fill:var(--c-edge);font-weight:700">Edge Debian</text>
+        <text class="lbl-s" x="410" y="222" text-anchor="middle">edge-cell12</text>
+        <text class="lbl-s" x="410" y="237" text-anchor="middle">Docker · chrony · sshd</text>
+        <line class="link" x1="490" y1="200" x2="620" y2="140" style="stroke:var(--c-svc)"/>
+        <text class="lbl-s" x="565" y="160" text-anchor="middle" style="fill:var(--c-svc)">données →</text>
+
+        <!-- laptop engineering -->
+        <rect class="node" x="70" y="185" width="150" height="60" rx="9" style="stroke:var(--accent-2);stroke-width:2.5"/>
+        <text class="lbl" x="145" y="210" text-anchor="middle">Laptop ingénierie</text>
+        <text class="lbl-s" x="145" y="227" text-anchor="middle">ssh 🔑</text>
+        <line class="link" x1="220" y1="215" x2="330" y2="215" style="stroke:var(--accent-2);stroke-width:2.5"/>
+        <text class="lbl-s" x="275" y="205" text-anchor="middle" style="fill:var(--accent-2)">ssh</text>
+
+        <!-- réseau OT (bas) -->
+        <line class="link" x1="410" y1="250" x2="410" y2="300" style="stroke:var(--c-net)"/>
+        <rect class="node" x="330" y="300" width="160" height="40" rx="7" style="stroke:var(--c-net)"/>
+        <text class="lbl" x="410" y="325" text-anchor="middle">Switch OT (anneau MRP)</text>
+        <line class="link" x1="360" y1="340" x2="260" y2="388" style="stroke:var(--c-net)"/>
+        <line class="link" x1="460" y1="340" x2="560" y2="388" style="stroke:var(--c-net)"/>
+        <rect class="node" x="185" y="388" width="150" height="40" rx="7" style="stroke:var(--c-svc)"/>
+        <text class="lbl" x="260" y="413" text-anchor="middle">CPU S7-1500</text>
+        <rect class="node" x="485" y="388" width="150" height="40" rx="7"/>
+        <text class="lbl" x="560" y="413" text-anchor="middle">ET 200SP</text>
+        <text class="lbl-s" x="410" y="372" text-anchor="middle" style="fill:var(--c-time)">↑ OPC-UA 4840 · NTP 123 ↑</text>
+      </svg>
+      <figcaption><b>Figure 1.1.</b> L'edge (contour bleu) est au carrefour&nbsp;: côté OT il parle à
+      l'automate (OPC-UA) et lui sert l'heure (NTP)&nbsp;; côté IT il remonte les données à travers le
+      pare-feu. Le laptop d'ingénierie (contour ambre) s'y connecte en <code>ssh</code>&nbsp;— c'est notre
+      unique porte d'entrée pour tout le cours.</figcaption>
+    </figure>
+
+    <h2>2. Le socle logiciel qu'on va manipuler</h2>
+    <p>Inutile de tout connaître d'un coup&nbsp;; voici la carte des briques et le chapitre qui les traite.</p>
+
+    <table>
+      <thead><tr><th>Brique</th><th>Rôle sur l'edge</th><th>Chapitre</th></tr></thead>
+      <tbody>
+        <tr><td><code>sshd</code></td><td>serveur SSH — l'accès distant depuis le laptop</td><td>2</td></tr>
+        <tr><td><strong>systemd</strong></td><td>gestionnaire de services (démarrage, redémarrage, dépendances)</td><td>3</td></tr>
+        <tr><td><code>journald</code></td><td>journalisation centralisée de tout le système</td><td>4</td></tr>
+        <tr><td><code>chrony</code></td><td>client &amp; serveur NTP — l'horloge de la cellule</td><td>5</td></tr>
+        <tr><td><strong>Docker</strong></td><td>exécution du service applicatif en conteneurs</td><td>6–7</td></tr>
+        <tr><td><code>tar</code>/<code>rsync</code>/timers</td><td>sauvegarde &amp; restauration</td><td>8</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout astuce">
+      <p>Le fil conducteur du cours est un <strong>service edge conteneurisé</strong> — appelons-le
+      <code>edge-gateway</code> — décrit par un fichier <code>docker-compose.yml</code> et lancé au boot par
+      une unité systemd. Autour de lui gravitent l'horloge (chrony), les journaux (journald) et l'accès
+      (sshd). Quand «&nbsp;le service edge ne répond plus&nbsp;», le coupable est presque toujours l'une de
+      ces briques&nbsp;: le cours t'apprend à les inspecter dans l'ordre.</p>
+    </div>
+
+    <h2>3. Pourquoi Debian + systemd + Docker&nbsp;?</h2>
+    <p>Trois choix omniprésents sur les edges industriels, qu'il vaut la peine de comprendre&nbsp;:</p>
+    <ul>
+      <li><strong>Debian</strong> — distribution stable, à cycle long, sans surprise&nbsp;: exactement ce
+      qu'on veut sur une machine qui doit tourner des années sans qu'on y touche. La version courante,
+      Debian&nbsp;12 «&nbsp;bookworm&nbsp;», sert de référence dans tout le cours.</li>
+      <li><strong>systemd</strong> — le premier processus lancé au démarrage (PID&nbsp;1). Il démarre,
+      supervise et redémarre tous les services, gère les dépendances entre eux et centralise les journaux.
+      Le maîtriser, c'est tenir 80&nbsp;% de l'exploitation d'un edge.</li>
+      <li><strong>Docker</strong> — le service applicatif est livré en <strong>image de conteneur</strong>&nbsp;:
+      tout son environnement (bibliothèques, runtime, dépendances) est figé dedans. On déploie une version
+      testée à l'identique, on la met à jour ou on revient en arrière proprement. C'est ce qui rend le
+      terrain reproductible.</li>
+    </ul>
+
+    <h2>4. Se connecter la première fois</h2>
+    <p>Depuis le laptop, on ouvre une session SSH vers l'edge. On détaille SSH au chapitre&nbsp;2&nbsp;; ici,
+    la version minimale pour arriver au shell&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">laptop:~$</span> ssh maint@192.168.0.10
+The authenticity of host '192.168.0.10' can't be established.
+ED25519 key fingerprint is SHA256:9r0c...k8Qe.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? <span class="hi">yes</span>
+maint@192.168.0.10's password: <span class="cmt">(saisie masquée)</span>
+Linux edge-cell12 6.1.0-18-amd64 #1 SMP Debian 6.1.76-1 x86_64
+Last login: Tue Jul  1 08:12:03 2026 from 192.168.0.50
+<span class="prompt-edge">maint@edge-cell12:~$</span></code></pre>
+
+    <p>Trois choses à noter sur ce premier contact&nbsp;:</p>
+    <ul>
+      <li>La question sur le <strong>fingerprint</strong> n'apparaît qu'à la première connexion&nbsp;: SSH
+      mémorise l'empreinte de l'edge dans <code>~/.ssh/known_hosts</code>. C'est une sécurité — on y revient
+      au chapitre&nbsp;2.</li>
+      <li>L'invite change&nbsp;: <code>maint@edge-cell12</code> confirme <em>qui</em> tu es et <em>sur quelle
+      machine</em>. Dans ce cours, l'invite verte <code class="prompt-edge">maint@edge-cell12:~$</code>
+      signale «&nbsp;tu es sur l'edge&nbsp;», l'invite bleue <code>laptop:~$</code> «&nbsp;tu es sur le
+      laptop&nbsp;».</li>
+      <li>Le compte <code>maint</code> (maintenance) est un utilisateur non-root&nbsp;: on passera par
+      <code>sudo</code> pour les actions privilégiées, jamais en <code>root</code> directement.</li>
+    </ul>
+
+    <div class="callout laptop">
+      <p>Attention à <em>où</em> tu tapes tes commandes. Une erreur classique&nbsp;: lancer un
+      <code>reboot</code> ou un <code>docker compose down</code> en croyant être sur le laptop alors qu'on est
+      dans la session SSH sur l'edge. Regarde toujours l'invite. Un bon réflexe&nbsp;: personnaliser le prompt
+      de l'edge (couleur, hostname en évidence) pour qu'aucune confusion ne soit possible.</p>
+    </div>
+
+    <h2>5. Prendre ses repères sur une machine inconnue</h2>
+    <p>Tu hérites souvent d'un edge que quelqu'un d'autre a installé. Avant toute action, on fait le tour du
+    propriétaire. Ces commandes sont <strong>en lecture seule</strong>&nbsp;: aucun risque.</p>
+
+    <h3>Qui suis-je, quelle machine, quel OS&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> hostnamectl
+ Static hostname: edge-cell12
+       Icon name: computer-embedded
+     Machine ID: 4f6c9d2b1a...e3
+        Boot ID: 7a1e...9c
+Operating System: Debian GNU/Linux 12 (bookworm)
+          Kernel: Linux 6.1.0-18-amd64
+    Architecture: x86-64</code></pre>
+
+    <h3>Depuis combien de temps tourne-t-elle, et est-elle chargée&nbsp;?</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> uptime
+ 08:20:14 up 87 days,  3:41,  1 user,  load average: 0.18, 0.22, 0.20</code></pre>
+    <p>87&nbsp;jours d'uptime&nbsp;: la machine est stable. Le <em>load average</em> (0.18 sur 1&nbsp;minute)
+    est faible — un edge n'est pas censé être très chargé&nbsp;; s'il l'est, c'est déjà un signal.</p>
+
+    <h3>Reste-t-il de la place disque&nbsp;? (le tueur silencieux nº&nbsp;1)</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        58G   19G   36G  <span class="good">35%</span> /</code></pre>
+
+    <div class="callout piege">
+      <p>Sur un edge, la panne la plus fréquente n'est pas exotique&nbsp;: c'est le <strong>disque
+      plein</strong>. Des logs qui gonflent, des images Docker qui s'accumulent, une sauvegarde oubliée sur
+      place… et à 100&nbsp;% d'occupation, les conteneurs ne redémarrent plus, la base locale se corrompt, le
+      journal cesse d'écrire. Le tout premier réflexe de diagnostic, avant même de regarder le service,
+      c'est <code>df -h</code>. On y reviendra aux chapitres 4, 6 et 8.</p>
+    </div>
+
+    <h3>Que tourne-t-il déjà&nbsp;? (aperçu)</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemctl --failed
+  UNIT  LOAD  ACTIVE  SUB  DESCRIPTION
+0 loaded units listed.
+<span class="cmt"># Aucun service en échec : bon signe. On détaille systemctl au chapitre 3.</span>
+
+<span class="prompt-edge">maint@edge-cell12:~$</span> docker ps --format 'table {{.Names}}\t{{.Status}}'
+NAMES              STATUS
+edge-gateway       Up 87 days (healthy)
+edge-mqtt          Up 87 days
+<span class="cmt"># Le service applicatif et son broker tournent. Détails au chapitre 6.</span></code></pre>
+
+    <div class="callout note">
+      <p>Un tour de reconnaissance en quatre commandes, à faire à chaque prise en main&nbsp;: <code>hostnamectl</code>
+      (quelle machine), <code>uptime</code> (depuis quand / charge), <code>df -h</code> (place disque),
+      <code>systemctl --failed</code> + <code>docker ps</code> (état des services). En moins d'une minute, tu
+      sais si tu arrives sur une machine saine ou sur un incident en cours.</p>
+    </div>
+
+    <h2>6. La règle d'or&nbsp;: observer avant d'agir</h2>
+    <p>Un edge en marche remonte les données d'une ligne <em>en production</em>. Le redémarrer, arrêter un
+    conteneur, changer une config réseau&nbsp;: tout cela a des conséquences visibles côté exploitation. La
+    discipline, identique à celle du cours réseau, tient en une phrase&nbsp;: on <strong>lit l'état</strong>
+    (journaux, <code>systemctl status</code>, <code>docker logs</code>) <em>avant</em> de toucher quoi que ce
+    soit, et on ne redémarre qu'en connaissance de cause.</p>
+
+    <div class="callout ot">
+      <p>Deux gestes qui coupent l'accès distant — donc à proscrire à l'aveugle&nbsp;: (1) reconfigurer le
+      réseau ou <code>sshd</code> sans filet (chapitre&nbsp;2 montre comment garder une porte de secours)&nbsp;;
+      (2) un <code>reboot</code> «&nbsp;pour voir&nbsp;» sur une machine à laquelle tu n'as <em>que</em> l'accès
+      SSH&nbsp;: si elle ne remonte pas, tu es aveugle et il faut envoyer quelqu'un sur site. Sur un edge, le
+      redémarrage est un acte réfléchi, pas un réflexe.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Un <strong>edge device</strong> = passerelle de données (OPC-UA → historian), serveur de temps
+        (NTP) et point d'accès distant (SSH) d'une cellule, sous <strong>Debian</strong>.</li>
+        <li>Le socle qu'on va manipuler&nbsp;: <strong>SSH</strong> (accès), <strong>systemd</strong>
+        (services), <strong>journald</strong> (logs), <strong>chrony</strong> (temps), <strong>Docker</strong>
+        (service applicatif), + sauvegarde.</li>
+        <li>On administre <strong>tout à distance</strong> depuis le laptop d'ingénierie&nbsp;; surveille
+        l'invite pour ne jamais confondre laptop et edge.</li>
+        <li>Tour de reconnaissance à la prise en main&nbsp;: <code>hostnamectl</code>, <code>uptime</code>,
+        <code>df -h</code>, <code>systemctl --failed</code>, <code>docker ps</code>.</li>
+        <li>Règle d'or&nbsp;: <strong>observer avant d'agir</strong>&nbsp;; le disque plein est la panne
+        nº&nbsp;1 ; un <code>reboot</code> à l'aveugle peut te couper l'accès.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Le tour de reconnaissance</h3>
+      <p>Tu prends la main sur un edge inconnu. Écris la suite de commandes qui te dit, en moins d'une minute&nbsp;:
+      quel OS, depuis quand il tourne, combien de place disque il reste, et quels services sont en échec.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> hostnamectl | head -3      <span class="cmt"># hostname + OS</span>
+<span class="prompt-edge">$</span> uptime                      <span class="cmt"># uptime + charge</span>
+<span class="prompt-edge">$</span> df -h /                     <span class="cmt"># place disque sur la racine</span>
+<span class="prompt-edge">$</span> systemctl --failed          <span class="cmt"># services en échec</span></code></pre>
+        <p>On peut tout enchaîner d'un coup&nbsp;: <code>hostnamectl; uptime; df -h /; systemctl --failed</code>.
+        L'ordre n'a pas d'importance puisque ces commandes ne modifient rien. Le seul chiffre qui doit
+        déclencher une alarme immédiate&nbsp;: une colonne <code>Use%</code> proche de 100&nbsp;% sur
+        <code>/</code>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Laptop ou edge&nbsp;?</h3>
+      <p>Tu as deux terminaux ouverts et tu ne sais plus lequel est la session SSH sur l'edge. Quelle commande
+      unique tranche à coup sûr, sans rien risquer&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">$</span> hostname
+edge-cell12          <span class="cmt"># → c'est la session sur l'edge</span>
+<span class="cmt"># vs sur le laptop :</span>
+<span class="prompt">$</span> hostname
+eng-laptop</code></pre>
+        <p><code>hostname</code> (ou <code>hostnamectl</code>) est imparable. Encore mieux à long terme&nbsp;:
+        configurer le prompt de l'edge pour qu'il affiche le hostname en couleur — la confusion devient alors
+        impossible d'un simple coup d'œil, sans taper de commande.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Pourquoi pas un <code>reboot</code>&nbsp;?</h3>
+      <p>Un collègue propose&nbsp;: «&nbsp;le service déconne, on reboote l'edge, ça repartira&nbsp;». Cite deux
+      raisons de ne pas le faire tout de suite, et ce que tu regardes d'abord.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Deux raisons&nbsp;: <strong>(1)</strong> si la machine ne remonte pas (config au boot cassée, disque
+        plein, service <em>enabled</em> qui échoue), tu perds ton unique accès distant et il faut se déplacer
+        physiquement&nbsp;; <strong>(2)</strong> un reboot efface l'état courant — les journaux en RAM, les
+        conteneurs en train de logger l'erreur — donc tu détruis les preuves avant d'avoir compris la panne.</p>
+        <p>Ce qu'on regarde d'abord&nbsp;: <code>df -h</code> (disque plein&nbsp;?), <code>systemctl status
+        edge-gateway</code> et <code>docker logs</code> (que dit le service&nbsp;?), <code>journalctl -p err -b</code>
+        (erreurs depuis le boot). Neuf fois sur dix, la cause se lit dans les logs et un simple
+        <code>restart</code> ciblé suffit — sans reboot. On construit cette démarche complète au chapitre&nbsp;9.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="index.html"><span class="lbl">← Précédent</span>Sommaire</a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>SSH — gérer &amp; sécuriser l'accès</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

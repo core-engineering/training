@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — SSH : gérer &amp; sécuriser l'accès</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>SSH : gérer &amp; sécuriser l'accès</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Remplacer le mot de passe par une <strong>authentification par clé</strong> et comprendre
+        pourquoi c'est plus sûr <em>et</em> plus pratique.</li>
+        <li>Se simplifier la vie avec <code>~/.ssh/config</code>&nbsp;: alias, utilisateur, rebond par
+        <strong>jump host</strong>.</li>
+        <li>Ouvrir un <strong>tunnel</strong> pour atteindre le serveur web du CPU ou une interface interne
+        de l'edge depuis le laptop.</li>
+        <li><strong>Durcir</strong> le serveur <code>sshd</code> de l'edge — sans jamais se verrouiller
+        dehors.</li>
+        <li>Diagnostiquer une connexion qui échoue avec <code>ssh -v</code>.</li>
+      </ul>
+    </div>
+
+    <h2>1. Clé plutôt que mot de passe</h2>
+    <p>Une authentification par mot de passe est fragile (rejouable, devinable, saisie à chaque connexion) et
+    pénible à automatiser. On lui préfère une <strong>paire de clés</strong>&nbsp;: une clé <em>privée</em>
+    qui reste sur le laptop, une clé <em>publique</em> qu'on dépose sur l'edge. On génère la paire une fois&nbsp;:</p>
+
+    <pre><code class="language-bash"># Sur le laptop — clé Ed25519 (moderne, courte, rapide)
+ssh-keygen -t ed25519 -C "eng-laptop maint"
+# → crée ~/.ssh/id_ed25519 (privée) et ~/.ssh/id_ed25519.pub (publique)</code></pre>
+
+    <div class="callout astuce">
+      <p>Protège la clé privée par une <strong>passphrase</strong> à la génération. Couplée à un
+      <em>ssh-agent</em> (qui la garde déverrouillée le temps de la session), tu tapes la passphrase une fois
+      par jour, pas à chaque connexion — le confort d'un mot de passe unique, la sécurité d'une clé.</p>
+    </div>
+
+    <p>On copie ensuite la clé publique sur l'edge. La façon la plus sûre&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">laptop:~$</span> ssh-copy-id maint@192.168.0.10
+/usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s)...
+maint@192.168.0.10's password: <span class="cmt">(dernière fois qu'on le tape !)</span>
+Number of key(s) added: 1</code></pre>
+
+    <p>La clé publique atterrit dans <code>~/.ssh/authorized_keys</code> sur l'edge. La prochaine connexion se
+    fait sans mot de passe&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">laptop:~$</span> ssh maint@192.168.0.10
+<span class="prompt-edge">maint@edge-cell12:~$</span>   <span class="cmt"># entré directement, via la clé</span></code></pre>
+
+    <div class="callout piege">
+      <p>SSH est <strong>tatillon sur les permissions</strong>. Si <code>~/.ssh</code> n'est pas en
+      <code>700</code> ou <code>authorized_keys</code> pas en <code>600</code>, <code>sshd</code> ignore
+      silencieusement la clé et retombe sur le mot de passe. Symptôme&nbsp;: «&nbsp;ma clé est bien là mais on
+      me demande quand même le mot de passe&nbsp;». Vérifie&nbsp;: <code>ls -ld ~/.ssh</code> et
+      <code>ls -l ~/.ssh/authorized_keys</code> côté edge, corrige avec <code>chmod 700 ~/.ssh; chmod 600
+      ~/.ssh/authorized_keys</code>.</p>
+    </div>
+
+    <h2>2. <code>~/.ssh/config</code>&nbsp;: arrêter de tout retaper</h2>
+    <p>Taper <code>ssh maint@192.168.0.10</code> vingt fois par jour, avec des options, est vite fastidieux.
+    Le fichier <code>~/.ssh/config</code> sur le laptop mémorise tout sous un <strong>alias</strong>&nbsp;:</p>
+
+    <pre><code class="language-ini"># ~/.ssh/config (sur le laptop)
+Host edge12
+    HostName 192.168.0.10
+    User maint
+    IdentityFile ~/.ssh/id_ed25519
+    ServerAliveInterval 30      # ping applicatif : détecte une coupure
+    ServerAliveCountMax 3</code></pre>
+
+    <p>Désormais un simple <code>ssh edge12</code> suffit. <code>ServerAliveInterval</code> évite les sessions
+    «&nbsp;gelées&nbsp;» quand le réseau OT hoquette&nbsp;: SSH envoie un petit paquet toutes les
+    30&nbsp;secondes et ferme proprement au bout de 3 sans réponse.</p>
+
+    <h3>Rebondir par un jump host</h3>
+    <p>Souvent, l'edge n'est pas joignable directement depuis le poste bureautique&nbsp;: il faut d'abord
+    passer par une machine de rebond (un <em>bastion</em> ou un serveur de saut sur la DMZ OT). SSH gère ce
+    rebond nativement avec <code>ProxyJump</code>&nbsp;:</p>
+
+    <pre><code class="language-ini"># ~/.ssh/config — rebond par un bastion
+Host bastion
+    HostName bastion.usine.local
+    User camille
+
+Host edge12
+    HostName 192.168.0.10
+    User maint
+    ProxyJump bastion            # ← rebond automatique</code></pre>
+
+    <p>Un <code>ssh edge12</code> ouvre alors la session <em>à travers</em> le bastion, en une seule commande.
+    Le trafic reste chiffré de bout en bout&nbsp;; le bastion ne fait que relayer.</p>
+
+    <figure class="fig">
+      <svg viewBox="0 0 800 180" role="img" aria-label="Le laptop se connecte au bastion, qui rebondit vers l'edge sur le réseau OT ; en pointillé, un tunnel local -L 8443 relie le port 8443 du laptop au port 443 du serveur web du CPU S7-1500.">
+        <rect class="node" x="30" y="60" width="150" height="50" rx="8" style="stroke:var(--accent-2)"/>
+        <text class="lbl" x="105" y="82" text-anchor="middle">Laptop</text>
+        <text class="lbl-s" x="105" y="98" text-anchor="middle">ssh edge12</text>
+
+        <rect class="node" x="280" y="60" width="130" height="50" rx="8"/>
+        <text class="lbl" x="345" y="82" text-anchor="middle">Bastion</text>
+        <text class="lbl-s" x="345" y="98" text-anchor="middle">ProxyJump</text>
+
+        <rect class="node" x="510" y="60" width="140" height="50" rx="8" style="stroke:var(--c-edge)"/>
+        <text class="lbl" x="580" y="82" text-anchor="middle">Edge Debian</text>
+        <text class="lbl-s" x="580" y="98" text-anchor="middle">192.168.0.10</text>
+
+        <line class="link" x1="180" y1="85" x2="280" y2="85" style="stroke:var(--accent-2);stroke-width:2.5"/>
+        <line class="link" x1="410" y1="85" x2="510" y2="85" style="stroke:var(--accent-2);stroke-width:2.5"/>
+
+        <rect class="node" x="680" y="60" width="90" height="50" rx="8" style="stroke:var(--c-svc)"/>
+        <text class="lbl" x="725" y="80" text-anchor="middle">CPU</text>
+        <text class="lbl-s" x="725" y="96" text-anchor="middle">:443</text>
+        <line class="link" x1="650" y1="95" x2="680" y2="95" style="stroke:var(--c-net)"/>
+
+        <path d="M105 120 Q400 175 725 120" style="stroke:var(--c-time);stroke-width:2;fill:none;stroke-dasharray:5 4"/>
+        <text class="lbl-s" x="415" y="168" text-anchor="middle" style="fill:var(--c-time)">tunnel -L 8443:192.168.0.1:443</text>
+      </svg>
+      <figcaption><b>Figure 2.1.</b> Rebond et tunnel. Le trait plein&nbsp;: la session <code>ssh</code>
+      passe par le bastion (<code>ProxyJump</code>) jusqu'à l'edge. En pointillé&nbsp;: un
+      <strong>tunnel local</strong> qui expose, sur <code>localhost:8443</code> du laptop, le serveur web
+      (443) du CPU — atteignable via l'edge.</figcaption>
+    </figure>
+
+    <h2>3. Tunnels&nbsp;: atteindre ce qui est «&nbsp;derrière&nbsp;» l'edge</h2>
+    <p>L'edge voit des équipements que le laptop ne joint pas directement&nbsp;: le serveur web du CPU
+    S7-1500, une interface d'admin d'un conteneur qui n'écoute que sur <code>localhost</code>, le broker MQTT.
+    Un <strong>tunnel local</strong> (<code>-L</code>) transporte un port distant jusqu'au laptop&nbsp;:</p>
+
+    <pre><code class="language-bash"># Depuis le laptop : exposer le web du CPU (192.168.0.1:443) sur localhost:8443
+ssh -L 8443:192.168.0.1:443 edge12
+# → puis, dans le navigateur du laptop : https://localhost:8443</code></pre>
+
+    <p>Lecture de <code>-L 8443:192.168.0.1:443</code>&nbsp;: «&nbsp;écoute en local sur <strong>8443</strong>,
+    et fais ressortir la connexion <em>depuis l'edge</em> vers <strong>192.168.0.1:443</strong>&nbsp;». La
+    destination est résolue du point de vue de l'edge&nbsp;: c'est tout l'intérêt.</p>
+
+    <div class="callout astuce">
+      <p>Pour une interface qui n'écoute que sur la boucle locale de l'edge (fréquent&nbsp;: un dashboard de
+      conteneur bindé sur <code>127.0.0.1:1880</code>), la cible du tunnel est <code>localhost</code> côté
+      edge&nbsp;: <code>ssh -L 1880:localhost:1880 edge12</code>, puis <code>http://localhost:1880</code> dans
+      le navigateur du laptop. C'est la façon propre d'accéder à une UI d'admin sans jamais l'exposer sur le
+      réseau OT.</p>
+    </div>
+
+    <h2>4. Durcir le <code>sshd</code> de l'edge</h2>
+    <p>Une fois les clés en place, on peut resserrer la configuration du serveur SSH. Elle vit dans
+    <code>/etc/ssh/sshd_config</code> sur l'edge. Les réglages qui comptent&nbsp;:</p>
+
+    <pre><code class="language-ini"># /etc/ssh/sshd_config (sur l'edge) — extrait durci
+PermitRootLogin no              # jamais de login root direct
+PasswordAuthentication no       # clés uniquement
+KbdInteractiveAuthentication no
+AllowUsers maint                # liste blanche de comptes
+X11Forwarding no
+# (Optionnel) restreindre au segment OT :
+# ListenAddress 192.168.0.10</code></pre>
+
+    <p>On applique <strong>sans couper la session en cours</strong>&nbsp;: on teste d'abord la syntaxe, puis on
+    recharge (pas <em>restart</em>) le service.</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo sshd -t          <span class="cmt"># valide la syntaxe, ne dit rien si OK</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl reload ssh
+<span class="cmt"># reload ré-applique la config sans fermer les connexions établies</span></code></pre>
+
+    <div class="callout ot">
+      <p><strong>Ne te verrouille pas dehors.</strong> Avant de couper <code>PasswordAuthentication</code> ou
+      de restreindre <code>AllowUsers</code>, garde <em>une deuxième session SSH ouverte</em> en parallèle.
+      Applique le changement dans la première&nbsp;; vérifie que tu peux ouvrir une <em>nouvelle</em> connexion
+      dans la seconde. Tant que tu n'as pas confirmé qu'une nouvelle session passe, <strong>ne ferme pas</strong>
+      celle qui marche. Si tu t'es coupé l'accès sur un edge en armoire, la seule issue est un déplacement
+      physique avec écran et clavier.</p>
+    </div>
+
+    <div class="callout piege">
+      <p>Sous Debian&nbsp;12, le service SSH s'active souvent via un <em>socket</em> (<code>ssh.socket</code>)
+      plutôt que le classique <code>ssh.service</code>. Si un <code>systemctl reload ssh</code> semble sans
+      effet, vérifie lequel est réellement actif&nbsp;: <code>systemctl status ssh.socket ssh.service</code>.
+      On détaille sockets et unités au chapitre&nbsp;3.</p>
+    </div>
+
+    <h2>5. Quand ça ne passe pas&nbsp;: <code>ssh -v</code></h2>
+    <p>Une connexion qui échoue est frustrante parce que le message par défaut est laconique. L'option
+    <strong><code>-v</code></strong> (jusqu'à <code>-vvv</code>) déroule chaque étape de la négociation et
+    montre <em>où</em> ça bloque.</p>
+
+    <pre class="term"><code><span class="prompt">laptop:~$</span> ssh -v edge12
+OpenSSH_9.2p1 Debian-2, OpenSSL 3.0.11
+debug1: Connecting to 192.168.0.10 [192.168.0.10] port 22.
+<span class="bad">debug1: connect to address 192.168.0.10 port 22: Connection timed out</span></code></pre>
+
+    <p>À chaque symptôme sa cause probable&nbsp;:</p>
+
+    <table>
+      <thead><tr><th>Ce que dit <code>-v</code></th><th>Cause probable</th><th>Piste</th></tr></thead>
+      <tbody>
+        <tr><td><code>Connection timed out</code></td><td>edge éteint, câble/réseau, mauvaise IP, pare-feu</td><td><code>ping 192.168.0.10</code>, vérifier le VLAN/segment (cf. cours réseau)</td></tr>
+        <tr><td><code>Connection refused</code></td><td>on joint la machine mais <code>sshd</code> n'écoute pas</td><td>le service SSH est arrêté&nbsp;; port changé&nbsp;?</td></tr>
+        <tr><td><code>Permission denied (publickey)</code></td><td>la clé n'est pas acceptée</td><td>permissions <code>authorized_keys</code>, bonne <code>IdentityFile</code></td></tr>
+        <tr><td><code>REMOTE HOST IDENTIFICATION HAS CHANGED</code></td><td>l'empreinte de l'hôte a changé</td><td>edge réinstallé&nbsp;? sinon, <strong>prudence</strong> (§6)</td></tr>
+      </tbody>
+    </table>
+
+    <h2>6. <code>known_hosts</code> et l'empreinte qui change</h2>
+    <p>SSH mémorise l'empreinte de chaque hôte dans <code>~/.ssh/known_hosts</code>. Si elle change, il refuse
+    net de se connecter avec un avertissement alarmant&nbsp;:</p>
+
+    <pre class="term"><code>@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+Someone could be eavesdropping on you right now (man-in-the-middle attack)!</code></pre>
+
+    <p>La cause <em>bénigne</em> et fréquente&nbsp;: l'edge a été réinstallé ou son OS régénéré, donc sa clé
+    d'hôte est neuve. Après avoir <strong>confirmé</strong> que c'est bien le cas (et pas une usurpation), on
+    retire l'ancienne entrée&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt">laptop:~$</span> ssh-keygen -R 192.168.0.10
+<span class="cmt"># retire l'ancienne empreinte ; la prochaine connexion en redemandera confirmation</span></code></pre>
+
+    <div class="callout note">
+      <p>Ne supprime jamais une entrée <code>known_hosts</code> par réflexe pour «&nbsp;faire taire
+      l'avertissement&nbsp;». C'est précisément la protection contre l'homme-du-milieu. On ne l'efface
+      qu'<em>après</em> avoir expliqué le changement (edge réinstallé, remplacé) — sur un réseau OT, une
+      empreinte qui change sans raison connue mérite une vraie question.</p>
+    </div>
+
+    <div class="callout plc">
+      <p>Côté automate, l'équivalent du «&nbsp;durcissement&nbsp;» existe aussi&nbsp;: le CPU S7-1500 gère des
+      niveaux de protection et des utilisateurs pour son serveur web et l'accès TIA. La logique est la
+      même — moindre privilège, accès nominatif — mais l'edge reste ta porte d'entrée <em>shell</em>, la seule
+      qui te donne un vrai terminal sur la cellule.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Authentification par <strong>clé Ed25519</strong> (+ passphrase + ssh-agent) plutôt que mot de
+        passe&nbsp;; déposer la clé avec <code>ssh-copy-id</code>.</li>
+        <li>Permissions strictes obligatoires&nbsp;: <code>~/.ssh</code> en 700, <code>authorized_keys</code>
+        en 600, sinon la clé est ignorée.</li>
+        <li><code>~/.ssh/config</code> pour un alias, <code>ProxyJump</code> pour rebondir par un bastion,
+        <code>-L</code> pour tunneliser un port (web du CPU, UI de conteneur) jusqu'au laptop.</li>
+        <li>Durcir <code>sshd</code> (<code>PermitRootLogin no</code>, <code>PasswordAuthentication no</code>,
+        <code>AllowUsers</code>) — toujours en gardant <strong>une session de secours ouverte</strong> et en
+        rechargeant (<code>reload</code>), après <code>sshd -t</code>.</li>
+        <li>Diagnostic&nbsp;: <code>ssh -v</code> localise l'échec (timeout / refused / publickey)&nbsp;;
+        <code>ssh-keygen -R</code> pour une empreinte qui a légitimement changé.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — De 3 options à un alias</h3>
+      <p>Tu te connectes cent fois par jour avec <code>ssh -i ~/.ssh/id_ed25519 maint@192.168.0.10</code>.
+      Écris l'entrée <code>~/.ssh/config</code> qui réduit ça à <code>ssh edge12</code>.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-ini">Host edge12
+    HostName 192.168.0.10
+    User maint
+    IdentityFile ~/.ssh/id_ed25519</code></pre>
+        <p>Chaque option de la ligne de commande a son mot-clé dans le fichier&nbsp;: <code>-i</code> →
+        <code>IdentityFile</code>, l'utilisateur → <code>User</code>, l'hôte → <code>HostName</code>. On peut
+        ajouter <code>ServerAliveInterval 30</code> pour survivre aux hoquets du réseau OT.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Voir le web du CPU sans quitter le laptop</h3>
+      <p>Le serveur web du CPU S7-1500 est en <code>https://192.168.0.1</code>, joignable depuis l'edge mais
+      pas depuis le laptop. Ouvre un tunnel pour l'atteindre dans le navigateur du laptop.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt">laptop:~$</span> ssh -L 8443:192.168.0.1:443 edge12</code></pre>
+        <p>Puis dans le navigateur du laptop&nbsp;: <code>https://localhost:8443</code>. Le
+        <code>192.168.0.1:443</code> est résolu <em>depuis l'edge</em>, qui a la route vers l'automate.
+        On garde la session SSH ouverte le temps de la navigation&nbsp;; la fermer coupe le tunnel. Un
+        certificat auto-signé du CPU déclenchera un avertissement navigateur — normal.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Couper le mot de passe sans se couper l'accès</h3>
+      <p>Tu veux passer l'edge en «&nbsp;clés uniquement&nbsp;». Décris la manœuvre qui garantit que tu ne te
+      retrouveras pas verrouillé dehors.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>1. Vérifier <em>d'abord</em> que la connexion par clé fonctionne (<code>ssh edge12</code> entre
+        sans demander de mot de passe). 2. Garder cette session ouverte. 3. Éditer
+        <code>/etc/ssh/sshd_config</code> → <code>PasswordAuthentication no</code>. 4. Valider&nbsp;:
+        <code>sudo sshd -t</code>. 5. Recharger&nbsp;: <code>sudo systemctl reload ssh</code>. 6. Depuis un
+        <strong>second</strong> terminal, ouvrir une <em>nouvelle</em> session pour confirmer qu'elle passe.
+        7. Seulement alors, considérer que c'est bon.</p>
+        <p>Le point clé&nbsp;: <code>reload</code> ne ferme pas les sessions établies, et on valide la
+        nouvelle config avec une <em>nouvelle</em> connexion <strong>avant</strong> de lâcher la session de
+        secours. Si la nouvelle échoue, on annule le changement depuis la session encore ouverte.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Contexte edge &amp; poste d'ingénierie</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>systemd — état des services &amp; remise en route</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

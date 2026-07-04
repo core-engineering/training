@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — Déploiement Docker</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>Déploiement Docker</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Décrire le service edge de façon reproductible avec <strong>Docker Compose</strong>.</li>
+        <li>Comprendre les <strong>tags d'image</strong> et pourquoi on ne déploie <em>jamais</em>
+        <code>:latest</code> sur un edge.</li>
+        <li>Faire une <strong>mise à jour propre</strong> (pull d'une version précise, <code>up -d</code>) et
+        surtout savoir <strong>revenir en arrière</strong> (rollback) en une minute.</li>
+        <li>Régler les <strong>politiques de redémarrage</strong> et articuler compose ↔ systemd.</li>
+      </ul>
+    </div>
+
+    <h2>1. Docker Compose&nbsp;: la stack en un fichier</h2>
+    <p>Plutôt qu'une série de <code>docker run</code> à rallonge, on décrit toute la stack edge dans un
+    fichier <code>compose.yml</code> — versionné, relisable, reproductible. Le nôtre, dans
+    <code>/opt/edge/</code>&nbsp;:</p>
+
+    <pre><code class="language-yaml"># /opt/edge/compose.yml
+services:
+  gateway:
+    image: registry.local/edge:1.8.2      # ← version PRÉCISE, jamais :latest
+    container_name: edge-gateway
+    restart: unless-stopped
+    depends_on:
+      - mqtt
+    ports:
+      - "8080:8080"
+    volumes:
+      - gateway-data:/data                # données persistantes
+      - ./gateway.yml:/cfg/gateway.yml:ro # config en lecture seule
+    environment:
+      - OPCUA_ENDPOINT=opc.tcp://192.168.0.1:4840
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  mqtt:
+    image: eclipse-mosquitto:2.0.18
+    container_name: edge-mqtt
+    restart: unless-stopped
+    volumes:
+      - mqtt-data:/mosquitto/data
+
+volumes:
+  gateway-data:
+  mqtt-data:</code></pre>
+
+    <p>Les commandes de base de la stack, exécutées depuis <code>/opt/edge/</code>&nbsp;:</p>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker compose ps        <span class="cmt"># état de la stack</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker compose up -d      <span class="cmt"># (re)crée ce qui doit l'être, en arrière-plan</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker compose logs -f    <span class="cmt"># logs agrégés de la stack</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker compose down       <span class="cmt"># arrête et retire les conteneurs (PAS les volumes)</span></code></pre>
+
+    <div class="callout piege">
+      <p><code>docker compose down</code> retire les conteneurs et le réseau, mais <strong>conserve les
+      volumes nommés</strong> — tes données survivent. En revanche <code>docker compose down <span class="hi">-v</span></code>
+      <strong>supprime aussi les volumes</strong>&nbsp;: sur un edge, c'est effacer les données persistantes du
+      service (historique local, état, base). Ne tape jamais <code>-v</code> par réflexe&nbsp;; c'est
+      irréversible sans sauvegarde (chapitre&nbsp;8).</p>
+    </div>
+
+    <h2>2. Les tags&nbsp;: pourquoi <code>:latest</code> est un piège</h2>
+    <p>Une image est identifiée par un <strong>tag</strong> (<code>edge:1.8.2</code>). Le tag spécial
+    <code>:latest</code> ne veut <em>pas</em> dire «&nbsp;la plus récente en permanence&nbsp;»&nbsp;: c'est
+    juste un nom par défaut, qui pointe vers une image figée au moment du <code>pull</code>. Sur un edge, il
+    pose deux problèmes graves&nbsp;:</p>
+    <ul>
+      <li><strong>Tu ne sais plus ce qui tourne.</strong> Deux edges «&nbsp;en <code>:latest</code>&nbsp;»
+      peuvent exécuter des images différentes selon la date de leur dernier pull. Impossible de reproduire un
+      incident ou de garantir un parc homogène.</li>
+      <li><strong>Le rollback devient impossible.</strong> Sans numéro de version, on ne peut pas désigner
+      «&nbsp;la version d'avant&nbsp;» pour y revenir.</li>
+    </ul>
+
+    <div class="callout note">
+      <p>Règle simple&nbsp;: <strong>on déploie toujours un tag de version explicite et immuable</strong>
+      (<code>1.8.2</code>), on garde une trace de la version précédente, et on ne se sert de <code>:latest</code>
+      que pour du test jetable. Un edge en production doit pouvoir répondre à «&nbsp;quelle version
+      tourne&nbsp;?&nbsp;» d'un seul <code>docker ps</code>.</p>
+    </div>
+
+    <h2>3. Le registry&nbsp;: d'où viennent les images</h2>
+    <p>Les images sont stockées dans un <strong>registry</strong> — public (Docker Hub) ou, en OT, souvent un
+    registry privé de l'usine (<code>registry.local</code>), accessible depuis l'edge. On récupère une image
+    avec <code>pull</code>&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> docker pull registry.local/edge:1.9.0
+1.9.0: Pulling from edge
+a1b2c3: Pull complete
+d4e5f6: Pull complete
+Digest: sha256:7f3a...c1
+Status: Downloaded newer image for registry.local/edge:1.9.0</code></pre>
+
+    <div class="callout ot">
+      <p>Sur un réseau OT cloisonné, l'edge n'a souvent <strong>pas d'accès Internet</strong>&nbsp;: le
+      registry public est injoignable. Les images passent par le registry interne, ou sont chargées à la main
+      (<code>docker load</code> depuis un <code>.tar</code> transféré par le laptop&nbsp;: <code>docker save
+      registry.local/edge:1.9.0 -o edge-1.9.0.tar</code> côté source, <code>docker load -i edge-1.9.0.tar</code>
+      côté edge). Prévois <em>comment</em> l'image arrive avant de planifier une mise à jour — c'est souvent le
+      vrai point dur en production.</p>
+    </div>
+
+    <h2>4. Mettre à jour proprement</h2>
+    <p>La mise à jour est un simple changement de tag suivi d'un <code>up -d</code>. Compose ne recrée que ce
+    qui a changé (le service <code>gateway</code>), et laisse le broker tranquille.</p>
+
+    <pre class="term"><code><span class="cmt"># 1. Récupérer la nouvelle image AVANT de toucher au service en marche</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker pull registry.local/edge:1.9.0
+
+<span class="cmt"># 2. Mettre à jour le tag dans compose.yml : image: registry.local/edge:1.9.0</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> sudoedit compose.yml
+
+<span class="cmt"># 3. Appliquer : seul « gateway » est recréé (nouvelle image), « mqtt » reste en place</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker compose up -d
+[+] Running 2/2
+ ✔ Container edge-mqtt     Running
+ ✔ Container edge-gateway  <span class="good">Started</span>
+
+<span class="cmt"># 4. VÉRIFIER immédiatement que ça remonte bien</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker compose ps
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker logs --tail 20 -f edge-gateway</code></pre>
+
+    <div class="callout astuce">
+      <p>L'étape 1 (pull <em>avant</em>) est stratégique&nbsp;: le téléchargement peut être long ou échouer&nbsp;;
+      on veut l'avoir sécurisé <em>pendant que l'ancienne version tourne encore</em>. Le service n'est
+      interrompu qu'à l'étape 3, brièvement, image déjà en local. Ne jamais éditer le tag puis <code>up -d</code>
+      en espérant que le pull se fasse tout seul au pire moment.</p>
+    </div>
+
+    <h2>5. Rollback&nbsp;: revenir en arrière en une minute</h2>
+    <p>La nouvelle version se comporte mal (le healthcheck vire <code>unhealthy</code>, les logs crachent des
+    erreurs, la supervision ne reçoit plus). On <strong>revient à la version précédente</strong> — d'où
+    l'importance d'avoir gardé son image et noté son tag.</p>
+
+    <pre class="term"><code><span class="cmt"># 1. Constat : la 1.9.0 est mauvaise</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker logs --tail 10 edge-gateway
+2026-07-04T10:12:03Z FATAL schema mismatch: expected v3, got v4
+
+<span class="cmt"># 2. Remettre le tag précédent dans compose.yml : image: registry.local/edge:1.8.2</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> sudoedit compose.yml
+
+<span class="cmt"># 3. Ré-appliquer : l'image 1.8.2 est toujours en local, redéploiement immédiat</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker compose up -d
+ ✔ Container edge-gateway  <span class="good">Started</span>
+<span class="prompt-edge">maint@edge-cell12:/opt/edge$</span> docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
+edge-gateway   registry.local/edge:1.8.2   Up 4 seconds (health: starting)</code></pre>
+
+    <figure class="fig">
+      <svg viewBox="0 0 800 210" role="img" aria-label="Frise de déploiement : version 1.8.2 stable, pull de 1.9.0, bascule vers 1.9.0, détection d'un défaut, rollback vers 1.8.2 rétablie.">
+        <line class="link" x1="40" y1="105" x2="760" y2="105"/>
+        <!-- 1.8.2 stable -->
+        <circle cx="110" cy="105" r="9" style="fill:var(--c-svc);stroke:none"/>
+        <text class="lbl" x="110" y="80" text-anchor="middle">v1.8.2</text>
+        <text class="lbl-s" x="110" y="135" text-anchor="middle">stable</text>
+        <!-- pull -->
+        <circle cx="300" cy="105" r="9" style="fill:var(--c-edge);stroke:none"/>
+        <text class="lbl-s" x="300" y="80" text-anchor="middle">pull 1.9.0</text>
+        <!-- bascule 1.9.0 -->
+        <circle cx="450" cy="105" r="9" style="fill:var(--c-time);stroke:none"/>
+        <text class="lbl" x="450" y="80" text-anchor="middle">v1.9.0</text>
+        <text class="lbl-s" x="450" y="135" text-anchor="middle">up -d</text>
+        <!-- défaut -->
+        <circle cx="580" cy="105" r="9" style="fill:var(--danger);stroke:none"/>
+        <text class="lbl-s" x="580" y="80" text-anchor="middle" style="fill:var(--danger)">unhealthy ✗</text>
+        <!-- rollback -->
+        <circle cx="710" cy="105" r="9" style="fill:var(--c-svc);stroke:none"/>
+        <text class="lbl" x="710" y="80" text-anchor="middle">v1.8.2</text>
+        <text class="lbl-s" x="710" y="135" text-anchor="middle">rollback</text>
+        <path d="M580 128 Q645 175 710 128" class="link-hot"/>
+      </svg>
+      <figcaption><b>Figure 7.1.</b> Le cycle sûr&nbsp;: on garde l'image <b>1.8.2</b> en local même après être
+      passé en 1.9.0. Au moindre défaut, le rollback n'est qu'un changement de tag + <code>up -d</code> — pas
+      un nouveau téléchargement. C'est pourquoi on ne purge jamais l'image de la version précédente
+      (chapitre&nbsp;6).</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>Le rollback n'est rapide que si <strong>trois conditions</strong> sont réunies&nbsp;: (1) l'image
+      précédente est encore en local (ne pas l'avoir <code>prune</code>ée), (2) tu connais son tag exact,
+      (3) les <strong>données du volume restent compatibles</strong>. Le point (3) est le piège&nbsp;: si la
+      1.9.0 a migré le schéma des données dans le volume, revenir à la 1.8.2 peut ne plus lire ces données.
+      D'où l'ordre de bataille&nbsp;: <em>sauvegarde du volume (chapitre&nbsp;8) avant toute mise à jour</em>,
+      pour pouvoir restaurer aussi les données, pas seulement l'image.</p>
+    </div>
+
+    <h2>6. Politiques de redémarrage</h2>
+    <p>La clé <code>restart:</code> du compose dit à Docker quoi faire quand un conteneur s'arrête&nbsp;:</p>
+    <table>
+      <thead><tr><th>Politique</th><th>Comportement</th></tr></thead>
+      <tbody>
+        <tr><td><code>no</code></td><td>ne jamais redémarrer (défaut)</td></tr>
+        <tr><td><code>on-failure</code></td><td>redémarre seulement si sortie en erreur (code ≠ 0)</td></tr>
+        <tr><td><code>always</code></td><td>redémarre toujours, même après un stop manuel + reboot</td></tr>
+        <tr><td><code>unless-stopped</code></td><td>comme <code>always</code>, mais respecte un arrêt manuel</td></tr>
+      </tbody>
+    </table>
+    <p>Pour un service edge, <strong><code>unless-stopped</code></strong> est le bon défaut&nbsp;: il redémarre
+    le conteneur après un crash <em>et</em> après un reboot de l'edge, tout en te laissant l'arrêter
+    volontairement pour une maintenance sans qu'il ressuscite tout seul.</p>
+
+    <h2>7. Compose ou systemd&nbsp;? Les deux</h2>
+    <p>On a vu deux mécanismes de résilience&nbsp;: la politique <code>restart:</code> de Docker
+    (chapitre&nbsp;7) et l'unité systemd <code>edge-gateway.service</code> (chapitre&nbsp;3). Ils ne
+    s'excluent pas&nbsp;:</p>
+    <ul>
+      <li><strong>Docker <code>enabled</code> au boot</strong> (<code>systemctl enable docker</code>) +
+      <strong><code>restart: unless-stopped</code></strong> dans le compose&nbsp;: suffit à ce que la stack
+      revienne seule après un reboot. C'est l'approche la plus simple.</li>
+      <li><strong>Une unité systemd qui pilote <code>docker compose up</code></strong> (chapitre&nbsp;3)&nbsp;:
+      ajoute un interrupteur clair (<code>systemctl start/stop edge-gateway</code>), des logs dans journald, et
+      des dépendances explicites. C'est l'approche la plus «&nbsp;administrable&nbsp;».</li>
+    </ul>
+
+    <div class="callout piege">
+      <p>Ne fais pas gérer le <em>même</em> conteneur par les deux à la fois de façon concurrente&nbsp;: si une
+      unité systemd fait <code>compose up</code> pendant que Docker applique aussi <code>restart: always</code>,
+      tu peux avoir des courses au démarrage (double lancement, ports en conflit). Choisis <em>un</em> chef&nbsp;:
+      soit systemd pilote la stack (et le compose garde <code>restart</code> pour le seul cas du crash entre
+      deux passages de systemd), soit Docker gère tout seul et tu n'écris pas d'unité. Le plus courant sur un
+      edge&nbsp;: Docker enabled + <code>unless-stopped</code>, sans unité dédiée.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Compose</strong> décrit la stack en un fichier versionné&nbsp;: <code>up -d</code>,
+        <code>ps</code>, <code>logs -f</code>, <code>down</code> (jamais <code>down -v</code> par réflexe — il
+        efface les volumes).</li>
+        <li><strong>Tags explicites toujours</strong> (<code>1.8.2</code>), jamais <code>:latest</code> en
+        prod&nbsp;: sinon on ne sait plus ce qui tourne et le rollback est impossible.</li>
+        <li>Mise à jour&nbsp;: <code>pull</code> la nouvelle image <em>d'abord</em>, changer le tag,
+        <code>up -d</code>, <strong>vérifier</strong> (ps + logs + healthcheck).</li>
+        <li><strong>Rollback</strong> = remettre l'ancien tag + <code>up -d</code> (image gardée en local).
+        Attention à la compatibilité des <strong>données du volume</strong> — sauvegarder avant de mettre à
+        jour (chapitre&nbsp;8).</li>
+        <li>Résilience&nbsp;: <code>restart: unless-stopped</code> + Docker <code>enabled</code> au boot&nbsp;;
+        éventuellement une unité systemd — mais un seul chef à la fois.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Mettre à jour sans casser la prod</h3>
+      <p>Tu dois passer <code>edge-gateway</code> de 1.8.2 à 1.9.0. Donne la séquence, dans le bon ordre, en
+      minimisant l'interruption et en gardant la possibilité de rollback.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> docker pull registry.local/edge:1.9.0   <span class="cmt"># 1. pull d'abord (ancienne toujours en marche)</span>
+<span class="cmt"># 2. éditer compose.yml : image: ...edge:1.9.0 (NE PAS supprimer l'image 1.8.2 locale)</span>
+<span class="prompt-edge">$</span> docker compose up -d                     <span class="cmt"># 3. bascule brève</span>
+<span class="prompt-edge">$</span> docker compose ps &amp;&amp; docker logs -f edge-gateway   <span class="cmt"># 4. vérifier healthcheck + remontée</span></code></pre>
+        <p>Rollback possible parce qu'on n'a pas purgé l'image 1.8.2&nbsp;: si la 1.9.0 déraille, on remet le
+        tag 1.8.2 et <code>up -d</code>. Idéalement, on a aussi sauvegardé le volume <em>avant</em> l'étape 3
+        (chapitre&nbsp;8) au cas où la 1.9.0 aurait modifié les données.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Le rollback qui ne rollback pas</h3>
+      <p>Tu reviens de 1.9.0 à 1.8.2, le conteneur démarre, mais il plante toujours avec des erreurs de
+      lecture de données. Que s'est-il passé, et qu'aurais-tu dû faire&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>La 1.9.0 a probablement <strong>migré le format des données</strong> dans le volume
+        (<code>gateway-data</code>). Revenir à l'image 1.8.2 ne suffit pas&nbsp;: le code 1.8.2 ne sait pas
+        lire des données au nouveau format. Le rollback d'image ne restaure que le <em>code</em>, pas les
+        <em>données</em>. Il aurait fallu <strong>sauvegarder le volume avant la mise à jour</strong> et le
+        restaurer en même temps que l'image (chapitre&nbsp;8). C'est la raison pour laquelle «&nbsp;sauvegarde
+        avant déploiement&nbsp;» est une règle, pas une option.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Quelle politique de restart&nbsp;?</h3>
+      <p>Tu veux que le service edge&nbsp;: (a) revienne seul après un crash, (b) revienne après un reboot de
+      l'edge, mais (c) reste arrêté si <em>toi</em> l'arrêtes pour une maintenance. Quelle valeur de
+      <code>restart:</code>&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><code>restart: unless-stopped</code>. Il couvre (a) et (b) comme <code>always</code>, mais respecte
+        un arrêt manuel (c)&nbsp;: après <code>docker compose stop</code>, le conteneur ne redémarre pas tout
+        seul, y compris après reboot, jusqu'à ce que tu le relances explicitement. <code>always</code>, lui,
+        le ressusciterait même après ton arrêt volontaire — gênant en maintenance.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Docker sur l'edge — état &amp; diagnostic</a>
+    <a class="next" href="chapitre-08.html"><span class="lbl">Suivant →</span>Sauvegarde &amp; restauration</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>

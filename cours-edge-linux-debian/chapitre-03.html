@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — systemd : état des services &amp; remise en route</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🐧 Edge Linux Debian <span>· diagnostic &amp; exploitation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>systemd : état des services &amp; remise en route</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre ce qu'est une <strong>unité</strong> systemd et lire son état
+        (<code>active</code>, <code>failed</code>, <code>enabled</code>…).</li>
+        <li>Inspecter le système avec <code>systemctl status</code>, <code>list-units</code>,
+        <code>--failed</code>, et lire les dépendances.</li>
+        <li>Distinguer les quatre verbes qui comptent&nbsp;: <code>start</code>/<code>stop</code>,
+        <code>restart</code>/<code>reload</code>, <code>enable</code>/<code>disable</code>.</li>
+        <li>Écrire une <strong>unité de service</strong> pour lancer le service edge au boot, et mesurer le
+        démarrage avec <code>systemd-analyze</code>.</li>
+      </ul>
+    </div>
+
+    <h2>1. systemd, PID 1&nbsp;: le chef d'orchestre</h2>
+    <p>Au démarrage de Debian, le noyau lance un unique processus qui porte le numéro <strong>PID&nbsp;1</strong>&nbsp;:
+    <code>systemd</code>. C'est lui qui démarre tout le reste, dans le bon ordre, en respectant les
+    dépendances, et qui <em>supervise</em> ensuite chaque service&nbsp;: s'il meurt, systemd peut le
+    relancer&nbsp;; s'il refuse de démarrer, systemd le marque <code>failed</code> et garde la trace.</p>
+    <p>Tout ce que gère systemd est décrit par des <strong>unités</strong>. Les types qu'on croise sur un
+    edge&nbsp;:</p>
+    <table>
+      <thead><tr><th>Suffixe</th><th>Type d'unité</th><th>Exemple</th></tr></thead>
+      <tbody>
+        <tr><td><code>.service</code></td><td>un service (démon)</td><td><code>docker.service</code>, <code>chronyd.service</code></td></tr>
+        <tr><td><code>.socket</code></td><td>un socket qui active un service à la demande</td><td><code>ssh.socket</code></td></tr>
+        <tr><td><code>.timer</code></td><td>un déclencheur périodique (cron moderne)</td><td><code>backup.timer</code> (chapitre 8)</td></tr>
+        <tr><td><code>.target</code></td><td>un groupe/étape (ancien «&nbsp;runlevel&nbsp;»)</td><td><code>multi-user.target</code></td></tr>
+        <tr><td><code>.mount</code></td><td>un point de montage</td><td><code>data.mount</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>2. Lire l'état d'un service</h2>
+    <p>La commande de base, <code>systemctl status</code>, donne une photo complète&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemctl status chronyd
+● chronyd.service - chrony, an NTP client/server
+     Loaded: loaded (/lib/systemd/system/chronyd.service; <span class="good">enabled</span>; preset: enabled)
+     Active: <span class="good">active (running)</span> since Tue 2026-04-08 06:14:02 CEST; 87 days ago
+       Docs: man:chronyd(8)
+   Main PID: 612 (chronyd)
+      Tasks: 1 (limit: 4571)
+     Memory: 2.1M
+        CPU: 41.800s
+     CGroup: /system.slice/chronyd.service
+             └─612 /usr/sbin/chronyd -F 1</code></pre>
+
+    <p>Les deux lignes qui portent l'information&nbsp;:</p>
+    <ul>
+      <li><strong>Loaded … enabled</strong> — l'unité est chargée et <code>enabled</code> = elle démarrera
+      automatiquement au prochain boot. (<code>disabled</code> = installée mais pas lancée au boot.)</li>
+      <li><strong>Active: active (running)</strong> — l'état <em>runtime</em> maintenant. Les valeurs qu'on
+      voit&nbsp;: <code>active (running)</code>, <code>active (exited)</code> (a fini son travail, normal pour
+      un one-shot), <code>inactive (dead)</code> (arrêté), et surtout <code class="bad">failed</code>.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>Deux axes indépendants à ne pas confondre&nbsp;: <strong>enabled/disabled</strong> répond à
+      «&nbsp;démarre-t-il au boot&nbsp;?&nbsp;», <strong>active/inactive</strong> à «&nbsp;tourne-t-il
+      maintenant&nbsp;?&nbsp;». Un service peut être <code>enabled</code> mais <code>inactive</code> (planté),
+      ou <code>active</code> mais <code>disabled</code> (lancé à la main, il ne reviendra pas après reboot —
+      piège classique&nbsp;: «&nbsp;ça marchait, puis on a rebooté et c'est parti&nbsp;»).</p>
+    </div>
+
+    <h3>Balayer tout le système</h3>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemctl --failed
+  UNIT                 LOAD   ACTIVE SUB    DESCRIPTION
+● edge-gateway.service loaded <span class="bad">failed failed</span> Edge Gateway (OPC-UA → MQTT)
+1 loaded units listed.</code></pre>
+    <p><code>systemctl --failed</code> est <em>la</em> première commande de diagnostic&nbsp;: elle liste tout
+    ce qui est en échec, rien d'autre. Ici, le service edge est tombé. On regarde ensuite son statut détaillé.</p>
+
+    <h2>3. Lire un service <code>failed</code></h2>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemctl status edge-gateway
+● edge-gateway.service - Edge Gateway (OPC-UA → MQTT)
+     Loaded: loaded (/etc/systemd/system/edge-gateway.service; enabled)
+     Active: <span class="bad">failed (Result: exit-code)</span> since Sat 2026-07-04 08:03:11 CEST; 2min ago
+    Process: 21874 ExecStart=/usr/bin/docker compose -f /opt/edge/compose.yml up (code=exited, status=1)
+   Main PID: 21874 (code=exited, <span class="bad">status=1</span>)
+
+Jul 04 08:03:11 edge-cell12 docker[21874]: Error response from daemon: driver failed programming
+Jul 04 08:03:11 edge-cell12 docker[21874]: external connectivity: port 1883 already allocated
+Jul 04 08:03:11 edge-cell12 systemd[1]: edge-gateway.service: Failed with result 'exit-code'.</code></pre>
+
+    <p>Le bloc <code>status</code> se lit de bas en haut&nbsp;: systemd affiche les <strong>dernières lignes
+    de journal</strong> de l'unité. Ici la cause est explicite — <em>port 1883 déjà alloué</em>&nbsp;: un
+    ancien conteneur MQTT tient encore le port. On saura le résoudre au chapitre&nbsp;6&nbsp;; pour l'instant,
+    l'important est que <strong><code>systemctl status</code> a montré la cause sans qu'on aille chercher
+    ailleurs</strong>.</p>
+
+    <div class="callout note">
+      <p>Le réflexe canonique face à un service en défaut&nbsp;: <code>systemctl status &lt;unité&gt;</code>
+      pour la photo + les dernières erreurs, puis <code>journalctl -u &lt;unité&gt; -e</code> (chapitre 4)
+      pour le fil complet. Neuf pannes sur dix se diagnostiquent dans ces deux commandes.</p>
+    </div>
+
+    <h2>4. Les verbes d'action</h2>
+    <p>Une fois la cause comprise, on agit. Quatre paires de verbes couvrent l'exploitation&nbsp;; tous
+    demandent <code>sudo</code>.</p>
+
+    <table>
+      <thead><tr><th>Commande</th><th>Effet</th><th>Quand</th></tr></thead>
+      <tbody>
+        <tr><td><code>start</code> / <code>stop</code></td><td>lance / arrête maintenant</td><td>action ponctuelle</td></tr>
+        <tr><td><code>restart</code></td><td>stop puis start</td><td>relancer un service planté ou après changement de config d'app</td></tr>
+        <tr><td><code>reload</code></td><td>recharge la config <em>sans</em> couper</td><td>quand le service le supporte (ex. <code>ssh</code>, <code>chronyd</code>)</td></tr>
+        <tr><td><code>enable</code> / <code>disable</code></td><td>(dé)active le démarrage au boot</td><td>rendre un service permanent</td></tr>
+      </tbody>
+    </table>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl restart edge-gateway
+<span class="prompt-edge">maint@edge-cell12:~$</span> systemctl is-active edge-gateway
+<span class="good">active</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> systemctl is-enabled edge-gateway
+<span class="good">enabled</span></code></pre>
+
+    <div class="callout astuce">
+      <p><code>enable --now</code> combine <code>enable</code> + <code>start</code> en une fois, et
+      <code>disable --now</code> combine <code>disable</code> + <code>stop</code>. Pratique pour «&nbsp;je veux
+      que ce service tourne <em>et</em> revienne au boot&nbsp;» d'un seul geste&nbsp;:
+      <code>sudo systemctl enable --now edge-gateway</code>.</p>
+    </div>
+
+    <h3>Voir les dépendances</h3>
+    <p>Le service edge dépend de Docker, qui dépend du réseau… <code>list-dependencies</code> déroule l'arbre&nbsp;:</p>
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemctl list-dependencies edge-gateway
+edge-gateway.service
+● ├─docker.service
+● ├─system.slice
+● └─network-online.target
+●   └─...</code></pre>
+    <p>Utile quand un service ne démarre pas «&nbsp;sans raison&nbsp;»&nbsp;: souvent c'est une
+    <em>dépendance</em> en amont qui a échoué (Docker pas prêt, réseau pas monté). On corrige la cause, pas le
+    symptôme.</p>
+
+    <h2>5. Écrire l'unité du service edge</h2>
+    <p>Pour que le service edge démarre au boot, survive à un crash et s'intègre aux journaux, on l'enveloppe
+    dans une unité systemd. Fichier <code>/etc/systemd/system/edge-gateway.service</code>&nbsp;:</p>
+
+    <pre><code class="language-ini">[Unit]
+Description=Edge Gateway (OPC-UA → MQTT)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/edge
+# Démarre la stack Docker Compose au premier plan (pas de -d)
+ExecStart=/usr/bin/docker compose -f /opt/edge/compose.yml up
+ExecStop=/usr/bin/docker compose -f /opt/edge/compose.yml down
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+    <p>Les clés importantes&nbsp;:</p>
+    <ul>
+      <li><strong><code>Requires</code> + <code>After</code> docker.service</strong>&nbsp;: le service edge a
+      <em>besoin</em> de Docker et ne doit démarrer qu'<em>après</em> lui. <code>Requires</code> exprime la
+      dépendance, <code>After</code> l'ordre — les deux sont nécessaires.</li>
+      <li><strong><code>Restart=on-failure</code> + <code>RestartSec=10</code></strong>&nbsp;: si le service
+      sort en erreur, systemd le relance après 10&nbsp;s. C'est la résilience de base.</li>
+      <li><strong><code>WantedBy=multi-user.target</code></strong>&nbsp;: c'est ce qui rend
+      <code>enable</code> effectif — le service s'accroche à l'étape «&nbsp;système multi-utilisateur&nbsp;»
+      atteinte à chaque boot.</li>
+    </ul>
+
+    <p>Après toute création ou édition d'unité, on recharge la définition avant d'agir&nbsp;:</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl daemon-reload      <span class="cmt"># relit les fichiers d'unités</span>
+<span class="prompt-edge">maint@edge-cell12:~$</span> sudo systemctl enable --now edge-gateway
+Created symlink /etc/systemd/system/multi-user.target.wants/edge-gateway.service → /etc/systemd/system/edge-gateway.service.</code></pre>
+
+    <div class="callout piege">
+      <p>Oublier <code>daemon-reload</code> après avoir modifié un fichier <code>.service</code> est l'erreur
+      la plus courante&nbsp;: systemd continue d'utiliser <em>l'ancienne</em> version en mémoire et tes
+      changements semblent «&nbsp;ignorés&nbsp;». systemd te prévient d'ailleurs avec un
+      <code>Warning: The unit file … changed on disk. Run 'systemctl daemon-reload'</code>. Réflexe&nbsp;:
+      <em>j'édite une unité → je fais <code>daemon-reload</code> → j'agis</em>.</p>
+    </div>
+
+    <div class="callout astuce">
+      <p>Deux écoles pour le service edge, toutes deux valables&nbsp;: <strong>(a)</strong> une unité systemd
+      qui lance <code>docker compose up</code> (ci-dessus)&nbsp;— systemd est le superviseur, les logs vont
+      dans journald&nbsp;; <strong>(b)</strong> laisser Docker gérer avec <code>restart: unless-stopped</code>
+      dans le compose (chapitre 7)&nbsp;— c'est le démon Docker qui relance. On peut combiner&nbsp;: le plus
+      robuste est d'avoir Docker <code>enabled</code> au boot <em>et</em> une politique de restart dans le
+      compose, l'unité systemd servant surtout d'interrupteur clair et de point de log.</p>
+    </div>
+
+    <h2>6. Mesurer le démarrage&nbsp;: <code>systemd-analyze</code></h2>
+    <p>Un edge qui met deux minutes à booter, c'est deux minutes sans remontée de données. <code>systemd-analyze</code>
+    dit où part le temps.</p>
+
+    <pre class="term"><code><span class="prompt-edge">maint@edge-cell12:~$</span> systemd-analyze
+Startup finished in 3.891s (kernel) + 18.4s (userspace) = 22.3s
+
+<span class="prompt-edge">maint@edge-cell12:~$</span> systemd-analyze blame | head -5
+    11.204s docker.service
+     4.019s edge-gateway.service
+     1.337s NetworkManager-wait-online.service
+      812ms chronyd.service
+      330ms systemd-journald.service</code></pre>
+
+    <p><code>blame</code> classe les unités par durée de démarrage. Ici Docker domine (normal&nbsp;: il monte
+    ses réseaux et volumes), suivi du service edge. Si un service <em>inattendu</em> traîne en tête, c'est une
+    piste — souvent un <code>*-wait-online</code> qui attend un réseau qui ne vient jamais.</p>
+
+    <div class="callout plc">
+      <p>Le pendant côté automate&nbsp;: le CPU S7-1500 a lui aussi une séquence de démarrage (STOP →
+      STARTUP → RUN) et des diagnostics de mise en route dans TIA. La philosophie est jumelle&nbsp;: un
+      redémarrage n'est pas instantané, il suit un ordre de dépendances, et on peut en mesurer/lire chaque
+      étape. Sur l'edge, cet ordre, c'est systemd qui le tient.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>systemd (PID&nbsp;1) démarre et supervise tout via des <strong>unités</strong>
+        (<code>.service</code>, <code>.socket</code>, <code>.timer</code>, <code>.target</code>).</li>
+        <li>Deux axes indépendants&nbsp;: <strong>enabled/disabled</strong> (démarre au boot&nbsp;?) et
+        <strong>active/failed</strong> (tourne maintenant&nbsp;?).</li>
+        <li>Diagnostic&nbsp;: <code>systemctl --failed</code> puis <code>systemctl status &lt;unité&gt;</code>
+        — les dernières lignes de journal montrent souvent la cause directement.</li>
+        <li>Verbes&nbsp;: <code>restart</code> (relancer), <code>reload</code> (recharger sans couper),
+        <code>enable --now</code> (permanent + démarre).</li>
+        <li>Une <strong>unité</strong> pour le service edge&nbsp;: <code>Requires/After=docker.service</code>,
+        <code>Restart=on-failure</code>, <code>WantedBy=multi-user.target</code>. Toujours
+        <code>daemon-reload</code> après édition.</li>
+        <li><code>systemd-analyze blame</code> pour savoir où part le temps de boot.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — «&nbsp;Ça marchait, puis on a rebooté&nbsp;»</h3>
+      <p>Un service tournait, mais après le dernier reboot il n'est plus là. <code>systemctl status</code>
+      montre <code>active: inactive (dead)</code>. Quelle est la cause probable, et quelle commande la
+      confirme puis la corrige&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> systemctl is-enabled monservice
+<span class="bad">disabled</span>            <span class="cmt"># ← voilà : il n'était pas activé au boot</span>
+<span class="prompt-edge">$</span> sudo systemctl enable --now monservice</code></pre>
+        <p>Le service avait été lancé à la main (<code>start</code>) mais jamais <code>enable</code>. Il
+        tournait donc jusqu'au reboot, puis n'est pas revenu. <code>enable --now</code> le relance <em>et</em>
+        le rend permanent. C'est la confusion enabled/active du §2.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Un service en échec&nbsp;: la démarche</h3>
+      <p><code>systemctl --failed</code> montre <code>edge-gateway.service</code> en <code>failed</code>. Écris
+      la séquence exacte pour comprendre pourquoi, puis le relancer une fois la cause traitée.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre class="term"><code><span class="prompt-edge">$</span> systemctl status edge-gateway        <span class="cmt"># photo + dernières erreurs</span>
+<span class="prompt-edge">$</span> journalctl -u edge-gateway -e        <span class="cmt"># fil de journal complet (ch. 4)</span>
+<span class="cmt"># … on lit la cause, on la corrige (port occupé, image manquante, disque plein…) …</span>
+<span class="prompt-edge">$</span> sudo systemctl restart edge-gateway
+<span class="prompt-edge">$</span> systemctl is-active edge-gateway
+active</code></pre>
+        <p>On ne relance <strong>jamais en boucle</strong> sans lire la cause&nbsp;: un
+        <code>restart</code> aveugle sur un service qui échoue à cause d'un disque plein ou d'un port occupé
+        rejouera le même échec. Lire d'abord, agir ensuite.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Mes changements d'unité sont ignorés</h3>
+      <p>Tu modifies <code>/etc/systemd/system/edge-gateway.service</code> pour ajouter
+      <code>RestartSec=30</code>, tu fais <code>restart</code>, mais le comportement n'a pas changé. Pourquoi,
+      et comment corriger&nbsp;?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>systemd travaille sur la version <em>en mémoire</em> de l'unité, pas sur le fichier fraîchement
+        édité. Il faut lui dire de relire les fichiers&nbsp;:</p>
+        <pre class="term"><code><span class="prompt-edge">$</span> sudo systemctl daemon-reload
+<span class="prompt-edge">$</span> sudo systemctl restart edge-gateway</code></pre>
+        <p><code>daemon-reload</code> recharge les <em>définitions</em>&nbsp;; <code>restart</code> applique le
+        nouveau comportement au service qui tourne. L'ordre compte&nbsp;: reload puis restart.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>SSH — gérer &amp; sécuriser l'accès</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>Journaux avec journalctl</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Diagnostic &amp; exploitation d'un edge Linux Debian 🐧
+  </footer>
+</body>
+</html>
