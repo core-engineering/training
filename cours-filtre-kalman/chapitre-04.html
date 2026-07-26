@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — Le filtrage bayésien récursif</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>Le filtrage bayésien récursif</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Formaliser la <strong>croyance</strong> : la loi de l'état sachant toutes les mesures passées, <span class="math-inline">p(xₖ | z₁:ₖ)</span>.</li>
+        <li>Poser les deux hypothèses structurelles — <strong>Markov</strong> sur l'état, mesures conditionnellement indépendantes — qui rendent le filtrage récursif.</li>
+        <li>Dériver le cycle universel : <strong>prédiction</strong> (équation de Chapman-Kolmogorov) puis <strong>correction</strong> (règle de Bayes).</li>
+        <li>Comprendre que le filtre de Kalman n'est <em>qu'un cas particulier</em> de ce cycle, obtenu quand tout est linéaire-gaussien.</li>
+      </ul>
+    </div>
+
+    <h2>1. La croyance : tout ce qu'on sait, en une loi</h2>
+    <p>
+      Reprenons le fil du chapitre 1 : on suit une distribution, pas une valeur. À l'instant
+      <span class="math-inline">k</span>, après avoir encaissé les mesures
+      <span class="math-inline">z₁, z₂, …, zₖ</span> (noté <span class="math-inline">z₁:ₖ</span>), tout ce
+      que le filtre « sait » de l'état tient dans une seule loi de probabilité, la
+      <strong>croyance</strong> (ou <em>belief</em>) :
+    </p>
+    <div class="math">
+      bel(xₖ) = p( xₖ | z₁:ₖ )
+    </div>
+    <p>
+      C'est la loi de l'état courant <em>conditionnée</em> à tout l'historique des mesures. Le but du
+      filtrage est de maintenir cette loi à jour, mesure après mesure, <strong>sans jamais rejouer tout
+      l'historique</strong>. On veut passer de <span class="math-inline">bel(xₖ₋₁)</span> à
+      <span class="math-inline">bel(xₖ)</span> en n'utilisant que la croyance précédente et la nouvelle
+      mesure <span class="math-inline">zₖ</span>. C'est ça, être <strong>récursif</strong> — et c'est ce
+      qui rend le calcul faisable à coût constant, indéfiniment.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        La croyance est une <em>mémoire compressée</em> du passé. Au lieu de garder toutes les mesures depuis
+        le début (mémoire et calcul croissant sans fin), on résume tout leur contenu informatif dans une
+        seule loi. À chaque nouvelle mesure, on met à jour ce résumé et on jette la mesure. Le filtre ne
+        vieillit jamais.
+      </p>
+    </div>
+
+    <h2>2. Les deux hypothèses qui rendent la récursion possible</h2>
+    <p>
+      Cette compression ne va pas de soi. Elle repose sur deux hypothèses de structure sur le système —
+      valables bien au-delà du cas gaussien.
+    </p>
+
+    <h3>2.1 L'état est markovien</h3>
+    <p>
+      Le futur ne dépend du passé <em>qu'à travers le présent</em>. Formellement, sachant l'état
+      <span class="math-inline">xₖ₋₁</span>, l'état <span class="math-inline">xₖ</span> ne dépend plus de ce
+      qui s'est passé avant :
+    </p>
+    <div class="math">
+      p( xₖ | x₀:ₖ₋₁ , z₁:ₖ₋₁ ) = p( xₖ | xₖ₋₁ )
+    </div>
+    <p>
+      C'est la définition même d'un <strong>état</strong> : un résumé suffisant du passé. On appelle
+      <span class="math-inline">p(xₖ | xₖ₋₁)</span> le <strong>modèle de transition</strong> (ou de
+      mouvement). Si votre « état » ne vérifie pas Markov, c'est qu'il est incomplet — il manque une
+      variable (souvent une dérivée, comme la vitesse) qu'il faudrait y ajouter.
+    </p>
+
+    <h3>2.2 Les mesures sont conditionnellement indépendantes</h3>
+    <p>
+      Sachant l'état courant <span class="math-inline">xₖ</span>, la mesure <span class="math-inline">zₖ</span>
+      ne dépend de rien d'autre : ni des états passés, ni des mesures passées.
+    </p>
+    <div class="math">
+      p( zₖ | x₀:ₖ , z₁:ₖ₋₁ ) = p( zₖ | xₖ )
+    </div>
+    <p>
+      On appelle <span class="math-inline">p(zₖ | xₖ)</span> le <strong>modèle de mesure</strong> (ou de
+      vraisemblance) : la probabilité d'observer <span class="math-inline">zₖ</span> si l'état vaut
+      <span class="math-inline">xₖ</span>. Le bruit du capteur est supposé <em>frais</em> à chaque instant,
+      sans mémoire d'un pas à l'autre.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Deux briques suffisent à décrire tout le système : le <strong>modèle de transition</strong>
+        <span class="math-inline">p(xₖ|xₖ₋₁)</span> (comment l'état évolue) et le <strong>modèle de
+        mesure</strong> <span class="math-inline">p(zₖ|xₖ)</span> (comment l'état se manifeste au capteur).
+        Le filtre de Kalman n'est que ces deux briques rendues linéaires-gaussiennes (chapitre 5).
+      </p>
+    </div>
+
+    <h2>3. Le cycle en deux temps</h2>
+    <p>
+      Passer de <span class="math-inline">bel(xₖ₋₁)</span> à <span class="math-inline">bel(xₖ)</span> se fait
+      en deux mouvements complémentaires : d'abord avancer dans le temps (prédiction), puis intégrer la
+      nouvelle mesure (correction).
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-bayes-loop.svg" alt="Schéma de la boucle récursive. Une boîte PRÉDICTION à gauche reçoit la commande u par le haut ; elle produit un a priori. Une flèche horizontale la relie à une boîte CORRECTION à droite, qui reçoit la mesure z par le haut. La sortie de CORRECTION, l'a posteriori, redescend et reboucle par le bas vers l'entrée de PRÉDICTION : l'état a posteriori devient l'état du cycle suivant.">
+      <figcaption><b>Figure 4.1.</b> La boucle universelle du filtrage bayésien. La <b>prédiction</b> propage
+      la croyance à travers le modèle de mouvement (et la commande <span class="math-inline">u</span>) pour
+      produire un <em>a priori</em>&nbsp;; la <b>correction</b> l'affine avec la mesure
+      <span class="math-inline">z</span> pour produire l'<em>a posteriori</em>, qui reboucle et devient la
+      croyance du cycle suivant. Les formules encadrées sont celles du cas de Kalman (chapitres 6-7)&nbsp;;
+      la structure, elle, est valable pour <em>tout</em> filtre bayésien.</figcaption>
+    </figure>
+
+    <h3>3.1 Prédiction — l'équation de Chapman-Kolmogorov</h3>
+    <p>
+      Avant de voir <span class="math-inline">zₖ</span>, on fait vieillir la croyance d'un pas à travers le
+      modèle de transition. On veut <span class="math-inline">p(xₖ | z₁:ₖ₋₁)</span>, la croyance
+      <em>prédite</em> (l'a priori). On l'obtient en sommant sur toutes les provenances possibles
+      <span class="math-inline">xₖ₋₁</span>, pondérées par leur croyance :
+    </p>
+    <div class="math">
+      p(xₖ | z₁:ₖ₋₁) = ∫ p(xₖ | xₖ₋₁) · p(xₖ₋₁ | z₁:ₖ₋₁) · dxₖ₋₁
+    </div>
+    <p>
+      Cette intégrale est l'<strong>équation de Chapman-Kolmogorov</strong>. En mots : « la probabilité
+      d'arriver en <span class="math-inline">xₖ</span> est la somme, sur tous les points de départ possibles,
+      de la probabilité d'y avoir été fois celle d'en venir ». C'est une convolution de la croyance par la
+      dynamique. Elle <strong>étale</strong> la croyance : on additionne des incertitudes, donc on en sait
+      moins qu'avant.
+    </p>
+
+    <h3>3.2 Correction — la règle de Bayes</h3>
+    <p>
+      La mesure <span class="math-inline">zₖ</span> arrive. On met à jour l'a priori par la
+      <strong>règle de Bayes</strong> :
+    </p>
+    <div class="math">
+      p(xₖ | z₁:ₖ) = [ p(zₖ | xₖ) · p(xₖ | z₁:ₖ₋₁) ] / p(zₖ | z₁:ₖ₋₁)
+    </div>
+    <p>
+      Lisons chaque terme :
+    </p>
+    <ul>
+      <li><span class="math-inline">p(xₖ | z₁:ₖ₋₁)</span> — l'<strong>a priori</strong>, ce qu'on croyait
+        avant la mesure (sortie de la prédiction) ;</li>
+      <li><span class="math-inline">p(zₖ | xₖ)</span> — la <strong>vraisemblance</strong>, à quel point
+        chaque valeur d'état explique la mesure observée ;</li>
+      <li>le dénominateur — une simple <strong>constante de normalisation</strong> (l'évidence), qui ne
+        dépend pas de <span class="math-inline">xₖ</span> et garantit une aire de 1 ;</li>
+      <li><span class="math-inline">p(xₖ | z₁:ₖ)</span> — l'<strong>a posteriori</strong>, la nouvelle
+        croyance, prête à servir de point de départ au cycle suivant.</li>
+    </ul>
+    <p>
+      La correction <strong>resserre</strong> la croyance : multiplier l'a priori par la vraisemblance ne
+      peut que concentrer la masse là où les deux s'accordent. C'est le pendant exact de la respiration
+      décrite au chapitre 1 : la prédiction gonfle, la correction resserre.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        « A posteriori ∝ vraisemblance × a priori. » Cette proportionnalité résume toute l'inférence
+        bayésienne. La constante de normalisation, souvent pénible à calculer dans le cas général, va
+        <em>disparaître</em> dans le cas gaussien : on saura que le résultat est gaussien, il suffira d'en
+        identifier moyenne et covariance. C'est là que le filtre de Kalman gagne sa vitesse.
+      </p>
+    </div>
+
+    <h2>4. Pourquoi le cas général est intraitable — et Kalman non</h2>
+    <p>
+      Ce cycle prédiction/correction est <strong>exact et universel</strong> : il vaut pour n'importe quels
+      modèles de transition et de mesure. Mais dans le cas général, il est <em>incalculable</em> en pratique.
+      L'intégrale de Chapman-Kolmogorov n'a pas de forme fermée, et l'a posteriori peut prendre une forme
+      arbitrairement compliquée (multi-bosses, asymétrique) qu'aucun petit jeu de paramètres ne résume. On se
+      rabat alors sur des approximations : grille de points, particules (filtre particulaire), ou
+      linéarisation.
+    </p>
+    <p>
+      Le miracle du cas <strong>linéaire-gaussien</strong>, c'est que les deux étapes restent dans la famille
+      gaussienne (grâce aux clôtures du chapitre 3) :
+    </p>
+    <ul>
+      <li>La prédiction est une transformation linéaire d'une gaussienne + un bruit gaussien
+        → gaussienne (clôture linéaire + additivité).</li>
+      <li>La correction est un produit gaussien × gaussien, renormalisé → gaussienne (clôture par
+        conditionnement).</li>
+    </ul>
+    <p>
+      Donc la croyance reste gaussienne <strong>à tout instant</strong>, entièrement décrite par
+      <span class="math-inline">(xₖ, Pₖ)</span>. Les intégrales et la normalisation se réduisent à de
+      l'algèbre matricielle sur ces deux objets. Le filtre de Kalman <em>est</em> le filtre bayésien récursif,
+      spécialisé au cas où l'on peut tout faire à la main. Il ne reste qu'à écrire ce modèle linéaire-gaussien :
+      c'est le chapitre suivant.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        Ne confondez pas la <strong>structure</strong> (prédiction/correction, valable partout) et sa
+        <strong>réalisation</strong> (les cinq équations matricielles, valables seulement en
+        linéaire-gaussien). L'EKF, l'UKF, le filtre particulaire gardent tous la même structure de la
+        figure 4.1 ; ils ne diffèrent que par la façon d'approcher les deux étapes quand les hypothèses de
+        Kalman tombent (chapitre 10).
+      </p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Le filtre maintient une <strong>croyance</strong> <span class="math-inline">bel(xₖ) = p(xₖ | z₁:ₖ)</span> : tout le savoir sur l'état, résumé en une loi.</li>
+        <li>Deux hypothèses la rendent récursive : état <strong>markovien</strong> (<span class="math-inline">p(xₖ|xₖ₋₁)</span>) et mesures <strong>conditionnellement indépendantes</strong> (<span class="math-inline">p(zₖ|xₖ)</span>).</li>
+        <li><strong>Prédiction</strong> (Chapman-Kolmogorov) : <span class="math-inline">p(xₖ|z₁:ₖ₋₁) = ∫ p(xₖ|xₖ₋₁) p(xₖ₋₁|z₁:ₖ₋₁) dxₖ₋₁</span> — étale la croyance.</li>
+        <li><strong>Correction</strong> (Bayes) : a posteriori ∝ vraisemblance × a priori — resserre la croyance.</li>
+        <li>Ce cycle est <strong>exact et universel</strong> mais généralement incalculable&nbsp;; le cas <strong>linéaire-gaussien</strong> le rend calculable car la croyance reste gaussienne, décrite par <span class="math-inline">(x, P)</span>.</li>
+        <li>Le filtre de Kalman = ce cycle spécialisé. EKF/UKF/particulaire = ce même cycle, approché autrement.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>La loi gaussienne, reine du filtre</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Le modèle linéaire-gaussien</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

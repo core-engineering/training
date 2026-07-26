@@ -1,0 +1,266 @@
+/* ===========================================================
+   Cours « Filtre de Kalman — fondements théoriques »
+   Feuille de style commune à toutes les pages.
+   Reprend la structure des cours Rust / Cinématique / Ruckig
+   (mêmes classes), avec un accent « estimation » sarcelle et
+   des styles de figures (SVG) dédiés à la probabilité.
+   =========================================================== */
+
+:root {
+  --bg:        #0e1116;
+  --bg-soft:   #151a22;
+  --bg-card:   #1a2029;
+  --fg:        #e7ecf2;
+  --fg-dim:    #9aa6b6;
+  --accent:    #34d1bf;   /* sarcelle « estimation » — couleur maître du cours */
+  --accent-2:  #f0a44f;   /* ambre — liens & sous-titres */
+  --border:    #26303c;
+  --ok:        #7ee081;
+  --warn:      #f4c15b;
+  --danger:    #f2777a;
+  --radius:    10px;
+  --maxw:      880px;
+
+  /* Couleurs des figures probabilistes (validées CVD sur fond sombre).
+     Reprises telles quelles dans les SVG — définies ici pour les légendes
+     et le texte courant qui nomme une grandeur. */
+  --k-prior: #3987e5;   /* a priori / prédiction   (bleu)  */
+  --k-meas:  #f0a44f;   /* mesure / vraisemblance  (ambre) */
+  --k-post:  #35c98b;   /* a posteriori / estimé   (vert)  */
+  --k-truth: #c3ccd8;   /* vérité terrain          (gris)  */
+
+  font-size: 17px;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.65;
+}
+
+/* ---------- En-tête / navigation haute ---------- */
+header.site {
+  background: linear-gradient(120deg, #12211f, #10131c);
+  border-bottom: 1px solid var(--border);
+  padding: 1.1rem 1.25rem;
+}
+header.site .wrap { max-width: var(--maxw); margin: 0 auto; }
+header.site a.brand {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: .3px;
+}
+header.site .brand span { color: var(--fg-dim); font-weight: 400; }
+
+/* ---------- Contenu principal ---------- */
+main {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+h1, h2, h3 { line-height: 1.25; color: #fff; }
+h1 { font-size: 2rem; margin-top: 0; }
+h1 .chap-num {
+  display: inline-block;
+  color: var(--accent);
+  font-size: 1rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: .4rem;
+}
+h2 {
+  font-size: 1.45rem;
+  margin-top: 2.6rem;
+  padding-bottom: .35rem;
+  border-bottom: 1px solid var(--border);
+}
+h3 { font-size: 1.15rem; margin-top: 1.8rem; color: var(--accent-2); }
+
+p, li { color: var(--fg); }
+a { color: var(--accent-2); }
+
+code {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  background: #202836;
+  color: #cfe6ec;
+  padding: .12em .4em;
+  border-radius: 5px;
+  font-size: .9em;
+}
+
+pre {
+  background: #0f131a;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  margin: 1.2rem 0;
+}
+pre code {
+  background: none;
+  color: #e7ecf2;
+  padding: 0;
+  font-size: .86rem;
+  line-height: 1.55;
+}
+
+/* ---------- Encarts ---------- */
+.callout {
+  border-left: 4px solid var(--accent);
+  background: var(--bg-card);
+  padding: .9rem 1.1rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin: 1.4rem 0;
+}
+.callout.piege   { border-color: var(--warn); }
+.callout.piege::before   { content: "⚠️ Piège"; display:block; font-weight:700; color:var(--warn); margin-bottom:.4rem; }
+.callout.astuce  { border-color: var(--ok); }
+.callout.astuce::before  { content: "💡 Intuition"; display:block; font-weight:700; color:var(--ok); margin-bottom:.4rem; }
+.callout.note    { border-color: var(--accent); }
+.callout.note::before    { content: "📝 À retenir"; display:block; font-weight:700; color:var(--accent); margin-bottom:.4rem; }
+.callout.histoire { border-color: var(--accent-2); }
+.callout.histoire::before { content: "📜 Histoire"; display:block; font-weight:700; color:var(--accent-2); margin-bottom:.4rem; }
+.callout.math    { border-color: #cf8bff; }
+.callout.math::before    { content: "∑ Le calcul"; display:block; font-weight:700; color:#cf8bff; margin-bottom:.4rem; }
+.callout.demo    { border-color: #8ab4ff; }
+.callout.demo::before    { content: "🧮 Démonstration"; display:block; font-weight:700; color:#8ab4ff; margin-bottom:.4rem; }
+
+/* ---------- Objectifs de chapitre ---------- */
+.objectifs {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.3rem;
+  margin: 1.5rem 0 2rem;
+}
+.objectifs h2 { margin-top:.2rem; border:none; font-size:1.1rem; color:var(--accent); }
+
+/* ---------- Exercices ---------- */
+.exercice {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  margin: 1.5rem 0;
+}
+.exercice > h3 { margin-top: 0; color: var(--accent); }
+details {
+  margin-top: .8rem;
+  border-top: 1px dashed var(--border);
+  padding-top: .6rem;
+}
+details summary {
+  cursor: pointer;
+  color: var(--ok);
+  font-weight: 600;
+  user-select: none;
+}
+details[open] summary { margin-bottom: .6rem; }
+
+/* ---------- Figures (SVG) ---------- */
+figure.fig {
+  margin: 1.8rem 0;
+  background: #0f131a;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1rem .4rem;
+}
+figure.fig img, figure.fig svg { display: block; width: 100%; height: auto; }
+figure.fig figcaption {
+  color: var(--fg-dim);
+  font-size: .85rem;
+  font-style: italic;
+  margin-top: .6rem;
+  padding: 0 .3rem .3rem;
+  line-height: 1.5;
+}
+figure.fig figcaption b { color: var(--fg); font-style: normal; }
+
+/* Petite légende de couleurs probabilistes, réutilisable dans le texte */
+.klegend { display:flex; flex-wrap:wrap; gap:.6rem 1.1rem; margin:.4rem 0 0; padding:0; list-style:none; font-size:.85rem; }
+.klegend li { display:flex; align-items:center; gap:.4rem; color:var(--fg-dim); }
+.klegend .sw { width:.9rem; height:.9rem; border-radius:3px; display:inline-block; }
+.sw-prior{background:var(--k-prior);} .sw-meas{background:var(--k-meas);}
+.sw-post{background:var(--k-post);}  .sw-truth{background:var(--k-truth);}
+
+/* ---------- Pager (précédent / suivant) ---------- */
+nav.pager {
+  max-width: var(--maxw);
+  margin: 2rem auto 0;
+  padding: 0 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+nav.pager a {
+  flex: 1;
+  text-decoration: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .8rem 1rem;
+  color: var(--fg);
+  transition: border-color .15s, transform .15s;
+}
+nav.pager a:hover { border-color: var(--accent); transform: translateY(-2px); }
+nav.pager a.next { text-align: right; }
+nav.pager a .lbl { display:block; font-size:.75rem; color:var(--fg-dim); text-transform:uppercase; letter-spacing:1px; }
+nav.pager a.disabled { visibility: hidden; }
+
+/* ---------- Sommaire (index) ---------- */
+.hero {
+  text-align: center;
+  padding: 2.5rem 1rem 1rem;
+}
+.hero h1 { font-size: 2.4rem; }
+.hero p.sub { color: var(--fg-dim); font-size: 1.1rem; max-width: 660px; margin: .6rem auto 0; }
+
+.part-title {
+  margin: 2.5rem 0 1rem;
+  color: var(--accent);
+  font-size: 1.2rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+.toc { list-style: none; padding: 0; margin: 0; display: grid; gap: .7rem; }
+.toc li a {
+  display: flex;
+  align-items: baseline;
+  gap: .9rem;
+  text-decoration: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .9rem 1.1rem;
+  color: var(--fg);
+  transition: border-color .15s, transform .15s;
+}
+.toc li a:hover { border-color: var(--accent); transform: translateX(4px); }
+.toc .num { color: var(--accent); font-weight: 700; font-family: monospace; min-width: 2.2rem; }
+.toc .desc { display:block; color: var(--fg-dim); font-size: .88rem; margin-top: .15rem; }
+
+/* ---------- Divers ---------- */
+footer.site {
+  border-top: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: .85rem;
+  text-align: center;
+  padding: 1.5rem;
+}
+kbd {
+  background:#202836; border:1px solid var(--border); border-bottom-width:2px;
+  border-radius:5px; padding:.05em .45em; font-family:monospace; font-size:.85em;
+}
+table { border-collapse: collapse; width: 100%; margin: 1.2rem 0; }
+th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+th { background: var(--bg-soft); color: var(--accent); }
+.math { background:#0f131a; border:1px solid var(--border); border-radius:var(--radius); padding:.8rem 1rem; overflow-x:auto; font-family:"JetBrains Mono",monospace; color:#cfe3ff; line-height:1.8; }
+.math-inline { font-family:"JetBrains Mono", monospace; color:#cfe3ff; font-size:.94em; }

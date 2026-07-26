@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Le problème de l'estimation d'état</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Le problème de l'estimation d'état</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Poser le problème : connaître l'<strong>état caché</strong> d'un système à partir de mesures bruitées et d'un modèle imparfait.</li>
+        <li>Comprendre pourquoi aucune des deux sources — modèle ou mesure — ne suffit seule, et pourquoi il faut les <strong>fusionner</strong>.</li>
+        <li>Faire le saut conceptuel central : estimer, ce n'est pas suivre une valeur, c'est suivre une <strong>distribution de probabilité</strong>.</li>
+        <li>Situer le filtre de Kalman comme la solution <em>optimale</em> de ce problème dans le cas linéaire-gaussien.</li>
+      </ul>
+    </div>
+
+    <h2>1. Un système, un état, et le brouillard</h2>
+    <p>
+      Un système dynamique — un mobile qui roule, un bras qui tourne, une cuve qui se remplit — possède
+      à chaque instant un <strong>état</strong> : l'ensemble minimal de grandeurs qui, si on les connaissait
+      exactement, résumerait tout ce qu'il faut savoir pour prédire la suite. Position et vitesse d'un
+      véhicule, angle et vitesse angulaire d'un pendule, niveau et débit d'un réservoir. On le note
+      <span class="math-inline">x</span>, un vecteur.
+    </p>
+    <p>
+      Le drame, c'est qu'on ne connaît <em>jamais</em> <span class="math-inline">x</span> exactement.
+      On dispose de deux fenêtres sur lui, toutes deux embuées :
+    </p>
+    <ul>
+      <li>
+        <strong>Un modèle</strong> qui dit comment l'état devrait évoluer d'un instant au suivant
+        (« à vitesse constante, la position avance de <span class="math-inline">v·dt</span> »). Mais le
+        modèle est une approximation : il ignore le vent, les frottements, une commande mal exécutée.
+      </li>
+      <li>
+        <strong>Des capteurs</strong> qui mesurent quelque chose lié à l'état (un GPS, un codeur, une IMU).
+        Mais toute mesure est <em>bruitée</em> : le GPS oscille de quelques mètres, le codeur quantifie,
+        l'accéléromètre dérive.
+      </li>
+    </ul>
+    <p>
+      <strong>Estimer l'état</strong>, c'est produire la meilleure hypothèse possible sur
+      <span class="math-inline">x</span> à partir de ces deux fenêtres imparfaites. C'est le problème que
+      résout le filtre de Kalman.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Imaginez conduire dans le brouillard. Votre <em>modèle</em> mental dit « je roulais à 50, une
+        seconde a passé, je suis 14 mètres plus loin ». De temps en temps un panneau surgit du brouillard
+        (une <em>mesure</em>) et confirme, ou corrige, votre estimation. Vous ne croyez aveuglément ni votre
+        compteur ni le panneau entr'aperçu : vous les <strong>pondérez</strong>. Le filtre de Kalman est la
+        formalisation mathématique exacte de ce bon sens.
+      </p>
+    </div>
+
+    <h2>2. Pourquoi une seule source ne suffit pas</h2>
+    <p>
+      On pourrait être tenté de se contenter d'une source. Les deux échouent, et pour des raisons opposées.
+    </p>
+    <p>
+      <strong>Se fier au seul modèle</strong> (intégrer la dynamique en boucle ouverte) fonctionne quelques
+      instants, puis dérive sans retour : la moindre erreur s'accumule, aucune mesure ne vient la corriger.
+      C'est la <em>dead reckoning</em> pure — un sous-marin qui navigue à l'estime finit toujours par se
+      perdre.
+    </p>
+    <p>
+      <strong>Se fier à la seule mesure</strong> évite la dérive mais hérite de tout le bruit du capteur :
+      l'estimation tremble, et surtout on ne peut estimer que ce qu'on mesure directement. Si un capteur ne
+      donne que la position, comment connaître la vitesse&nbsp;? En dérivant numériquement&nbsp;? Cela
+      amplifie le bruit de façon catastrophique.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Le modèle est <strong>lisse mais dérive</strong>. La mesure est <strong>juste en moyenne mais
+        bruitée</strong>. Chacun compense exactement la faiblesse de l'autre. Toute la question est :
+        <em>dans quelle proportion</em> les mélanger&nbsp;? La réponse dépend de la confiance qu'on accorde
+        à chacun — et cette confiance, on va la mesurer, la propager, et la mettre à jour rigoureusement.
+      </p>
+    </div>
+
+    <h2>3. Le saut conceptuel : suivre une distribution</h2>
+    <p>
+      Voici l'idée qui fait tout le pouvoir du filtre. Plutôt que de suivre <em>une</em> valeur estimée
+      <span class="math-inline">x̂</span>, on suit une <strong>distribution de probabilité</strong> sur les
+      valeurs possibles de l'état. Autrement dit, on ne dit pas « la position est 12,3&nbsp;m » mais « la
+      position est autour de 12,3&nbsp;m, à plus ou moins 0,5&nbsp;m près, avec telle forme d'incertitude ».
+    </p>
+    <p>
+      Cette distribution porte deux informations : une <strong>meilleure estimation</strong> (sa moyenne,
+      là où on parie que se trouve l'état) et une <strong>incertitude</strong> (sa dispersion, à quel point
+      on est sûr). Suivre l'incertitude est aussi important que suivre l'estimation : c'est elle qui va
+      dire, à chaque instant, combien croire la prochaine mesure.
+    </p>
+    <p>
+      Quand on fusionne deux informations, on fusionne deux distributions. Le résultat est une nouvelle
+      distribution, <strong>plus resserrée que chacune des deux</strong> : deux avis imparfaits mais
+      indépendants valent mieux qu'un seul. C'est visible sur la figure suivante.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-fusion.svg" alt="Trois courbes en cloche. En bleu, l'a priori issu de la prédiction, large. En ambre, la mesure, plus étroite. En vert, l'a posteriori issu de la fusion : sa cloche est située entre les deux moyennes, plus proche de la mesure car celle-ci est plus sûre, et surtout plus étroite et plus haute que les deux — l'incertitude a diminué.">
+      <figcaption><b>Figure 1.1.</b> Fusionner, c'est multiplier deux cloches. L'a priori
+      (bleu, <span class="math-inline">N(x⁻, P⁻)</span>) porte ce que prédit le modèle&nbsp;; la mesure
+      (ambre, <span class="math-inline">N(z, R)</span>) porte ce que voit le capteur. Le résultat vert est
+      un compromis penché vers la source la plus sûre, et <b>plus étroit que les deux</b> : on en sait
+      davantage après qu'avant. Ce sera littéralement la mise à jour du filtre (chapitre&nbsp;7).</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        La position de la cloche verte n'est pas au milieu : elle penche vers la source la plus confiante
+        (ici la mesure, plus étroite). Et sa largeur est <em>inférieure</em> aux deux : combiner deux
+        indices indépendants réduit le doute. Retenez cette image — tout le filtre de Kalman en découle.
+      </p>
+    </div>
+
+    <h2>4. Filtrer, lisser, prédire</h2>
+    <p>
+      Le mot « filtre » a un sens précis. On distingue trois problèmes d'estimation selon l'instant qu'on
+      cherche à connaître, relativement aux mesures disponibles :
+    </p>
+    <ul>
+      <li><strong>Filtrage</strong> : estimer l'état <em>maintenant</em>, à partir de toutes les mesures
+        jusqu'à maintenant. C'est le problème temps réel par excellence, et celui du filtre de Kalman.</li>
+      <li><strong>Prédiction</strong> : estimer un état <em>futur</em>, avant d'avoir la mesure
+        correspondante (par exemple pour anticiper une collision).</li>
+      <li><strong>Lissage</strong> (<em>smoothing</em>) : estimer un état <em>passé</em> en s'aidant aussi
+        des mesures qui l'ont suivi. Plus précis, mais hors-ligne : impossible en temps réel puisqu'il faut
+        attendre le futur.</li>
+    </ul>
+    <p>
+      Ce cours porte sur le <strong>filtrage</strong> — l'estimation causale, à la volée, qui n'utilise que
+      le passé. C'est le cadre naturel d'un système embarqué qui doit décider à chaque cycle.
+    </p>
+
+    <div class="callout histoire">
+      <p>
+        Rudolf E. Kálmán publie son filtre en 1960. Sa force n'était pas de fusionner modèle et mesure —
+        l'idée des moindres carrés remonte à Gauss (vers 1795, pour prédire l'orbite de Cérès) — mais de le
+        faire <strong>récursivement</strong> : à chaque pas, sans jamais rejouer tout l'historique, avec un
+        coût de calcul constant. C'est ce qui l'a rendu implémentable sur les ordinateurs minuscules de
+        l'époque, et notamment sur ceux du programme Apollo, pour la navigation vers la Lune.
+      </p>
+    </div>
+
+    <h2>5. Ce que « optimal » veut dire</h2>
+    <p>
+      On entend souvent que le filtre de Kalman est « l'estimateur optimal ». Optimal n'est pas un
+      superlatif vague : c'est un théorème, sous des hypothèses précises. Quand le système est
+      <strong>linéaire</strong> et que les bruits sont <strong>gaussiens</strong>, aucun estimateur — de
+      quelque nature que ce soit — ne produit une estimation dont l'erreur quadratique moyenne soit plus
+      petite que celle du filtre de Kalman. Il extrait <em>toute</em> l'information disponible.
+    </p>
+    <p>
+      Retenez le prix à payer : cette garantie tient <em>tant que</em> le monde est linéaire et gaussien.
+      Dès que la dynamique se courbe (angles, distances, cinématique non triviale), on perd l'optimalité
+      stricte et on entre dans le territoire des filtres approchés (EKF, UKF) — que nous ouvrirons au
+      chapitre&nbsp;10, et déroulerons dans les chapitres appliqués à venir.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        « Optimal » ne veut pas dire « exact » ni « infaillible ». Le filtre reste optimal <em>relativement
+        aux hypothèses et aux réglages qu'on lui donne</em>. Nourri d'un mauvais modèle ou de covariances
+        de bruit fantaisistes, il produira, en toute optimalité, une estimation fausse. La qualité d'un
+        filtre tient autant à sa théorie qu'à l'honnêteté de ses <span class="math-inline">Q</span> et
+        <span class="math-inline">R</span> (chapitre&nbsp;10).
+      </p>
+    </div>
+
+    <h2>6. La feuille de route</h2>
+    <p>
+      Le chemin de ce cours est une ligne droite. Pour fusionner des distributions, il faut d'abord savoir
+      manipuler l'incertitude : c'est la <a href="chapitre-02.html">boîte à outils probabiliste</a> du
+      chapitre&nbsp;2. Une famille de distributions se prête merveilleusement au jeu — la
+      <a href="chapitre-03.html">gaussienne</a> (chapitre&nbsp;3), qui reste gaussienne quand on la propage
+      et quand on la conditionne. On en tirera un cadre général, le
+      <a href="chapitre-04.html">filtrage bayésien récursif</a> (chapitre&nbsp;4), qu'on spécialisera au
+      <a href="chapitre-05.html">modèle linéaire-gaussien</a> (chapitre&nbsp;5). Alors seulement les cinq
+      équations du filtre <em>tomberont toutes seules</em> — prédiction (chapitre&nbsp;6) puis correction
+      (chapitre&nbsp;7) — et nous passerons le reste du cours à en comprendre les propriétés.
+    </p>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Un système a un <strong>état caché</strong> <span class="math-inline">x</span> qu'on ne connaît qu'à travers un <strong>modèle</strong> qui dérive et des <strong>mesures</strong> bruitées.</li>
+        <li>Le modèle est lisse mais dérive&nbsp;; la mesure est juste en moyenne mais bruitée. Les fusionner donne mieux que chacun seul.</li>
+        <li>On ne suit pas une valeur mais une <strong>distribution</strong> : une meilleure estimation (moyenne) <em>et</em> une incertitude (dispersion).</li>
+        <li>Fusionner deux distributions indépendantes donne une distribution <strong>plus resserrée</strong>, penchée vers la source la plus sûre.</li>
+        <li>Filtrer = estimer l'état <em>maintenant</em> avec les mesures jusqu'à maintenant (causal, temps réel).</li>
+        <li>Dans le cas <strong>linéaire-gaussien</strong>, le filtre de Kalman est l'estimateur <strong>optimal</strong> au sens de l'erreur quadratique moyenne — sous réserve d'un bon modèle et de bons réglages.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="index.html"><span class="lbl">← Précédent</span>Sommaire</a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>Boîte à outils probabiliste</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

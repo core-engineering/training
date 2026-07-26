@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — Boîte à outils probabiliste</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>Boîte à outils probabiliste</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Poser proprement espérance, variance, écart-type et leur sens.</li>
+        <li>Généraliser au vecteur aléatoire : moyenne vectorielle et <strong>matrice de covariance</strong>, ce que disent ses termes diagonaux et croisés.</li>
+        <li>Maîtriser la règle reine du cours : comment moyenne et covariance se transforment sous une application <strong>linéaire</strong> — le « sandwich » <span class="math-inline">A·Σ·Aᵀ</span>.</li>
+        <li>Savoir combiner des variables indépendantes (somme, additivité des covariances).</li>
+      </ul>
+    </div>
+
+    <h2>1. Variable aléatoire, espérance, variance</h2>
+    <p>
+      Une <strong>variable aléatoire</strong> <span class="math-inline">X</span> est une grandeur dont on ne
+      connaît pas la valeur exacte, seulement la façon dont elle se répartit. On la résume par deux nombres.
+    </p>
+    <p>
+      L'<strong>espérance</strong> <span class="math-inline">μ = E[X]</span> est sa valeur moyenne, le centre
+      de gravité de sa distribution : la valeur autour de laquelle elle se concentre. C'est un opérateur
+      <em>linéaire</em>, propriété qu'on utilisera sans cesse :
+    </p>
+    <div class="math">
+      E[aX + b] = a·E[X] + b<br>
+      E[X + Y] = E[X] + E[Y]&nbsp;&nbsp;&nbsp;(toujours, même si X et Y sont liés)
+    </div>
+    <p>
+      La <strong>variance</strong> <span class="math-inline">σ² = Var[X] = E[(X − μ)²]</span> mesure sa
+      dispersion : la moyenne des carrés des écarts au centre. Sa racine, l'<strong>écart-type</strong>
+      <span class="math-inline">σ</span>, a la même unité que <span class="math-inline">X</span> (des mètres,
+      des radians) — c'est elle qu'on lit comme un « ± ». Une variance nulle : la variable est certaine ;
+      grande : on ne sait presque rien.
+    </p>
+
+    <div class="callout math">
+      <p>Sous une transformation affine, la variance se comporte ainsi :</p>
+      <div class="math">Var[aX + b] = a²·Var[X]</div>
+      <p>
+        Le <span class="math-inline">b</span> disparaît (translater ne change pas la dispersion) et le
+        <span class="math-inline">a</span> ressort <strong>au carré</strong>. Cette élévation au carré est
+        la graine du fameux « sandwich » matriciel : une covariance vit dans le monde des <em>carrés</em>,
+        pas dans celui des grandeurs.
+      </p>
+    </div>
+
+    <h2>2. Du scalaire au vecteur : la matrice de covariance</h2>
+    <p>
+      L'état d'un système est un vecteur — <span class="math-inline">x = [position, vitesse]ᵀ</span>, par
+      exemple. Sa moyenne est un vecteur <span class="math-inline">μ = E[x]</span>. Mais sa dispersion ne
+      tient plus dans un seul nombre : il faut décrire l'incertitude de chaque composante <em>et</em> la
+      façon dont elles sont liées. C'est le rôle de la <strong>matrice de covariance</strong> :
+    </p>
+    <div class="math">
+      Σ = E[ (x − μ)(x − μ)ᵀ ]
+    </div>
+    <p>
+      Développons pour un état à deux composantes <span class="math-inline">x = [x₁, x₂]ᵀ</span> :
+    </p>
+    <div class="math">
+      Σ =
+      [ Var[x₁]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Cov[x₁,x₂] ]<br>
+      &nbsp;&nbsp;&nbsp;[ Cov[x₁,x₂]&nbsp;&nbsp;Var[x₂]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]
+    </div>
+    <ul>
+      <li>La <strong>diagonale</strong> porte les variances de chaque composante : leur incertitude propre.</li>
+      <li>Les termes <strong>croisés</strong> (hors-diagonale) portent la <strong>covariance</strong>
+        <span class="math-inline">Cov[x₁,x₂] = E[(x₁−μ₁)(x₂−μ₂)]</span> : elle est positive si les deux
+        variables ont tendance à s'écarter de leur moyenne dans le même sens, négative en sens opposé, nulle
+        si elles ne se prédisent pas l'une l'autre.</li>
+    </ul>
+    <p>
+      Une matrice de covariance est toujours <strong>symétrique</strong> (<span class="math-inline">Cov[x₁,x₂]
+      = Cov[x₂,x₁]</span>) et <strong>semi-définie positive</strong> : aucune combinaison des composantes ne
+      peut avoir une variance négative. Ces deux propriétés seront des garde-fous précieux — un filtre dont
+      la matrice <span class="math-inline">P</span> perd sa symétrie ou sa positivité est un filtre malade
+      (chapitre&nbsp;10).
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Les termes croisés sont le secret du filtre de Kalman. C'est parce que position et vitesse sont
+        <em>corrélées</em> dans <span class="math-inline">P</span> qu'une mesure de position seule permet de
+        corriger l'estimation de vitesse : « si la position est plus avancée que prévu, c'est probablement
+        que la vitesse était plus élevée ». La corrélation transporte l'information d'une composante mesurée
+        vers une composante cachée.
+      </p>
+    </div>
+
+    <h2>3. La corrélation, covariance normalisée</h2>
+    <p>
+      La covariance a une unité composite (m·m/s pour position-vitesse) peu parlante. On la normalise en
+      <strong>coefficient de corrélation</strong>, sans dimension, dans <span class="math-inline">[−1, +1]</span> :
+    </p>
+    <div class="math">
+      ρ = Cov[x₁,x₂] / ( σ₁ · σ₂ )
+    </div>
+    <p>
+      <span class="math-inline">ρ = ±1</span> : les variables sont liées par une relation affine parfaite
+      (connaître l'une donne l'autre exactement). <span class="math-inline">ρ = 0</span> : elles sont
+      <em>décorrélées</em>. Attention à la nuance : décorrélé n'est pas synonyme d'indépendant en général —
+      mais pour des variables <strong>gaussiennes</strong> (chapitre&nbsp;3), les deux coïncident, ce qui
+      simplifie énormément les calculs à venir.
+    </p>
+
+    <h2>4. La règle reine : transformation linéaire</h2>
+    <p>
+      Voici le résultat le plus important du chapitre — celui qui reviendra à chaque prédiction du filtre.
+      Soit un vecteur aléatoire <span class="math-inline">x</span> de moyenne <span class="math-inline">μ</span>
+      et de covariance <span class="math-inline">Σ</span>. On lui applique une transformation
+      <strong>linéaire</strong> (une matrice <span class="math-inline">A</span>) et une translation
+      <span class="math-inline">b</span> pour obtenir <span class="math-inline">y = A·x + b</span>. Alors :
+    </p>
+    <div class="math">
+      <strong>μ_y = A·μ + b</strong><br>
+      <strong>Σ_y = A·Σ·Aᵀ</strong>
+    </div>
+    <p>
+      La moyenne se transporte simplement (linéarité de l'espérance). Mais la covariance se transporte en
+      <strong>sandwich</strong> : <span class="math-inline">A</span> à gauche, sa transposée
+      <span class="math-inline">Aᵀ</span> à droite. C'est la généralisation matricielle exacte du
+      <span class="math-inline">a²</span> scalaire vu plus haut.
+    </p>
+
+    <div class="callout demo">
+      <p>La moyenne : par linéarité, <span class="math-inline">E[Ax + b] = A·E[x] + b = Aμ + b</span>.</p>
+      <p>La covariance : on part de la définition et on pose <span class="math-inline">y − μ_y = A(x − μ)</span>
+      (le <span class="math-inline">b</span> s'annule) :</p>
+      <div class="math">
+        Σ_y = E[ (y − μ_y)(y − μ_y)ᵀ ]<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;= E[ A(x − μ) · (x − μ)ᵀ Aᵀ ]<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;= A · E[ (x − μ)(x − μ)ᵀ ] · Aᵀ<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;= A · Σ · Aᵀ
+      </div>
+      <p>
+        La clé est la ligne 2 → 3 : <span class="math-inline">A</span> et <span class="math-inline">Aᵀ</span>
+        sont des constantes, on les sort de l'espérance. La transposée apparaît parce que le second facteur
+        <span class="math-inline">(x−μ)ᵀAᵀ = [A(x−μ)]ᵀ</span> était déjà transposé dans le produit extérieur.
+      </p>
+    </div>
+
+    <div class="callout piege">
+      <p>
+        L'erreur la plus fréquente de tout le domaine : écrire <span class="math-inline">Σ_y = A·Σ</span>
+        (sans la transposée) ou <span class="math-inline">A·Σ·A</span> (sans transposer). Les deux sont faux
+        — et souvent même pas carrés, donc pas des covariances valides. Une covariance se transporte
+        <em>toujours</em> en sandwich <span class="math-inline">A·Σ·Aᵀ</span>. Vous retrouverez ce sandwich
+        dans <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span> et dans <span class="math-inline">S = H·P·Hᵀ + R</span>.
+      </p>
+    </div>
+
+    <h2>5. Additivité sous indépendance</h2>
+    <p>
+      Deux sources de bruit <em>indépendantes</em> s'ajoutent proprement. Si <span class="math-inline">x</span>
+      et <span class="math-inline">w</span> sont indépendants, de covariances <span class="math-inline">Σ_x</span>
+      et <span class="math-inline">Q</span>, alors leur somme a pour covariance :
+    </p>
+    <div class="math">
+      Cov[x + w] = Σ_x + Q
+    </div>
+    <p>
+      Les covariances s'<strong>additionnent</strong> — sans terme croisé, précisément parce que les deux
+      sont indépendants (leur covariance mutuelle est nulle). C'est exactement ce qui se passe quand la
+      prédiction ajoute le bruit de process : <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span>, où le
+      <span class="math-inline">+ Q</span> est le bruit du modèle qui vient gonfler l'incertitude
+      transportée. Combinées, les deux règles des §4 et §5 <em>sont</em> l'équation de prédiction de la
+      covariance (chapitre&nbsp;6).
+    </p>
+
+    <div class="callout note">
+      <p>
+        Deux briques, un résultat. La règle du sandwich (transport par <span class="math-inline">A</span>)
+        et l'additivité sous indépendance (ajout du bruit) suffisent à propager une incertitude à travers un
+        modèle linéaire. Il ne manquera plus qu'une forme de distribution stable sous ces opérations : la
+        gaussienne, au chapitre suivant.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Variance d'une différence</h3>
+      <p>
+        Un capteur mesure deux fois, indépendamment, la même grandeur : <span class="math-inline">Z₁</span>
+        et <span class="math-inline">Z₂</span>, chacune de variance <span class="math-inline">σ²</span>. On
+        forme l'écart <span class="math-inline">D = Z₁ − Z₂</span>. Quelle est <span class="math-inline">Var[D]</span>&nbsp;?
+        Et la moyenne <span class="math-inline">M = (Z₁ + Z₂)/2</span>&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Pour des variables indépendantes, les variances s'ajoutent quel que soit le signe des
+          coefficients (le signe ressort au carré) :
+        </p>
+        <div class="math">
+          Var[Z₁ − Z₂] = Var[Z₁] + Var[Z₂] = 2σ²<br>
+          Var[(Z₁+Z₂)/2] = (1/4)(σ² + σ²) = σ²/2
+        </div>
+        <p>
+          Moyenner deux mesures indépendantes <strong>divise la variance par deux</strong> (l'écart-type par
+          <span class="math-inline">√2</span>) : c'est déjà une fusion optimale de deux capteurs de même
+          précision. Le filtre de Kalman généralise cela à des précisions différentes.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Propager une covariance</h3>
+      <p>
+        Un état <span class="math-inline">x = [p, v]ᵀ</span> a pour covariance
+        <span class="math-inline">Σ = diag(4, 1)</span> (position et vitesse décorrélées, variances 4 et 1).
+        On le propage d'un pas <span class="math-inline">dt = 1</span> par
+        <span class="math-inline">F = [[1, 1],[0, 1]]</span> (modèle à vitesse constante). Calculez
+        <span class="math-inline">F·Σ·Fᵀ</span>. La position et la vitesse sont-elles encore décorrélées&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <div class="math">
+          F·Σ = [[1,1],[0,1]] · [[4,0],[0,1]] = [[4, 1],[0, 1]]<br>
+          (F·Σ)·Fᵀ = [[4,1],[0,1]] · [[1,0],[1,1]] = [[5, 1],[1, 1]]
+        </div>
+        <p>
+          Le terme croisé vaut désormais <span class="math-inline">1</span>, non nul : la propagation a
+          <strong>créé de la corrélation</strong> entre position et vitesse, alors qu'il n'y en avait aucune
+          au départ. C'est logique — sur un pas, la position future dépend de la vitesse — et c'est ce
+          couplage qui permettra plus tard d'estimer la vitesse à partir de mesures de position seule.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Espérance</strong> <span class="math-inline">μ = E[X]</span> (linéaire) : le centre. <strong>Variance</strong> <span class="math-inline">σ²</span> : la dispersion&nbsp;; <span class="math-inline">Var[aX+b] = a²Var[X]</span>.</li>
+        <li>Pour un vecteur : <strong>matrice de covariance</strong> <span class="math-inline">Σ = E[(x−μ)(x−μ)ᵀ]</span>, symétrique et semi-définie positive. Diagonale = variances, hors-diagonale = liens entre composantes.</li>
+        <li>Les <strong>termes croisés</strong> transportent l'information d'une composante mesurée vers une composante cachée : le moteur secret du filtre.</li>
+        <li><strong>Règle reine</strong> (transformation linéaire) : <span class="math-inline">μ_y = Aμ + b</span> et <span class="math-inline">Σ_y = A·Σ·Aᵀ</span> — le <strong>sandwich</strong>, jamais un simple produit.</li>
+        <li>Sous indépendance, les covariances <strong>s'additionnent</strong> : <span class="math-inline">Cov[x+w] = Σ_x + Q</span>. Sandwich + additivité = l'équation de prédiction.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Le problème de l'estimation d'état</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>La loi gaussienne, reine du filtre</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

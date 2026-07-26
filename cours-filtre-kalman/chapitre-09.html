@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 09 — Régime permanent, observabilité &amp; Riccati</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 09</span><br>Régime permanent, observabilité &amp; Riccati</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Voir que la covariance suit sa <strong>propre récurrence</strong>, indépendante des mesures : l'équation de Riccati discrète.</li>
+        <li>Comprendre la convergence vers un <strong>régime permanent</strong> : covariance et gain constants.</li>
+        <li>Savoir ce que garantit l'<strong>observabilité</strong> (et ce que garantit la présence de bruit de process).</li>
+        <li>Relier le filtre en régime permanent aux filtres à gain fixe (α-β).</li>
+      </ul>
+    </div>
+
+    <h2>1. La covariance vit sa vie</h2>
+    <p>
+      Un fait surprenant, souvent négligé : la covariance <span class="math-inline">P</span> — donc le gain
+      <span class="math-inline">K</span> — <strong>ne dépend pas des mesures</strong>. Relisez les équations :
+      <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span>, puis <span class="math-inline">S = H·P⁻·Hᵀ + R</span>,
+      <span class="math-inline">K = P⁻·Hᵀ·S⁻¹</span>, <span class="math-inline">P = (I−K·H)·P⁻</span>. Aucune
+      n'utilise <span class="math-inline">z</span> ni <span class="math-inline">y</span>. Seule
+      l'<em>estimation</em> <span class="math-inline">x</span> dépend des mesures ; l'<em>incertitude</em>
+      <span class="math-inline">P</span>, elle, ne dépend que des matrices du modèle
+      (<span class="math-inline">F, H, Q, R</span>) et de son point de départ.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Conséquence pratique de premier ordre : on peut calculer toute la trajectoire de
+        <span class="math-inline">P</span> et de <span class="math-inline">K</span>
+        <strong>hors ligne</strong>, avant même de recevoir la moindre donnée. C'est ce qui permet, en régime
+        permanent, de <em>précalculer</em> un gain constant et d'alléger énormément le filtre embarqué — on y
+        revient au §4.
+      </p>
+    </div>
+
+    <h2>2. L'équation de Riccati</h2>
+    <p>
+      En enchaînant la prédiction et la correction, on peut écrire la récurrence de la covariance a posteriori
+      en une seule ligne. En substituant <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span> dans
+      <span class="math-inline">P = (I−KH)P⁻</span> avec <span class="math-inline">K = P⁻Hᵀ(HP⁻Hᵀ+R)⁻¹</span>,
+      on obtient la <strong>récurrence de Riccati discrète</strong> :
+    </p>
+    <div class="math">
+      P⁻ₖ₊₁ = F [ P⁻ₖ − P⁻ₖ Hᵀ (H P⁻ₖ Hᵀ + R)⁻¹ H P⁻ₖ ] Fᵀ + Q
+    </div>
+    <p>
+      C'est une application non linéaire (à cause de l'inverse) qui envoie <span class="math-inline">P⁻ₖ</span>
+      sur <span class="math-inline">P⁻ₖ₊₁</span>. On n'a pas besoin de la manipuler à la main — mais il faut en
+      retenir la <em>dynamique</em> : deux forces s'y opposent. La prédiction (<span class="math-inline">F…Fᵀ + Q</span>)
+      <strong>gonfle</strong> l'incertitude ; la correction (le terme soustrait) la <strong>resserre</strong>. Quand
+      ces deux forces s'équilibrent, la covariance cesse de bouger.
+    </p>
+
+    <h2>3. Le régime permanent</h2>
+    <p>
+      Pour un système <strong>invariant dans le temps</strong> (<span class="math-inline">F, H, Q, R</span>
+      constants), la récurrence de Riccati converge, sous de bonnes conditions (§4), vers un <strong>point
+      fixe</strong> <span class="math-inline">P∞</span> : la covariance atteint une valeur stationnaire où
+      l'apport de chaque mesure compense exactement la perte due à la prédiction. Ce point fixe est solution de
+      l'<strong>équation algébrique de Riccati discrète</strong> (DARE), la version « <span class="math-inline">P⁻ₖ₊₁ = P⁻ₖ = P∞</span> » de la récurrence ci-dessus.
+    </p>
+    <p>
+      Une fois <span class="math-inline">P</span> stationnaire, le gain l'est aussi :
+      <span class="math-inline">K</span> devient une constante <span class="math-inline">K∞</span>. Le filtre se
+      réduit alors à une récurrence <strong>linéaire à coefficients fixes</strong> :
+    </p>
+    <div class="math">
+      x⁻ = F·x&nbsp;&nbsp;&nbsp;puis&nbsp;&nbsp;&nbsp;x = x⁻ + K∞·(z − H·x⁻)
+    </div>
+    <p>
+      C'est exactement ce qu'on observait sur la figure 8.2 : la bande <span class="math-inline">±1σ</span>, large
+      au départ, se resserre puis se <em>stabilise</em>. Le transitoire initial est la convergence de Riccati ;
+      le plateau est le régime permanent.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Le régime permanent explique pourquoi l'initialisation de <span class="math-inline">P₀</span> n'est pas
+        critique : le filtre <em>oublie</em> son point de départ. Trop grand, trop petit — pourvu qu'il soit
+        raisonnable, <span class="math-inline">P</span> converge vers le même <span class="math-inline">P∞</span>,
+        dicté par le modèle et les bruits, pas par la condition initiale. Un mauvais <span class="math-inline">P₀</span>
+        ne coûte qu'un transitoire, pas une erreur permanente.
+      </p>
+    </div>
+
+    <h2>4. Observabilité : la condition pour que ça marche</h2>
+    <p>
+      La convergence et le bon comportement du filtre reposent sur deux propriétés structurelles du couple
+      <span class="math-inline">(F, H)</span> et du bruit.
+    </p>
+
+    <h3>4.1 L'observabilité borne l'incertitude</h3>
+    <p>
+      Un système est <strong>observable</strong> si l'on peut reconstruire tout l'état à partir d'une séquence de
+      mesures — même les composantes jamais mesurées directement. Formellement, la matrice d'observabilité
+      <span class="math-inline">[Hᵀ, (HF)ᵀ, (HF²)ᵀ, …]ᵀ</span> doit être de rang plein
+      (<span class="math-inline">n</span>). Concrètement : chaque composante cachée doit finir par
+      <em>influencer</em> une mesure future à travers la dynamique.
+    </p>
+    <p>
+      Si le système est observable, la covariance <span class="math-inline">P</span> reste <strong>bornée</strong> :
+      le filtre ne perd jamais complètement le fil, même sur les composantes qu'il ne mesure pas. Notre exemple
+      canonique l'illustre : on ne mesure que la position, mais <span class="math-inline">(F, H)</span> est
+      observable — la vitesse influence la position future — donc l'incertitude sur la vitesse reste finie et le
+      filtre la reconstruit (fig. 8.2).
+    </p>
+
+    <div class="callout piege">
+      <p>
+        Une composante <strong>inobservable</strong> est une composante que <em>rien</em> ne vient jamais
+        recaler : son incertitude croît sans borne (elle dérive comme en boucle ouverte). Le filtre ne « plante »
+        pas — il continue de tourner en annonçant sereinement une variance qui explose. D'où l'importance de
+        <strong>vérifier l'observabilité</strong> à la conception : un état mal choisi (trop riche pour les
+        capteurs disponibles) contient des directions inobservables invisibles à l'exécution.
+      </p>
+    </div>
+
+    <h3>4.2 Le bruit de process empêche l'excès de confiance</h3>
+    <p>
+      Symétriquement, il faut que <span class="math-inline">Q</span> « excite » toutes les composantes (propriété
+      de contrôlabilité du bruit). Sans elle, le filtre peut devenir <strong>trop sûr de lui</strong> :
+      <span class="math-inline">P</span> tend vers zéro sur certaines directions, donc <span class="math-inline">K</span>
+      aussi, et le filtre finit par <em>ignorer les mesures</em> — il s'endort sur son modèle et ne se recale
+      plus. Un <span class="math-inline">Q</span> strictement positif maintient une incertitude minimale, donc un
+      gain toujours vivant. C'est une raison théorique de ne jamais mettre <span class="math-inline">Q = 0</span>,
+      au-delà du simple réalisme (chapitre 10).
+    </p>
+
+    <p>
+      Sous ces deux conditions — <strong>observabilité</strong> et <strong>bruit de process suffisant</strong> —
+      le théorème garantit que la récurrence de Riccati converge vers un unique <span class="math-inline">P∞</span>
+      défini positif, et que le filtre en régime permanent est <strong>stable</strong> (les erreurs
+      d'initialisation et les perturbations passées s'estompent).
+    </p>
+
+    <h2>5. Le filtre à gain constant (α-β)</h2>
+    <p>
+      Puisque le gain converge, pourquoi ne pas prendre <span class="math-inline">K∞</span> dès le départ et s'en
+      tenir là&nbsp;? C'est précisément l'idée des filtres à gain fixe. Pour l'état position-vitesse, le gain
+      constant a deux composantes traditionnellement notées <span class="math-inline">α</span> (sur la position)
+      et <span class="math-inline">β</span> (sur la vitesse) : c'est le célèbre <strong>filtre α-β</strong>, un
+      cas particulier du filtre de Kalman en régime permanent, très utilisé en radar et en poursuite parce qu'il
+      ne demande aucune algèbre matricielle en ligne.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Le filtre à gain constant échange l'adaptabilité contre la simplicité. Il est aussi bon que Kalman
+        <em>une fois le régime établi</em>, mais perd le beau transitoire (le <span class="math-inline">K</span>
+        élevé du départ qui verrouille vite l'estimation) et ne s'adapte pas si les bruits changent. On l'emploie
+        quand les ressources de calcul sont comptées et que le système est bien stationnaire — sinon, le Kalman
+        complet reste préférable.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Peut-on tout précalculer ?</h3>
+      <p>
+        On affirme au §1 que <span class="math-inline">P</span> et <span class="math-inline">K</span> ne
+        dépendent pas des mesures. Dans quels cas cela cesse-t-il d'être vrai, en pratique&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Cela cesse dès que <span class="math-inline">F, H, Q</span> ou <span class="math-inline">R</span>
+          dépendent des données ou du temps de façon imprévisible : un capteur dont le bruit
+          <span class="math-inline">R</span> varie selon les conditions (GPS en canyon urbain), un pas de temps
+          <span class="math-inline">dt</span> irrégulier, ou — cas majeur — un filtre <strong>non linéaire</strong>
+          (EKF, chapitre 10) où <span class="math-inline">F</span> et <span class="math-inline">H</span> sont des
+          jacobiennes évaluées à l'estimation courante, donc dépendantes des mesures via
+          <span class="math-inline">x</span>. Dans tous ces cas, <span class="math-inline">P</span> et
+          <span class="math-inline">K</span> redeviennent dynamiques et doivent être calculés en ligne.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Diagnostiquer une variance qui explose</h3>
+      <p>
+        Un collègue estime <span class="math-inline">[position, vitesse, biais_capteur]</span> mais ne mesure
+        que la position, et constate que la variance du biais croît sans fin. Quel est le problème
+        probable&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Le triplet <span class="math-inline">(F, H)</span> est vraisemblablement <strong>inobservable</strong> :
+          avec une seule mesure de position, on ne peut pas distinguer une vraie position d'un biais de capteur
+          constant qui la décale — les deux produisent la même lecture. Le biais est une direction inobservable,
+          sa variance dérive. Remèdes : ajouter un capteur qui « voit » le biais autrement, exciter le système
+          pour le rendre observable, ou renoncer à estimer le biais si rien ne l'identifie. C'est un bug de
+          <em>conception du modèle</em>, pas de code.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><span class="math-inline">P</span> et <span class="math-inline">K</span> <strong>ne dépendent pas des mesures</strong> : on peut les précalculer hors ligne.</li>
+        <li>La covariance suit la <strong>récurrence de Riccati</strong> : prédiction qui gonfle vs correction qui resserre&nbsp;; à l'équilibre, un point fixe <span class="math-inline">P∞</span> (DARE).</li>
+        <li>En <strong>régime permanent</strong>, <span class="math-inline">K → K∞</span> constant&nbsp;; le filtre devient une récurrence linéaire à gain fixe. Le filtre <strong>oublie</strong> son <span class="math-inline">P₀</span>.</li>
+        <li><strong>Observabilité</strong> ⇒ <span class="math-inline">P</span> bornée, l'inobservé reste estimable&nbsp;; une composante inobservable voit sa variance dériver.</li>
+        <li>Un <span class="math-inline">Q ≻ 0</span> empêche l'<strong>excès de confiance</strong> (gain qui s'endort) et garde le filtre réactif.</li>
+        <li>Le <strong>filtre α-β</strong> est le Kalman en régime permanent : simple, sans algèbre en ligne, au prix de l'adaptabilité.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-08.html"><span class="lbl">← Précédent</span>Gain, innovation et optimalité</a>
+    <a class="next" href="chapitre-10.html"><span class="lbl">Suivant →</span>Cohérence, réglage &amp; robustesse numérique</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Le modèle linéaire-gaussien</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Le modèle linéaire-gaussien</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Écrire les deux équations qui définissent le système : <strong>dynamique</strong> et <strong>observation</strong>.</li>
+        <li>Donner un sens précis à chaque matrice — <span class="math-inline">F, B, Q, H, R, P</span> — et à sa forme (taille, unités, symétrie).</li>
+        <li>Énoncer les hypothèses de bruit (blanc, gaussien, centré, indépendant) et voir ce que chacune apporte.</li>
+        <li>Construire un modèle concret de bout en bout : le suivi position-vitesse à vitesse constante.</li>
+      </ul>
+    </div>
+
+    <h2>1. Les deux équations</h2>
+    <p>
+      Le cas linéaire-gaussien spécialise les deux modèles du chapitre 4 (transition et mesure) en leur
+      donnant une forme linéaire, avec un bruit gaussien additif. À l'instant <span class="math-inline">k</span> :
+    </p>
+    <div class="math">
+      <strong>xₖ = F · xₖ₋₁ + B · uₖ + wₖ</strong>&nbsp;&nbsp;&nbsp;&nbsp;wₖ ∼ N(0, Q)&nbsp;&nbsp;&nbsp;(dynamique)<br>
+      <strong>zₖ = H · xₖ + vₖ</strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;vₖ ∼ N(0, R)&nbsp;&nbsp;&nbsp;(observation)
+    </div>
+    <p>
+      La première dit comment l'état évolue d'un pas au suivant ; la seconde, comment il se manifeste au
+      capteur. Ce sont exactement les <span class="math-inline">p(xₖ|xₖ₋₁)</span> et
+      <span class="math-inline">p(zₖ|xₖ)</span> du chapitre précédent, désormais explicites et calculables.
+      Détaillons chaque symbole.
+    </p>
+
+    <h2>2. L'inventaire des matrices</h2>
+    <p>
+      Notons <span class="math-inline">n</span> la dimension de l'état et <span class="math-inline">m</span>
+      celle de la mesure. Voici la table complète — apprenez à en lire les tailles, c'est le meilleur
+      garde-fou contre les erreurs.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Symbole</th><th>Nom</th><th>Taille</th><th>Rôle</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="math-inline">x</span></td><td>état</td><td><span class="math-inline">n</span></td><td>les grandeurs à estimer (moyenne de la croyance)</td></tr>
+        <tr><td><span class="math-inline">P</span></td><td>covariance d'état</td><td><span class="math-inline">n×n</span></td><td>l'incertitude sur <span class="math-inline">x</span> (covariance de la croyance)</td></tr>
+        <tr><td><span class="math-inline">F</span></td><td>transition</td><td><span class="math-inline">n×n</span></td><td>évolution de l'état selon la physique</td></tr>
+        <tr><td><span class="math-inline">B</span></td><td>commande</td><td><span class="math-inline">n×ℓ</span></td><td>effet des entrées connues <span class="math-inline">u</span></td></tr>
+        <tr><td><span class="math-inline">u</span></td><td>commande</td><td><span class="math-inline">ℓ</span></td><td>entrées maîtrisées (accélération, couple imposés)</td></tr>
+        <tr><td><span class="math-inline">Q</span></td><td>bruit de process</td><td><span class="math-inline">n×n</span></td><td>covariance de ce que le modèle ne capture pas</td></tr>
+        <tr><td><span class="math-inline">z</span></td><td>mesure</td><td><span class="math-inline">m</span></td><td>ce que renvoient les capteurs</td></tr>
+        <tr><td><span class="math-inline">H</span></td><td>observation</td><td><span class="math-inline">m×n</span></td><td>relie l'état à la mesure attendue</td></tr>
+        <tr><td><span class="math-inline">R</span></td><td>bruit de mesure</td><td><span class="math-inline">m×m</span></td><td>covariance du bruit propre des capteurs</td></tr>
+      </tbody>
+    </table>
+
+    <h3>2.1 La transition F — la physique du mouvement</h3>
+    <p>
+      <span class="math-inline">F</span> encode le modèle de mouvement : où sera l'état au prochain pas, en
+      l'absence de commande et de bruit. Elle vient souvent de la <strong>discrétisation</strong> d'équations
+      continues. Pour un mobile à vitesse constante sur un pas <span class="math-inline">dt</span>, on a
+      <span class="math-inline">p ← p + v·dt</span> et <span class="math-inline">v ← v</span>, d'où la
+      matrice triangulaire classique <span class="math-inline">[[1, dt],[0, 1]]</span>.
+    </p>
+
+    <h3>2.2 La commande B·u — ce que l'on maîtrise</h3>
+    <p>
+      Si l'on connaît une entrée qui agit sur le système (une accélération commandée, un couple moteur), on
+      l'injecte via <span class="math-inline">B·u</span>. C'est de l'information <em>gratuite</em> et certaine
+      qu'il serait dommage d'ignorer. Beaucoup de modèles simples posent <span class="math-inline">u = 0</span>
+      (aucune commande connue) et laissent tout le mouvement non modélisé dans le bruit
+      <span class="math-inline">Q</span> — c'est le cas du suivi de cible, où l'on ne pilote pas la cible.
+    </p>
+
+    <h3>2.3 L'observation H — la fenêtre du capteur</h3>
+    <p>
+      <span class="math-inline">H</span> traduit l'état dans l'espace des mesures : elle dit ce que
+      <em>devrait</em> lire le capteur si l'état valait <span class="math-inline">x</span>. Un capteur de
+      position seule sur un état <span class="math-inline">[p, v]</span> donne
+      <span class="math-inline">H = [1, 0]</span> (« je vois <span class="math-inline">p</span>, pas
+      <span class="math-inline">v</span> »). <span class="math-inline">H</span> n'a pas besoin d'être carrée :
+      on mesure généralement moins de grandeurs qu'on n'en estime — c'est tout l'intérêt du filtre, qui
+      <em>reconstruit</em> l'inobservé (chapitre 8).
+    </p>
+
+    <h3>2.4 Q et R — les deux incertitudes</h3>
+    <p>
+      Ce sont les deux covariances de bruit, et les deux vrais leviers de réglage du filtre :
+    </p>
+    <ul>
+      <li><strong><span class="math-inline">Q</span> (bruit de process)</strong> mesure à quel point on se
+        méfie du <em>modèle</em> : accélérations imprévues, forces non modélisées, erreurs de discrétisation.
+        Grand <span class="math-inline">Q</span> = « mon modèle est grossier ».</li>
+      <li><strong><span class="math-inline">R</span> (bruit de mesure)</strong> mesure à quel point on se
+        méfie du <em>capteur</em>. Il est souvent connu : c'est la variance donnée par la fiche technique, ou
+        mesurée capteur immobile. Grand <span class="math-inline">R</span> = « ce capteur est bruité ».</li>
+    </ul>
+    <p>
+      Le rapport <span class="math-inline">Q/R</span> gouvernera tout le comportement du filtre — réactif ou
+      lisse. Nous y consacrerons le chapitre 10.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Les covariances vivent dans le monde des carrés.</strong>
+        <span class="math-inline">P</span>, <span class="math-inline">Q</span>, <span class="math-inline">R</span>
+        ont pour unités des <em>carrés</em> de grandeurs (m², (m/s)²). Une erreur d'unité classique : mélanger
+        mètres et centimètres entre <span class="math-inline">F</span>, <span class="math-inline">H</span> et
+        les covariances. Tout compile, rien ne plante, mais le filtre est silencieusement faux. Fixez un
+        système d'unités et tenez-le sur <em>toutes</em> les matrices.
+      </p>
+    </div>
+
+    <h2>3. Les hypothèses de bruit</h2>
+    <p>
+      Les bruits <span class="math-inline">w</span> (process) et <span class="math-inline">v</span> (mesure)
+      portent quatre hypothèses. Chacune a une raison d'être, et savoir laquelle est violée guide le
+      diagnostic quand un filtre déraille.
+    </p>
+    <ul>
+      <li><strong>Centré</strong> (<span class="math-inline">E[w] = E[v] = 0</span>) : le bruit ne contient
+        pas de <em>biais</em>. Un biais est une erreur systématique, pas du bruit — il fausse l'estimation. Un
+        capteur biaisé doit être recalibré, ou son biais ajouté à l'état pour être estimé.</li>
+      <li><strong>Blanc</strong> (décorrélé dans le temps) : le bruit d'un instant n'a aucune mémoire de
+        l'instant précédent. C'est ce qui permet la récursion (chapitre 4). Un bruit « coloré » (corrélé dans
+        le temps) viole cette hypothèse et se traite en augmentant l'état.</li>
+      <li><strong>Gaussien</strong> : la loi du bruit est normale. C'est ce qui garantit que la croyance reste
+        gaussienne et rend le filtre <em>optimal</em>. Sans la gaussianité, les équations restent le meilleur
+        estimateur <em>linéaire</em> (chapitre 8), mais plus forcément le meilleur tout court.</li>
+      <li><strong>Mutuellement indépendants</strong> : <span class="math-inline">w</span> et
+        <span class="math-inline">v</span> ne sont pas liés — l'erreur du modèle et l'erreur du capteur sont
+        des phénomènes distincts. C'est ce qui autorise à traiter prédiction et correction séparément.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        Ces hypothèses sont des <em>idéalisations</em>. Dans la vraie vie, aucun bruit n'est parfaitement
+        blanc ni gaussien. Le filtre reste remarquablement robuste à des écarts modérés — mais un écart
+        <em>massif</em> (biais non modélisé, capteur qui décroche) le fait diverger. Une bonne partie du
+        métier consiste à vérifier <em>a posteriori</em> que ces hypothèses tiennent, via la cohérence de
+        l'innovation (chapitre 10).
+      </p>
+    </div>
+
+    <h2>4. Un modèle complet : suivi 1D à vitesse constante</h2>
+    <p>
+      Assemblons tout sur l'exemple canonique. On suit un mobile sur un axe. On veut estimer sa
+      <strong>position et sa vitesse</strong>, mais on ne mesure que la <strong>position</strong> (capteur
+      bruité). L'état est <span class="math-inline">x = [p, v]ᵀ</span>, la commande est nulle. Sur un pas
+      <span class="math-inline">dt</span> :
+    </p>
+    <div class="math">
+      F = [[1, dt],[0, 1]]&nbsp;&nbsp;&nbsp;&nbsp;H = [1, 0]&nbsp;&nbsp;&nbsp;&nbsp;x = [p, v]ᵀ
+    </div>
+    <p>
+      Le modèle à vitesse constante est faux dès que le mobile accélère — mais c'est <em>voulu</em> : on
+      exprime cette ignorance dans <span class="math-inline">Q</span>. Un choix courant modélise une petite
+      accélération aléatoire d'écart-type <span class="math-inline">σₐ</span> agissant sur le pas, ce qui
+      donne une <span class="math-inline">Q</span> couplée :
+    </p>
+    <div class="math">
+      Q = σₐ² · [[ dt⁴/4 , dt³/2 ],[ dt³/2 , dt² ]]
+    </div>
+    <p>
+      Les termes croisés de <span class="math-inline">Q</span> ne sont pas cosmétiques : une accélération non
+      modélisée affecte <em>ensemble</em> position et vitesse, donc leur bruit est corrélé. Côté mesure, un
+      capteur de position d'écart-type <span class="math-inline">σᵣ</span> donne le scalaire
+      <span class="math-inline">R = [σᵣ²]</span>. Ce modèle est exactement celui que le chapitre 8 fera tourner
+      en figure, et celui du <a href="../cours-rust-robotique/chapitre-13.html">chapitre Rust</a> qui l'implémente.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Remarquez la division du travail : <span class="math-inline">F</span> et <span class="math-inline">H</span>
+        portent la <em>physique connue</em> (déterministe), <span class="math-inline">Q</span> et
+        <span class="math-inline">R</span> portent l'<em>ignorance</em> (stochastique). Un bon modèle met le
+        maximum dans <span class="math-inline">F</span>/<span class="math-inline">H</span> et le juste
+        nécessaire dans <span class="math-inline">Q</span>/<span class="math-inline">R</span>.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Modèle à accélération constante</h3>
+      <p>
+        On enrichit l'état en <span class="math-inline">x = [p, v, a]ᵀ</span> (position, vitesse,
+        accélération), avec un modèle à accélération constante sur un pas <span class="math-inline">dt</span>.
+        Écrivez <span class="math-inline">F</span> (3×3). Si l'on mesure toujours la seule position, quelle
+        est <span class="math-inline">H</span>&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Cinématique : <span class="math-inline">p ← p + v·dt + ½ a·dt²</span>, <span class="math-inline">v ← v + a·dt</span>, <span class="math-inline">a ← a</span>. D'où :</p>
+        <div class="math">
+          F = [[1, dt, ½dt²],<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[0, 1,&nbsp;&nbsp;dt&nbsp;&nbsp;],<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[0, 0,&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;]]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;H = [1, 0, 0]
+        </div>
+        <p>
+          Ce modèle « suit » les accélérations réelles bien mieux que celui à vitesse constante, au prix d'un
+          état plus grand et d'un léger surcroît de bruit sur l'estimation. Le choix de la dimension d'état
+          est un compromis : plus de composantes = plus de fidélité mais plus de variance et de calcul.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Fusion de deux capteurs de nature différente</h3>
+      <p>
+        Sur l'état <span class="math-inline">[p, v]ᵀ</span>, on ajoute un second capteur qui mesure
+        directement la <strong>vitesse</strong> (un radar Doppler), en plus du capteur de position. Écrivez la
+        matrice <span class="math-inline">H</span> (2×2) du système à deux mesures, et la forme de
+        <span class="math-inline">R</span>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          La mesure est maintenant <span class="math-inline">z = [z_p, z_v]ᵀ</span>. Chaque ligne de
+          <span class="math-inline">H</span> dit ce que voit un capteur :
+        </p>
+        <div class="math">
+          H = [[1, 0],&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;R = [[σ_p², 0],<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[0, 1]]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[0, σ_v²]]
+        </div>
+        <p>
+          <span class="math-inline">R</span> est diagonale si les deux capteurs sont indépendants (bruits non
+          corrélés). Le filtre fusionne alors <em>automatiquement</em> les deux sources, en pondérant chacune
+          par sa précision — sans qu'on ait à écrire la moindre logique de fusion : c'est
+          <span class="math-inline">H</span> et <span class="math-inline">R</span> qui font tout. Ce sera le
+          cœur des chapitres appliqués sur la fusion de capteurs.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Dynamique : <span class="math-inline">xₖ = F·xₖ₋₁ + B·uₖ + wₖ</span>, <span class="math-inline">wₖ ∼ N(0, Q)</span>. Observation : <span class="math-inline">zₖ = H·xₖ + vₖ</span>, <span class="math-inline">vₖ ∼ N(0, R)</span>.</li>
+        <li><span class="math-inline">F</span> (physique du mouvement), <span class="math-inline">H</span> (fenêtre du capteur), <span class="math-inline">B·u</span> (commande connue) portent le déterministe ; <span class="math-inline">Q</span>, <span class="math-inline">R</span> portent l'ignorance.</li>
+        <li>Tailles : <span class="math-inline">x</span> et <span class="math-inline">P</span> en <span class="math-inline">n</span> ; <span class="math-inline">H</span> en <span class="math-inline">m×n</span> ; <span class="math-inline">R</span> en <span class="math-inline">m×m</span>. Covariances = unités au carré.</li>
+        <li>Hypothèses de bruit : <strong>centré</strong> (pas de biais), <strong>blanc</strong> (sans mémoire), <strong>gaussien</strong> (→ optimalité), <strong>indépendants</strong> (process ⊥ mesure).</li>
+        <li>Exemple canonique : <span class="math-inline">F = [[1,dt],[0,1]]</span>, <span class="math-inline">H = [1,0]</span> — estimer <span class="math-inline">v</span> qu'on ne mesure pas, grâce au couplage.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>Le filtrage bayésien récursif</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>La prédiction : propager une gaussienne</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

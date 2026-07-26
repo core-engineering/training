@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — La correction : le gain optimal</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>La correction : le gain optimal</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Écrire les équations de mise à jour et nommer chaque terme : innovation, covariance d'innovation, gain.</li>
+        <li>Dériver le gain de Kalman <strong>trois fois</strong>, par trois chemins indépendants, pour le comprendre en profondeur.</li>
+        <li>Voir converger le conditionnement gaussien, les moindres carrés / MAP, et la minimisation de variance (BLUE) vers <em>la même</em> formule.</li>
+        <li>Comprendre pourquoi cette triple coïncidence n'en est pas une : c'est la signature de l'optimalité.</li>
+      </ul>
+    </div>
+
+    <h2>1. Les équations, d'abord</h2>
+    <p>
+      La correction part de l'a priori <span class="math-inline">(x⁻, P⁻)</span> issu de la prédiction, encaisse
+      la mesure <span class="math-inline">z</span>, et produit l'a posteriori <span class="math-inline">(x, P)</span>.
+      Voici les cinq lignes ; le reste du chapitre les <em>dérive</em>.
+    </p>
+    <div class="math">
+      innovation :&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>y = z − H·x⁻</strong><br>
+      covariance d'innovation :&nbsp;<strong>S = H·P⁻·Hᵀ + R</strong><br>
+      gain de Kalman :&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>K = P⁻·Hᵀ·S⁻¹</strong><br>
+      état corrigé :&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>x = x⁻ + K·y</strong><br>
+      covariance corrigée :&nbsp;&nbsp;&nbsp;<strong>P = (I − K·H)·P⁻</strong>
+    </div>
+    <ul>
+      <li>L'<strong>innovation</strong> <span class="math-inline">y</span> est l'écart entre la mesure réelle
+        <span class="math-inline">z</span> et la mesure <em>attendue</em> depuis la prédiction
+        <span class="math-inline">H·x⁻</span> : c'est la <em>surprise</em>, la seule information vraiment neuve
+        que la mesure apporte.</li>
+      <li><span class="math-inline">S</span> est l'incertitude totale de cette surprise : l'incertitude prédite
+        projetée dans l'espace des mesures (<span class="math-inline">H·P⁻·Hᵀ</span>) plus le bruit capteur
+        (<span class="math-inline">R</span>).</li>
+      <li><span class="math-inline">K</span> <strong>dose</strong> la correction : combien de l'innovation
+        reporter sur l'état.</li>
+    </ul>
+    <p>
+      Toute la subtilité tient dans le choix de <span class="math-inline">K</span>. On va le trouver trois
+      fois. Que trois raisonnements différents aboutissent au même <span class="math-inline">K</span> n'est pas
+      un hasard : c'est la manifestation de l'optimalité.
+    </p>
+
+    <h2>2. Dérivation 1 — le conditionnement gaussien</h2>
+    <p>
+      C'est la voie la plus directe : elle réutilise mot pour mot les formules de conditionnement du chapitre 3
+      (§3.3). L'idée : considérer la loi <strong>jointe</strong> de l'état et de la future mesure, puis
+      conditionner sur la valeur observée.
+    </p>
+    <p>
+      Avant de mesurer, <span class="math-inline">x ∼ N(x⁻, P⁻)</span> et
+      <span class="math-inline">z = H·x + v</span> avec <span class="math-inline">v ∼ N(0, R)</span>. Le couple
+      <span class="math-inline">(x, z)</span> est gaussien ; calculons ses blocs :
+    </p>
+    <div class="math">
+      E[z] = H·x⁻<br>
+      Cov[z] = H·P⁻·Hᵀ + R = S<br>
+      Cov[x, z] = P⁻·Hᵀ
+    </div>
+    <p>
+      (Le bloc croisé <span class="math-inline">Cov[x,z] = E[(x−x⁻)(z−Hx⁻)ᵀ] = E[(x−x⁻)(x−x⁻)ᵀ]Hᵀ = P⁻Hᵀ</span>,
+      le bruit <span class="math-inline">v</span> étant indépendant de <span class="math-inline">x</span>.) On
+      applique la formule de conditionnement <span class="math-inline">μ' = μ₂ + Σ₂₁Σ₁₁⁻¹(z−μ₁)</span> avec
+      <span class="math-inline">x₂ = x</span> et <span class="math-inline">x₁ = z</span> :
+    </p>
+    <div class="math">
+      x = x⁻ + <u>P⁻·Hᵀ·S⁻¹</u> · (z − H·x⁻)<br>
+      P = P⁻ − <u>P⁻·Hᵀ·S⁻¹</u> · H·P⁻
+    </div>
+    <p>
+      Le facteur souligné est exactement <span class="math-inline">K = P⁻·Hᵀ·S⁻¹</span>. En le substituant,
+      <span class="math-inline">x = x⁻ + K·y</span> et <span class="math-inline">P = (I − K·H)·P⁻</span>. Les
+      cinq équations tombent d'un coup. La mise à jour de Kalman <strong>est</strong> le conditionnement d'une
+      gaussienne — la figure 3.2 le montrait déjà géométriquement : la mesure découpe une tranche, la loi se
+      recale et se resserre.
+    </p>
+
+    <h2>3. Dérivation 2 — moindres carrés pondérés (MAP)</h2>
+    <p>
+      Deuxième voie, sans parler de conditionnement : on cherche l'état <em>le plus probable</em> a posteriori
+      (le maximum a posteriori, MAP). Comme la loi est gaussienne, maximiser sa densité revient à
+      <strong>minimiser</strong> l'opposé de son log — une somme de deux distances de Mahalanobis :
+    </p>
+    <div class="math">
+      J(x) = (x − x⁻)ᵀ P⁻⁻¹ (x − x⁻)&nbsp;&nbsp;+&nbsp;&nbsp;(z − H·x)ᵀ R⁻¹ (z − H·x)
+    </div>
+    <p>
+      Lisons ce coût : le premier terme pénalise l'éloignement de la prédiction (pondéré par la confiance dans
+      le modèle, <span class="math-inline">P⁻⁻¹</span>) ; le second pénalise le désaccord avec la mesure
+      (pondéré par la confiance dans le capteur, <span class="math-inline">R⁻¹</span>). L'estimation optimale
+      est le compromis qui minimise la somme.
+    </p>
+
+    <div class="callout demo">
+      <p>On annule le gradient <span class="math-inline">∂J/∂x = 0</span> :</p>
+      <div class="math">
+        −2 P⁻⁻¹ (x − x⁻) − 2 Hᵀ R⁻¹ (z − H·x) = 0<br>
+        ( P⁻⁻¹ + Hᵀ R⁻¹ H ) x = P⁻⁻¹ x⁻ + Hᵀ R⁻¹ z
+      </div>
+      <p>
+        On identifie la <strong>covariance a posteriori sous forme d'information</strong> — les informations
+        s'additionnent, exactement comme dans la fusion scalaire du chapitre 3 :
+      </p>
+      <div class="math">
+        P⁻¹ = P⁻⁻¹ + Hᵀ R⁻¹ H
+      </div>
+      <p>
+        La forme « gain » s'en déduit par le <em>lemme d'inversion matricielle</em> (Sherman-Morrison-Woodbury),
+        qui donne l'identité <span class="math-inline">P⁻¹ = P⁻⁻¹ + HᵀR⁻¹H ⇒ P·Hᵀ·R⁻¹ = P⁻·Hᵀ·S⁻¹ = K</span>.
+        On retrouve alors <span class="math-inline">x = x⁻ + K(z − Hx⁻)</span> et
+        <span class="math-inline">P = (I − KH)P⁻</span>.
+      </p>
+    </div>
+
+    <p>
+      Cette voie éclaire un point capital : le filtre de Kalman est un <strong>moindres carrés récursif
+      pondéré par les incertitudes</strong>. Là où Gauss ajustait une orbite en minimisant la somme des carrés
+      des résidus, Kalman fait de même à chaque pas, en pondérant chaque terme par l'inverse de sa covariance,
+      et en repartant du résultat précédent au lieu de tout recalculer.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        La forme <strong>information</strong> <span class="math-inline">P⁻¹ = P⁻⁻¹ + HᵀR⁻¹H</span> est belle
+        et parlante : chaque mesure <em>ajoute</em> de l'information (<span class="math-inline">HᵀR⁻¹H ⩾ 0</span>),
+        donc <span class="math-inline">P</span> ne peut que diminuer. C'est le pendant exact de « prédire = perdre,
+        corriger = gagner ». Certaines implémentations travaillent d'ailleurs directement en information — c'est
+        le <em>filtre d'information</em> (chapitre 10), commode pour fusionner beaucoup de capteurs.
+      </p>
+    </div>
+
+    <h2>4. Dérivation 3 — la variance minimale (BLUE)</h2>
+    <p>
+      Troisième voie, la plus exigeante et la plus révélatrice. Elle ne suppose <em>pas</em> la gaussianité :
+      on impose seulement à l'estimateur d'être <strong>linéaire</strong> en la mesure et <strong>non biaisé</strong>,
+      puis on choisit celui de <strong>variance minimale</strong>. On cherche donc
+      <span class="math-inline">K</span> dans la forme <span class="math-inline">x = x⁻ + K(z − Hx⁻)</span>
+      qui minimise l'incertitude résiduelle.
+    </p>
+    <p>
+      Premier calcul, exact pour tout <span class="math-inline">K</span> : la covariance a posteriori en
+      fonction de <span class="math-inline">K</span>. En posant l'erreur
+      <span class="math-inline">e = x − (x⁻ + K y)</span> et en développant, on obtient la
+      <strong>forme de Joseph</strong> :
+    </p>
+    <div class="math">
+      P(K) = (I − K·H)·P⁻·(I − K·H)ᵀ + K·R·Kᵀ
+    </div>
+    <p>
+      Cette expression est valable quel que soit <span class="math-inline">K</span> (même mal choisi) et reste
+      manifestement symétrique et positive — on y reviendra pour la stabilité numérique (chapitre 10). Reste à
+      choisir le <span class="math-inline">K</span> qui minimise l'incertitude totale, c'est-à-dire la
+      <strong>trace</strong> de <span class="math-inline">P(K)</span> (la somme des variances des composantes).
+    </p>
+
+    <div class="callout demo">
+      <p>
+        On développe la trace et on annule sa dérivée par rapport à <span class="math-inline">K</span> (via
+        <span class="math-inline">∂ tr(KAKᵀ)/∂K = 2KA</span> et <span class="math-inline">∂ tr(KB)/∂K = Bᵀ</span>) :
+      </p>
+      <div class="math">
+        ∂ tr(P) / ∂K = −2 (I − K·H)·P⁻·Hᵀ + 2 K·R = 0<br>
+        K·(H·P⁻·Hᵀ + R) = P⁻·Hᵀ<br>
+        <strong>K = P⁻·Hᵀ·(H·P⁻·Hᵀ + R)⁻¹ = P⁻·Hᵀ·S⁻¹</strong>
+      </div>
+      <p>
+        Le même <span class="math-inline">K</span>, pour la troisième fois. En le réinjectant dans la forme de
+        Joseph, les termes se simplifient jusqu'à la forme courte <span class="math-inline">P = (I − KH)P⁻</span>
+        — mais cette simplification n'est valide <em>que</em> pour le <span class="math-inline">K</span> optimal
+        (d'où l'intérêt de garder Joseph quand on doute du réglage).
+      </p>
+    </div>
+
+    <h2>5. Trois chemins, un sommet</h2>
+    <p>
+      Récapitulons ce qui vient de se passer. Trois questions <em>différentes</em> :
+    </p>
+    <ul>
+      <li>« Quelle est la loi de l'état sachant la mesure ? » → conditionnement gaussien ;</li>
+      <li>« Quel état est le plus probable a posteriori ? » → MAP / moindres carrés pondérés ;</li>
+      <li>« Quel estimateur linéaire non biaisé a la plus petite variance ? » → BLUE.</li>
+    </ul>
+    <p>
+      … et une <strong>seule</strong> réponse : <span class="math-inline">K = P⁻·Hᵀ·S⁻¹</span>. Cette
+      convergence n'est pas fortuite. Sous les hypothèses linéaires-gaussiennes, l'espérance conditionnelle (la
+      meilleure estimation possible), le mode a posteriori et le meilleur estimateur linéaire <strong>coïncident</strong>.
+      C'est ce que veut dire « le filtre de Kalman est optimal » : il n'y a rien au-dessus à atteindre. Le
+      chapitre 8 dépliera cette optimalité (MMSE, innovation orthogonale).
+    </p>
+
+    <div class="callout piege">
+      <p>
+        Les deux formes de <span class="math-inline">P</span> ne sont pas équivalentes en pratique. La forme
+        courte <span class="math-inline">(I − KH)P⁻</span> est rapide mais <strong>fragile</strong> : les
+        arrondis peuvent lui faire perdre symétrie et positivité, et elle n'est exacte que pour le
+        <span class="math-inline">K</span> optimal. La forme de Joseph
+        <span class="math-inline">(I−KH)P⁻(I−KH)ᵀ + KRKᵀ</span> est plus coûteuse mais reste symétrique
+        définie positive même avec un <span class="math-inline">K</span> approché ou des arrondis — précieuse
+        pour un filtre qui tourne des heures (chapitre 10).
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Retrouver le cas scalaire</h3>
+      <p>
+        Prenez <span class="math-inline">H = 1</span> et des scalaires. Réduisez
+        <span class="math-inline">K = P⁻HᵀS⁻¹</span> et <span class="math-inline">P = (1−KH)P⁻</span>.
+        Comparez à la fusion de gaussiennes du chapitre 3.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <div class="math">
+          S = P⁻ + R&nbsp;&nbsp;&nbsp;&nbsp;K = P⁻ / (P⁻ + R)&nbsp;&nbsp;&nbsp;&nbsp;P = (1 − K)·P⁻
+        </div>
+        <p>
+          C'est exactement la fusion scalaire du chapitre 3 (<span class="math-inline">K = A/(A+B)</span> avec
+          <span class="math-inline">A = P⁻</span>, <span class="math-inline">B = R</span>). La mise à jour de
+          Kalman n'est rien d'autre que cette fusion, rhabillée en matrices pour l'état multidimensionnel avec
+          une observation partielle <span class="math-inline">H</span>.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Pourquoi inverser S et pas P ?</h3>
+      <p>
+        L'état a <span class="math-inline">n</span> composantes, la mesure <span class="math-inline">m</span>,
+        avec <span class="math-inline">m ≪ n</span> en général. Dans <span class="math-inline">K = P⁻HᵀS⁻¹</span>,
+        quelle matrice inverse-t-on, et de quelle taille&nbsp;? Pourquoi est-ce une bonne nouvelle&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          On inverse <span class="math-inline">S</span>, de taille <span class="math-inline">m×m</span> — la
+          dimension des mesures, souvent 1 à 3. On n'inverse <em>jamais</em> <span class="math-inline">P</span>
+          (<span class="math-inline">n×n</span>, potentiellement grand). Une inversion de matrice coûte
+          ~<span class="math-inline">O(m³)</span> ; garder <span class="math-inline">m</span> petit rend la
+          correction bon marché et bornée, ce qui compte pour le temps réel. Pour <span class="math-inline">m=1</span>,
+          l'« inversion » est une simple division. C'est un des atouts pratiques majeurs du filtre.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Mise à jour : <span class="math-inline">y = z − Hx⁻</span> (innovation), <span class="math-inline">S = HP⁻Hᵀ + R</span>, <span class="math-inline">K = P⁻HᵀS⁻¹</span>, <span class="math-inline">x = x⁻ + Ky</span>, <span class="math-inline">P = (I − KH)P⁻</span>.</li>
+        <li><strong>Conditionnement gaussien</strong> : la jointe <span class="math-inline">(x,z)</span> conditionnée sur <span class="math-inline">z</span> donne directement <span class="math-inline">K</span>.</li>
+        <li><strong>MAP / moindres carrés pondérés</strong> : minimiser <span class="math-inline">(x−x⁻)ᵀP⁻⁻¹(x−x⁻) + (z−Hx)ᵀR⁻¹(z−Hx)</span> ; forme information <span class="math-inline">P⁻¹ = P⁻⁻¹ + HᵀR⁻¹H</span>.</li>
+        <li><strong>BLUE / variance minimale</strong> : minimiser <span class="math-inline">tr P(K)</span> (forme de Joseph) → même <span class="math-inline">K</span>, sans même supposer la gaussianité.</li>
+        <li>Les trois convergent : espérance conditionnelle = MAP = meilleur estimateur linéaire. C'est ça, l'<strong>optimalité</strong>.</li>
+        <li>On inverse <span class="math-inline">S</span> (<span class="math-inline">m×m</span>, petit), jamais <span class="math-inline">P</span>.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>La prédiction : propager une gaussienne</a>
+    <a class="next" href="chapitre-08.html"><span class="lbl">Suivant →</span>Gain, innovation et optimalité</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

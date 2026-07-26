@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 10 — Cohérence, réglage &amp; robustesse numérique</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 10</span><br>Cohérence, réglage &amp; robustesse numérique</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Régler <span class="math-inline">Q</span> et <span class="math-inline">R</span> avec méthode plutôt qu'au doigt mouillé.</li>
+        <li>Tester la <strong>cohérence</strong> d'un filtre : innovation blanche, NIS et NEES.</li>
+        <li>Comprendre les pièges numériques (symétrie, positivité) et leurs parades : forme de Joseph, racine carrée, filtre d'information.</li>
+        <li>Ouvrir vers le non-linéaire (EKF, UKF) et annoncer la suite appliquée du cours.</li>
+      </ul>
+    </div>
+
+    <h2>1. Régler Q et R</h2>
+    <p>
+      Un filtre de Kalman est optimal <em>pour les <span class="math-inline">Q</span> et
+      <span class="math-inline">R</span> qu'on lui donne</em>. Ces deux matrices ne sont pas des détails : ce
+      sont les seuls véritables réglages, et un filtre juste en théorie devient inutile avec de mauvaises
+      covariances de bruit. Heureusement, les deux ne se règlent pas de la même façon.
+    </p>
+    <p>
+      <strong><span class="math-inline">R</span> est le plus facile</strong> : c'est une propriété physique du
+      capteur. On l'obtient de la fiche technique, ou on le <em>mesure</em> — capteur immobile, on enregistre
+      quelques milliers d'échantillons et on calcule leur variance empirique. C'est un fait, pas un choix.
+    </p>
+    <p>
+      <strong><span class="math-inline">Q</span> est le curseur</strong>. Il exprime la confiance dans le
+      modèle, et il n'existe pas de « vraie » valeur : c'est un compromis. Le comportement suit une règle
+      simple à mémoriser :
+    </p>
+    <ul>
+      <li><strong>Petit <span class="math-inline">Q</span></strong> : on croit le modèle. Filtre lisse,
+        peu de bruit en sortie, mais <em>lent</em> à réagir aux vraies surprises (il traîne, comme au cycle 20
+        de la figure 8.2).</li>
+      <li><strong>Grand <span class="math-inline">Q</span></strong> : on se méfie du modèle. Filtre
+        <em>réactif</em>, colle aux changements, mais <em>nerveux</em> : il laisse passer davantage de bruit.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Le critère d'arrêt du réglage</strong> : ajuster <span class="math-inline">Q</span> jusqu'à ce
+        que l'innovation ressemble à un <em>bruit blanc</em> de covariance <span class="math-inline">S</span>
+        (chapitre 8). Trop de <span class="math-inline">Q</span> : les innovations deviennent trop petites par
+        rapport à <span class="math-inline">S</span> (le filtre se sous-estime). Trop peu : les innovations sont
+        trop grandes et corrélées dans le temps (le filtre rate des changements). La cohérence, décrite ci-dessous,
+        transforme ce « ressemble à » en test quantitatif.
+      </p>
+    </div>
+
+    <h2>2. Tester la cohérence</h2>
+    <p>
+      Un filtre est <strong>cohérent</strong> si l'incertitude qu'il <em>annonce</em> (<span class="math-inline">P</span>,
+      <span class="math-inline">S</span>) correspond à l'erreur qu'il <em>commet</em> réellement. Un filtre
+      cohérent ne se croit ni meilleur ni pire qu'il n'est. C'est la propriété la plus importante après
+      l'exactitude — un filtre incohérent qui sous-estime son erreur est <em>dangereux</em> : il inspire une
+      confiance injustifiée.
+    </p>
+
+    <h3>2.1 NIS — la cohérence via l'innovation</h3>
+    <p>
+      Le test se fait sur ce qu'on observe : l'innovation. La <strong>NIS</strong> (<em>Normalized Innovation
+      Squared</em>) normalise l'innovation par sa covariance annoncée :
+    </p>
+    <div class="math">
+      NIS = yᵀ · S⁻¹ · y
+    </div>
+    <p>
+      Si le filtre est cohérent, cette quantité suit une loi du <strong>χ²</strong> à
+      <span class="math-inline">m</span> degrés de liberté (dimension de la mesure), donc de moyenne
+      <span class="math-inline">m</span>. En pratique, on moyenne la NIS sur une fenêtre et on vérifie qu'elle
+      tombe dans l'intervalle de confiance du χ² :
+    </p>
+    <ul>
+      <li>NIS <strong>trop grande</strong> (au-dessus de la borne) : les innovations sont plus grandes que
+        <span class="math-inline">S</span> ne le prévoit → le filtre est <em>trop optimiste</em>,
+        <span class="math-inline">Q</span> ou <span class="math-inline">R</span> trop petits.</li>
+      <li>NIS <strong>trop petite</strong> : le filtre est <em>trop pessimiste</em>, il annonce plus
+        d'incertitude qu'il n'en a → <span class="math-inline">Q</span> ou <span class="math-inline">R</span>
+        trop grands.</li>
+    </ul>
+    <p>
+      La NIS est <em>calculable en ligne, sans vérité terrain</em> : c'est le test de cohérence du praticien.
+      On l'accompagne d'un test de <strong>blancheur</strong> (autocorrélation de la suite des innovations proche
+      de zéro hors du décalage nul), qui vérifie qu'il ne reste aucune structure temporelle exploitable.
+    </p>
+
+    <h3>2.2 NEES — la cohérence via l'erreur vraie</h3>
+    <p>
+      En simulation, où l'on connaît la vérité <span class="math-inline">x</span>, on peut tester directement
+      l'erreur d'estimation avec la <strong>NEES</strong> (<em>Normalized Estimation Error Squared</em>) :
+    </p>
+    <div class="math">
+      NEES = (x − x̂)ᵀ · P⁻¹ · (x − x̂)
+    </div>
+    <p>
+      Elle suit un χ² à <span class="math-inline">n</span> degrés de liberté (dimension de l'état) si le filtre
+      est cohérent. La NEES sert à valider un filtre <em>avant</em> déploiement, en Monte-Carlo ; la NIS le
+      surveille <em>pendant</em> l'exploitation. Ensemble, elles disent si l'on peut faire confiance au
+      <span class="math-inline">P</span> que le filtre affiche.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Retenez la hiérarchie du diagnostic : d'abord l'<strong>exactitude</strong> (l'estimation suit-elle la
+        vérité&nbsp;?), puis la <strong>cohérence</strong> (l'incertitude annoncée est-elle honnête&nbsp;?). Un
+        filtre peut être exact mais incohérent (il vise juste mais ment sur sa précision) — et cela suffit à
+        rendre dangereuses les décisions prises en aval, qui se fient à son <span class="math-inline">P</span>.
+      </p>
+    </div>
+
+    <h2>3. Robustesse numérique</h2>
+    <p>
+      En arithmétique flottante, trois maux guettent un filtre qui tourne longtemps. Les connaître, c'est éviter
+      des divergences mystérieuses.
+    </p>
+    <ul>
+      <li>
+        <strong>Perte de symétrie de <span class="math-inline">P</span>.</strong> À force d'arrondis, la matrice
+        censée être symétrique cesse de l'être, puis perd sa positivité, et le filtre diverge. Parade minimale :
+        resymétriser à chaque pas, <span class="math-inline">P ← (P + Pᵀ)/2</span>.
+      </li>
+      <li>
+        <strong>Perte de positivité.</strong> La forme courte <span class="math-inline">P = (I−KH)P⁻</span>
+        (chapitre 7) est une différence de matrices : la soustraction peut produire des valeurs propres
+        négatives, absurdes pour une covariance. La <strong>forme de Joseph</strong>
+        <span class="math-inline">P = (I−KH)P⁻(I−KH)ᵀ + KRKᵀ</span> — une somme de deux termes positifs — reste
+        définie positive par construction, au prix de quelques produits de plus. À privilégier dès que le filtre
+        doit tourner des heures sans redémarrage.
+      </li>
+      <li>
+        <strong>Mauvais conditionnement.</strong> Quand certaines directions sont très bien connues et d'autres
+        très mal, <span class="math-inline">P</span> devient mal conditionnée et les inversions perdent en
+        précision. Les <strong>filtres à racine carrée</strong> propagent une factorisation
+        <span class="math-inline">P = L·Lᵀ</span> (Cholesky) au lieu de <span class="math-inline">P</span>
+        elle-même : la positivité est <em>garantie</em> (un produit <span class="math-inline">L·Lᵀ</span> l'est
+        toujours) et la précision numérique effective est <em>doublée</em>. C'est la parade la plus robuste,
+        employée là où l'échec n'est pas permis (aéronautique, spatial).
+      </li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Le filtre d'information</strong>, entrevu au chapitre 7 (<span class="math-inline">P⁻¹ = P⁻⁻¹ + HᵀR⁻¹H</span>),
+        propage <span class="math-inline">Y = P⁻¹</span> et <span class="math-inline">ŷ = P⁻¹x</span> plutôt que
+        <span class="math-inline">P</span> et <span class="math-inline">x</span>. Sa correction devient une simple
+        <em>addition</em>, ce qui le rend imbattable pour fusionner <strong>beaucoup de capteurs</strong> d'un
+        coup, ou pour représenter une ignorance totale au départ (<span class="math-inline">Y = 0</span>, ce qui
+        serait <span class="math-inline">P = ∞</span>, impossible en covariance). C'est le dual exact du filtre de
+        Kalman.
+      </p>
+    </div>
+
+    <div class="callout piege">
+      <p>
+        <strong>Le biais n'est pas du bruit.</strong> Toutes ces parades supposent des bruits centrés. Un capteur
+        <em>biaisé</em> (erreur systématique) viole l'hypothèse du chapitre 5 et fait dériver l'estimation, sans
+        qu'aucune resymétrisation n'y change rien. La bonne réponse est de <strong>modéliser le biais</strong> :
+        l'ajouter à l'état pour que le filtre l'estime et le compense (à condition que le système reste
+        observable — chapitre 9, exercice 2). Diagnostiquer un biais : une innovation de moyenne non nulle,
+        détectée par le test de cohérence.
+      </p>
+    </div>
+
+    <h2>4. Ouverture : quand le monde n'est pas linéaire</h2>
+    <p>
+      Tout ce cours a supposé <span class="math-inline">F</span> et <span class="math-inline">H</span>
+      <em>linéaires</em>. Or beaucoup de systèmes ne le sont pas : la dynamique
+      <span class="math-inline">x = g(x, u)</span> et l'observation <span class="math-inline">z = h(x)</span>
+      font intervenir des angles, des distances euclidiennes, de la cinématique — tout sauf des matrices
+      constantes. La croyance cesse alors de rester gaussienne, et les clôtures du chapitre 3 tombent. Deux
+      grandes familles de filtres approchés récupèrent la situation, en gardant <em>exactement</em> la structure
+      prédiction/correction du chapitre 4.
+    </p>
+    <ul>
+      <li>
+        <strong>Le filtre de Kalman étendu (EKF)</strong> <em>linéarise</em> les fonctions à chaque pas, autour
+        de l'estimation courante, via leurs <strong>jacobiennes</strong> :
+        <span class="math-inline">F ≈ ∂g/∂x</span>, <span class="math-inline">H ≈ ∂h/∂x</span>, évaluées en
+        <span class="math-inline">x̂</span>. On applique ensuite les mêmes cinq équations. Simple, omniprésent en
+        robotique — mais la linéarisation introduit une erreur, on perd l'optimalité stricte, et un mauvais point
+        de linéarisation peut faire diverger.
+      </li>
+      <li>
+        <strong>Le filtre « unscented » (UKF)</strong> renonce à dériver quoi que ce soit : il propage un petit
+        jeu de points choisis (<em>sigma points</em>) à travers les vraies fonctions non linéaires, puis
+        reconstruit moyenne et covariance à partir de leurs images. Plus précis que l'EKF sur les
+        non-linéarités marquées, sans jacobienne à calculer, pour un coût comparable.
+      </li>
+    </ul>
+    <p>
+      Ces deux filtres, et la <strong>fusion de capteurs</strong> réelle (IMU + GPS + odométrie), l'estimation
+      d'attitude, le réglage sur données terrain — sont le sujet des <strong>chapitres appliqués</strong> qui
+      prolongeront ce cours. Vous les aborderez avec un avantage décisif : vous ne verrez pas l'EKF comme une
+      recette, mais comme le filtre bayésien récursif de toujours, forcé de <em>linéariser</em> pour rester dans
+      le monde gaussien que vous maîtrisez désormais.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Pour l'implémentation temps réel du filtre linéaire — code générique, <code>nalgebra</code>, zéro
+        allocation, forme de Joseph — voyez le
+        <a href="../cours-rust-robotique/chapitre-13.html">chapitre 13 du cours Rust robotique</a>, qui met en
+        œuvre exactement les équations dérivées ici.
+      </p>
+    </div>
+
+    <h2>5. Ce que vous savez maintenant</h2>
+    <p>
+      Vous êtes parti de l'idée qu'estimer, c'est fusionner deux sources imparfaites. Vous avez construit la
+      boîte à outils probabiliste, découvert pourquoi la gaussienne est la loi reine, posé le filtrage bayésien
+      récursif, puis dérivé le filtre de Kalman <em>trois fois</em>. Vous savez pourquoi
+      <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span> gonfle et pourquoi la correction resserre, ce que le gain
+      arbitre, pourquoi l'innovation est blanche, comment la covariance converge, et comment diagnostiquer un
+      filtre qui ment sur sa précision. Les cinq équations ne sont plus une formule à retenir : ce sont la
+      conséquence <em>inévitable</em> de quelques principes que vous pourriez reconstruire au tableau. C'est
+      exactement l'objectif d'un cours de fondements.
+    </p>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><span class="math-inline">R</span> se <strong>mesure</strong> (propriété du capteur)&nbsp;; <span class="math-inline">Q</span> se <strong>règle</strong> (curseur réactivité ↔ lissage). Critère : innovation blanche de covariance <span class="math-inline">S</span>.</li>
+        <li><strong>Cohérence</strong> = l'incertitude annoncée = l'erreur commise. <strong>NIS</strong> <span class="math-inline">= yᵀS⁻¹y ∼ χ²(m)</span> (en ligne, sans vérité)&nbsp;; <strong>NEES</strong> <span class="math-inline">= eᵀP⁻¹e ∼ χ²(n)</span> (en simulation).</li>
+        <li>Numérique : resymétriser <span class="math-inline">P</span>&nbsp;; <strong>forme de Joseph</strong> pour la positivité&nbsp;; <strong>racine carrée</strong> (Cholesky) pour le conditionnement&nbsp;; <strong>filtre d'information</strong> pour fusionner beaucoup de capteurs.</li>
+        <li>Un <strong>biais</strong> n'est pas du bruit : le modéliser dans l'état, pas le laisser au filtre.</li>
+        <li>Non-linéaire ⇒ <strong>EKF</strong> (jacobiennes) ou <strong>UKF</strong> (sigma points) : même structure prédiction/correction, hypothèses gaussiennes restaurées localement.</li>
+        <li>Les chapitres <strong>appliqués</strong> (fusion de capteurs, EKF/UKF déroulés, réglage sur données réelles) prolongeront ces fondements.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-09.html"><span class="lbl">← Précédent</span>Régime permanent, observabilité &amp; Riccati</a>
+    <a class="next disabled" aria-hidden="true" tabindex="-1"><span class="lbl">Fin du cours</span>Retour au sommaire</a>
+  </nav>
+  <nav class="pager" style="margin-top:1rem;">
+    <a class="prev" href="index.html"><span class="lbl">↩ Sommaire</span>Tous les chapitres</a>
+    <a class="next" href="../index.html"><span class="lbl">Autres cours →</span>Bibliothèque de formations</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>
