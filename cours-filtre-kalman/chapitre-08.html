@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 08 — Gain, innovation et optimalité</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 08</span><br>Gain, innovation et optimalité</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre finement ce que fait le gain <span class="math-inline">K</span> et ses deux régimes limites.</li>
+        <li>Voir l'<strong>innovation</strong> comme le vrai flux d'information du filtre, et son étonnante propriété : c'est un <strong>bruit blanc</strong>.</li>
+        <li>Énoncer proprement l'optimalité (MMSE) et le principe d'<strong>orthogonalité</strong>.</li>
+        <li>Observer le tout à l'œuvre : un filtre déroulé qui reconstruit une vitesse jamais mesurée.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le gain, arbitre entre modèle et mesure</h2>
+    <p>
+      Tout le filtre tient dans l'arbitrage porté par <span class="math-inline">K = P⁻·Hᵀ·S⁻¹</span>. Pour le
+      sentir, réduisons au cas scalaire (<span class="math-inline">H = 1</span>), où
+      <span class="math-inline">K = P⁻ / (P⁻ + R)</span>. Le gain est la <em>part</em> d'incertitude venant du
+      modèle dans l'incertitude totale. Deux régimes extrêmes :
+    </p>
+    <ul>
+      <li><strong>Capteur très précis</strong> (<span class="math-inline">R → 0</span>) :
+        <span class="math-inline">K → 1</span>. On saute vers la mesure, <span class="math-inline">x ≈ z</span>.
+        Le modèle est presque ignoré.</li>
+      <li><strong>Capteur très bruité</strong> (<span class="math-inline">R → ∞</span>) :
+        <span class="math-inline">K → 0</span>. On garde la prédiction, <span class="math-inline">x ≈ x⁻</span>.
+        La mesure est presque ignorée.</li>
+    </ul>
+
+    <figure class="fig">
+      <img src="figures/fig-gain.svg" alt="Courbe décroissante du gain de Kalman K en fonction du bruit de mesure R, pour une incertitude prédite P fixée à 1. À gauche (R proche de 0), K vaut presque 1 : annotation 'R→0 : K→1, on croit la mesure'. La courbe descend en passant par le point R = P, K = ½. À droite (R grand), K tend vers 0 : annotation 'R→∞ : K→0, on croit le modèle'.">
+      <figcaption><b>Figure 8.1.</b> Le gain de Kalman en fonction du bruit de mesure (à incertitude prédite
+      <span class="math-inline">P⁻</span> fixée). <span class="math-inline">K</span> glisse continûment de 1
+      (on croit la mesure) à 0 (on croit le modèle). Au point d'équilibre <span class="math-inline">R = P⁻</span>,
+      les deux sources sont également fiables et <span class="math-inline">K = ½</span> : moyenne exacte des
+      deux. Le filtre replace ce curseur <b>à chaque cycle</b>, car <span class="math-inline">P⁻</span> évolue.</figcaption>
+    </figure>
+
+    <p>
+      Le point-clé : <span class="math-inline">K</span> n'est pas figé. Comme <span class="math-inline">P⁻</span>
+      change à chaque cycle (il gonfle à la prédiction, se resserre à la correction), le curseur se replace tout
+      seul. Au démarrage, <span class="math-inline">P⁻</span> est grand, <span class="math-inline">K</span>
+      proche de 1 : le filtre se cale vite sur les premières mesures. Puis <span class="math-inline">P⁻</span>
+      diminue, <span class="math-inline">K</span> baisse, le filtre lisse davantage. Cet auto-réglage est ce qui
+      distingue Kalman d'un filtre passe-bas à coefficient fixe.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        En version matricielle, <span class="math-inline">K</span> arbitre <em>direction par direction</em> :
+        il peut faire fortement confiance à la mesure selon un axe bien observé et la négliger selon un axe mal
+        observé, tout cela dans le même pas. C'est pourquoi <span class="math-inline">K</span> est une matrice
+        et non un scalaire — l'arbitrage n'est pas global mais géométrique.
+      </p>
+    </div>
+
+    <h2>2. L'innovation : le vrai carburant du filtre</h2>
+    <p>
+      L'<strong>innovation</strong> <span class="math-inline">y = z − H·x⁻</span> mérite mieux qu'une ligne.
+      C'est la seule quantité par laquelle la mesure agit sur l'état : la correction s'écrit
+      <span class="math-inline">x = x⁻ + K·y</span>, rien d'autre que l'a priori plus un multiple de
+      l'innovation. Si l'innovation est nulle (la mesure confirme exactement la prédiction), l'état ne bouge
+      pas : la mesure n'apportait aucune information neuve. Tout l'apport d'un capteur se résume à sa
+      <em>surprise</em>.
+    </p>
+    <p>
+      Voici la propriété profonde. Quand le filtre est bien réglé (bon modèle, bons
+      <span class="math-inline">Q</span>, <span class="math-inline">R</span>), la suite des innovations
+      <span class="math-inline">y₁, y₂, y₃, …</span> est un <strong>bruit blanc</strong> gaussien, centré, de
+      covariance <span class="math-inline">S</span> :
+    </p>
+    <div class="math">
+      E[yₖ] = 0&nbsp;&nbsp;&nbsp;&nbsp;Cov[yₖ] = Sₖ&nbsp;&nbsp;&nbsp;&nbsp;E[yₖ·yⱼᵀ] = 0 pour k ≠ j
+    </div>
+    <p>
+      Autrement dit : une fois que le filtre a extrait toute l'information, ce qui reste dans les innovations est
+      du pur bruit, sans structure ni mémoire. C'est le <strong>test d'un bon filtre</strong>, et le fondement
+      du diagnostic de cohérence (chapitre 10) : si les innovations sont corrélées dans le temps ou ont une
+      moyenne non nulle, c'est qu'il restait de l'information à exploiter — le modèle ou les réglages sont
+      mauvais.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Intuition de la blancheur : si deux innovations successives étaient corrélées, le filtre pourrait
+        prédire une partie de <span class="math-inline">yₖ₊₁</span> à partir de <span class="math-inline">yₖ</span>
+        — et donc l'aurait <em>déjà</em> intégrée dans l'estimation. Un filtre optimal ne laisse rien de
+        prévisible traîner dans ses innovations : il a tout absorbé. La blancheur de l'innovation <em>est</em>
+        la signature observable de l'optimalité.
+      </p>
+    </div>
+
+    <h2>3. Optimalité : MMSE et orthogonalité</h2>
+    <p>
+      Précisons enfin en quel sens le filtre est « optimal ». Le critère est l'<strong>erreur quadratique
+      moyenne</strong> (MMSE, <em>minimum mean square error</em>) : parmi <em>tous</em> les estimateurs
+      possibles <span class="math-inline">x̂ = g(z₁:ₖ)</span>, quel que soit <span class="math-inline">g</span>,
+      celui qui minimise <span class="math-inline">E[‖x − x̂‖²]</span> est l'<strong>espérance conditionnelle</strong>
+      <span class="math-inline">E[x | z₁:ₖ]</span>. Or, dans le cas linéaire-gaussien, cette espérance
+      conditionnelle est <em>exactement</em> ce que calcule le filtre de Kalman. D'où :
+    </p>
+    <div class="callout note">
+      <p>
+        Sous les hypothèses linéaires-gaussiennes, le filtre de Kalman produit l'estimation de <strong>plus
+        petite erreur quadratique moyenne possible</strong>. Aucun estimateur — linéaire ou non, aussi
+        astucieux soit-il — ne fait mieux. Et si l'on relâche la gaussianité (bruits quelconques mais de
+        covariances connues), il reste le meilleur estimateur <em>linéaire</em> (c'est la dérivation BLUE du
+        chapitre 7).
+      </p>
+    </div>
+
+    <p>
+      Une façon élégante de voir cette optimalité est le <strong>principe d'orthogonalité</strong> : l'erreur
+      d'estimation optimale est <em>orthogonale</em> (décorrélée) à toute l'information utilisée.
+    </p>
+    <div class="math">
+      E[ (x − x̂) · zⱼᵀ ] = 0&nbsp;&nbsp;&nbsp;pour tout j ⩽ k
+    </div>
+    <p>
+      Géométriquement, l'estimation est la <em>projection</em> de l'état vrai sur l'espace engendré par les
+      mesures : le résidu est perpendiculaire à cet espace, donc on ne peut plus rien en extraire par
+      combinaison linéaire des mesures. Si l'erreur avait une composante corrélée à une mesure, on pourrait
+      encore réduire l'erreur — donc l'estimation ne serait pas optimale. L'innovation blanche du §2 est la
+      traduction séquentielle de cette orthogonalité.
+    </p>
+
+    <h2>4. Le filtre à l'œuvre</h2>
+    <p>
+      Assemblons tout sur l'exemple canonique du chapitre 5 : suivi 1D, état <span class="math-inline">[p, v]</span>,
+      mesure de position seule. On simule une vérité terrain (dont la vitesse change en cours de route pour
+      tester la poursuite), on la bruite pour fabriquer des mesures, et on déroule le filtre.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-kalman-run.svg" alt="Graphe de la position en fonction du cycle. Une courbe en tirets clairs représente la vérité terrain, dont la pente diminue au cycle 20 (changement de vraie vitesse, marqué d'une verticale). Des points ambre dispersés autour de la vérité sont les mesures bruitées. Une courbe verte épaisse, entourée d'une bande verte translucide ±1σ, est l'estimation filtrée : elle lisse les mesures, colle à la vérité, et rattrape le changement de vitesse après un court retard. La bande ±1σ est large au départ puis se resserre.">
+      <figcaption><b>Figure 8.2.</b> Un filtre position-vitesse en action. Les <span class="math-inline">mesures</span>
+      (points ambre) sont bruitées&nbsp;; l'<span class="math-inline">estimé</span> (vert) les lisse et suit la
+      <span class="math-inline">vérité</span> (tirets). La bande <span class="math-inline">±1σ</span> — issue de
+      <span class="math-inline">√P₀₀</span> — part large (forte incertitude initiale) puis se resserre vers le
+      régime permanent. Au changement de vitesse (cycle 20), le filtre <em>traîne</em> brièvement : le modèle à
+      vitesse constante est pris en défaut, l'innovation grimpe, et le filtre se recale.</figcaption>
+    </figure>
+
+    <p>
+      Deux choses remarquables sur cette figure. D'abord, l'estimé de <strong>vitesse</strong> (non tracé mais
+      à l'œuvre dans la pente de la courbe verte) converge vers la vraie vitesse, <em>alors qu'aucun capteur ne
+      mesure la vitesse</em> : le couplage position-vitesse dans <span class="math-inline">P</span> (créé par
+      <span class="math-inline">F</span> à la prédiction, chapitre 6) permet à une mesure de position seule de
+      la reconstruire. C'est le tour de force du filtre. Ensuite, la bande d'incertitude <strong>rétrécit</strong>
+      puis se stabilise : le filtre atteint un régime permanent où <span class="math-inline">P</span> et
+      <span class="math-inline">K</span> deviennent presque constants — précisément le sujet du chapitre 9.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        Le petit retard au changement de vitesse (cycle 20) n'est pas un bug : c'est le prix d'un modèle qui
+        « croit » à une vitesse constante. On peut le réduire en augmentant <span class="math-inline">Q</span>
+        (le filtre se méfie plus du modèle, réagit plus vite) — mais alors il lisse moins et suit davantage le
+        bruit. Ce compromis réactivité ↔ lissage est le cœur du réglage (chapitre 10). Il n'existe pas de
+        réglage parfait, seulement un réglage adapté à ce qu'on attend du filtre.
+      </p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><span class="math-inline">K</span> arbitre entre modèle et mesure : <span class="math-inline">K→1</span> si le capteur est fiable, <span class="math-inline">K→0</span> s'il est bruité&nbsp;; il se replace à chaque cycle car <span class="math-inline">P⁻</span> évolue.</li>
+        <li>L'<strong>innovation</strong> <span class="math-inline">y = z − Hx⁻</span> est la seule information neuve&nbsp;; la correction n'est que <span class="math-inline">x⁻ + Ky</span>.</li>
+        <li>Filtre bien réglé ⇒ innovations = <strong>bruit blanc</strong> centré de covariance <span class="math-inline">S</span>. C'est la signature observable de l'optimalité (et le test du chapitre 10).</li>
+        <li><strong>Optimalité MMSE</strong> : le filtre calcule <span class="math-inline">E[x|z₁:ₖ]</span>, l'estimateur de plus petite erreur quadratique moyenne&nbsp;; sans gaussianité, il reste le meilleur estimateur linéaire.</li>
+        <li><strong>Orthogonalité</strong> : l'erreur optimale est décorrélée des mesures — une projection&nbsp;; rien de linéairement exploitable ne subsiste.</li>
+        <li>À l'œuvre : le filtre reconstruit une vitesse jamais mesurée (via le couplage dans <span class="math-inline">P</span>) et voit son incertitude se stabiliser en régime permanent (chapitre 9).</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-07.html"><span class="lbl">← Précédent</span>La correction : le gain optimal</a>
+    <a class="next" href="chapitre-09.html"><span class="lbl">Suivant →</span>Régime permanent, observabilité &amp; Riccati</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

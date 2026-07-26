@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Filtre de Kalman — fondements théoriques — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Filtre de Kalman — fondements théoriques</h1>
+      <p class="sub">Comprendre <em>d'où viennent</em> les équations du filtre de Kalman, pas
+      seulement les réciter. On part de l'estimation sous incertitude, on construit la boîte à
+      outils probabiliste, on dérive le filtre <strong>trois fois</strong> par trois chemins
+      différents, et on démonte ses propriétés : optimalité, innovation, régime permanent,
+      cohérence, stabilité numérique. 10 chapitres en français, orientés théorie et illustrés
+      par des figures <strong>calculées exactement</strong>.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Comment lire ce cours ?</strong> Les chapitres se suivent : chacun pose une brique
+      et l'appuie sur une figure ou une démonstration. Les encarts « 💡 Intuition »,
+      « ∑ Le calcul », « 🧮 Démonstration », « ⚠️ Piège » et « 📝 À retenir » balisent le texte,
+      et quelques exercices à <em>solution repliable</em> ferment les chapitres clés. Le prérequis
+      est léger : de l'algèbre linéaire (produits de matrices, transposée, inverse) et l'idée de
+      moyenne et de variance. Tout le reste est construit ici.
+    </div>
+
+    <div class="callout histoire">
+      Ce cours est le <strong>versant théorique</strong> du filtre. L'implémentation temps réel
+      (code, <code>nalgebra</code>, zéro allocation) est traitée au
+      <a href="../cours-rust-robotique/chapitre-13.html">chapitre&nbsp;13 du cours Rust robotique</a>.
+      Les <strong>chapitres appliqués</strong> — fusion de capteurs, EKF/UKF déroulés sur des cas
+      concrets, réglage sur données réelles — viendront s'ajouter ensuite.
+    </div>
+
+    <ul class="klegend" aria-hidden="true">
+      <li><span class="sw sw-prior"></span> a priori / prédiction</li>
+      <li><span class="sw sw-meas"></span> mesure / vraisemblance</li>
+      <li><span class="sw sw-post"></span> a posteriori / estimé</li>
+      <li><span class="sw sw-truth"></span> vérité terrain</li>
+    </ul>
+
+    <div class="part-title">Partie A — Estimer sous incertitude</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html"><span class="num">01</span><span><strong>Le problème de l'estimation d'état</strong><span class="desc">état caché vs mesures bruitées, pourquoi fusionner, l'idée de suivre une <em>distribution</em> plutôt qu'une valeur</span></span></a></li>
+      <li><a href="chapitre-02.html"><span class="num">02</span><span><strong>Boîte à outils probabiliste</strong><span class="desc">variable aléatoire, espérance, variance, covariance, corrélation, propagation d'une covariance — le « sandwich » <span class="math-inline">A·Σ·Aᵀ</span></span></span></a></li>
+      <li><a href="chapitre-03.html"><span class="num">03</span><span><strong>La loi gaussienne, reine du filtre</strong><span class="desc">gaussienne multivariée, ellipses de covariance, stabilité par transformation linéaire, marginalisation, conditionnement, produit de deux gaussiennes</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie B — L'inférence récursive</div>
+    <ul class="toc">
+      <li><a href="chapitre-04.html"><span class="num">04</span><span><strong>Le filtrage bayésien récursif</strong><span class="desc">état de Markov caché, croyance <span class="math-inline">p(xₖ | z₁:ₖ)</span>, le cycle universel prédiction (Chapman-Kolmogorov) / correction (Bayes)</span></span></a></li>
+      <li><a href="chapitre-05.html"><span class="num">05</span><span><strong>Le modèle linéaire-gaussien</strong><span class="desc">équation d'état et d'observation, les matrices <span class="math-inline">F, B, Q, H, R</span>, hypothèses (bruit blanc, gaussien, indépendant) et pourquoi elles rendent tout calculable</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie C — Le cœur du filtre</div>
+    <ul class="toc">
+      <li><a href="chapitre-06.html"><span class="num">06</span><span><strong>La prédiction : propager une gaussienne</strong><span class="desc">propager la moyenne et la covariance à travers <span class="math-inline">F</span>, d'où sort <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span>, prédire = perdre de la certitude</span></span></a></li>
+      <li><a href="chapitre-07.html"><span class="num">07</span><span><strong>La correction : le gain optimal</strong><span class="desc">dériver <span class="math-inline">K</span> <strong>trois fois</strong> : conditionnement gaussien, moindres carrés pondérés / MAP, et minimisation de la trace de <span class="math-inline">P</span> (BLUE)</span></span></a></li>
+      <li><a href="chapitre-08.html"><span class="num">08</span><span><strong>Gain, innovation et optimalité</strong><span class="desc">le sens de <span class="math-inline">K</span>, l'innovation et son orthogonalité, l'estimateur MMSE, régimes limites, un filtre déroulé en figure</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie D — Propriétés &amp; vie du filtre</div>
+    <ul class="toc">
+      <li><a href="chapitre-09.html"><span class="num">09</span><span><strong>Régime permanent, observabilité &amp; Riccati</strong><span class="desc">la récurrence de la covariance, l'équation de Riccati, convergence vers un gain constant, ce que l'observabilité garantit (et ce qu'elle ne garantit pas)</span></span></a></li>
+      <li><a href="chapitre-10.html"><span class="num">10</span><span><strong>Cohérence, réglage &amp; robustesse numérique</strong><span class="desc">régler <span class="math-inline">Q</span> et <span class="math-inline">R</span>, tester la cohérence (innovation blanche, NIS/NEES), forme de Joseph et racine carrée, puis ouverture vers le non-linéaire (EKF/UKF)</span></span></a></li>
+    </ul>
+
+    <div class="callout note">
+      À la fin, vous saurez reconstruire les cinq équations du filtre de mémoire — parce que vous
+      les aurez <em>dérivées</em>, pas apprises par cœur — et diagnostiquer un filtre qui diverge.
+    </div>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques · à suivre dans l'ordre 🎯
+  </footer>
+</body>
+</html>

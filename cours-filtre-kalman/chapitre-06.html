@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — La prédiction : propager une gaussienne</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>La prédiction : propager une gaussienne</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Dériver les deux équations de prédiction directement à partir du modèle et de la boîte à outils du chapitre 2.</li>
+        <li>Comprendre le « sandwich » <span class="math-inline">F·P·Fᵀ</span> et le rôle du <span class="math-inline">+ Q</span>.</li>
+        <li>Saisir l'idée maîtresse : <strong>prédire, c'est perdre de la certitude</strong> — la covariance ne fait que grandir pendant cette étape.</li>
+        <li>Introduire les notations a priori (<span class="math-inline">x⁻, P⁻</span>) et a posteriori (<span class="math-inline">x, P</span>).</li>
+      </ul>
+    </div>
+
+    <h2>1. Notations : avant et après la mesure</h2>
+    <p>
+      Chaque cycle du filtre enchaîne deux phases, et l'on distingue soigneusement l'état à ces deux moments.
+      On note avec un exposant <strong>moins</strong> les grandeurs <em>prédites</em>, avant d'avoir intégré la
+      mesure du cycle (l'<strong>a priori</strong>) :
+    </p>
+    <ul>
+      <li><span class="math-inline">x⁻</span>, <span class="math-inline">P⁻</span> : état et covariance
+        <em>prédits</em> (a priori) ;</li>
+      <li><span class="math-inline">x</span>, <span class="math-inline">P</span> : état et covariance
+        <em>corrigés</em> (a posteriori), après la mesure.</li>
+    </ul>
+    <p>
+      La prédiction transforme l'a posteriori du cycle précédent
+      <span class="math-inline">(xₖ₋₁, Pₖ₋₁)</span> en a priori du cycle courant
+      <span class="math-inline">(x⁻ₖ, P⁻ₖ)</span>. La correction (chapitre 7) transformera ensuite cet a
+      priori en a posteriori <span class="math-inline">(xₖ, Pₖ)</span>. Pour alléger, on omet souvent l'indice
+      <span class="math-inline">k</span> quand il n'y a pas d'ambiguïté.
+    </p>
+
+    <h2>2. Propager la moyenne</h2>
+    <p>
+      L'état évolue selon <span class="math-inline">xₖ = F·xₖ₋₁ + B·uₖ + wₖ</span>. On veut la moyenne de la
+      croyance prédite, c'est-à-dire l'espérance de <span class="math-inline">xₖ</span> sachant les mesures
+      passées. Par linéarité de l'espérance, et puisque le bruit est <strong>centré</strong>
+      (<span class="math-inline">E[wₖ] = 0</span>) :
+    </p>
+    <div class="math">
+      x⁻ = E[ F·x + B·u + w ] = F·E[x] + B·u + E[w] = <strong>F·x + B·u</strong>
+    </div>
+    <p>
+      La meilleure prédiction de l'état, c'est simplement l'état estimé passé, poussé à travers la dynamique
+      et la commande. Le bruit, centré, ne déplace pas la moyenne — il ne fait qu'élargir l'incertitude, ce
+      que va porter la covariance.
+    </p>
+
+    <h2>3. Propager la covariance</h2>
+    <p>
+      C'est ici que la boîte à outils du chapitre 2 paie. On a deux effets à combiner : la transformation
+      linéaire par <span class="math-inline">F</span> (règle du sandwich) et l'ajout du bruit de process
+      indépendant (additivité des covariances).
+    </p>
+
+    <div class="callout demo">
+      <p>
+        L'erreur d'estimation prédite est <span class="math-inline">e⁻ = xₖ − x⁻</span>. En remplaçant
+        <span class="math-inline">xₖ</span> par la dynamique et <span class="math-inline">x⁻</span> par
+        <span class="math-inline">F·x + B·u</span>, le terme <span class="math-inline">B·u</span> (déterministe)
+        s'annule :
+      </p>
+      <div class="math">
+        e⁻ = (F·xₖ₋₁ + B·u + w) − (F·x + B·u) = F·(xₖ₋₁ − x) + w = F·e + w
+      </div>
+      <p>
+        L'erreur prédite est l'ancienne erreur <span class="math-inline">e</span> transportée par
+        <span class="math-inline">F</span>, plus le bruit frais <span class="math-inline">w</span>. Comme
+        <span class="math-inline">e</span> (erreur passée) et <span class="math-inline">w</span> (bruit du pas
+        courant, blanc) sont <strong>indépendants</strong>, leurs covariances s'ajoutent, et le terme en
+        <span class="math-inline">F·e</span> se transporte en sandwich :
+      </p>
+      <div class="math">
+        P⁻ = Cov[e⁻] = Cov[F·e] + Cov[w] = <strong>F·P·Fᵀ + Q</strong>
+      </div>
+    </div>
+
+    <p>
+      Les deux équations de la prédiction sont donc :
+    </p>
+    <div class="math">
+      <strong>x⁻ = F·x + B·u</strong><br>
+      <strong>P⁻ = F·P·Fᵀ + Q</strong>
+    </div>
+    <p>
+      Elles ne contiennent rien de nouveau : ce sont la règle reine du chapitre 2 (sandwich) et l'additivité
+      sous indépendance, appliquées au modèle du chapitre 5. Aucune magie — juste la propagation d'une
+      gaussienne à travers une application affine bruitée.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span>, jamais <span class="math-inline">F·P</span> ni
+        <span class="math-inline">F·P·F</span>. Sans la transposée, le produit n'est en général même pas
+        carré, donc pas une covariance. C'est l'erreur numéro un du domaine — on l'a déjà signalée au chapitre
+        2, on la re-signale ici parce que c'est <em>le</em> moment où elle se commet.
+      </p>
+    </div>
+
+    <h2>4. Prédire, c'est perdre de la certitude</h2>
+    <p>
+      Regardez <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span> avec des yeux d'ingénieur. Le sandwich
+      <span class="math-inline">F·P·Fᵀ</span> transporte et déforme l'incertitude existante ; le
+      <span class="math-inline">+ Q</span> lui <em>ajoute</em> de l'incertitude fraîche. Comme
+      <span class="math-inline">Q</span> est semi-définie positive, la prédiction ne peut que <strong>gonfler</strong>
+      l'incertitude (au sens des covariances). C'est logique : le temps passe, le modèle vieillit, on sait de
+      moins en moins bien où l'on est. Sans mesure pour recaler, une prédiction laissée seule diverge — c'est
+      la dérive en boucle ouverte du chapitre 1.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-predict-update.svg" alt="Trois ellipses de covariance côte à côte reliées par des flèches. À gauche, une petite ellipse verte (P au cycle précédent). Une flèche 'prédire, incertitude qui monte' mène à une ellipse bleue nettement plus grande et inclinée au centre (P prédit = F P Fᵀ + Q). Une flèche 'corriger, incertitude qui baisse' mène à droite à une petite ellipse verte (P corrigé). L'ellipse prédite est la plus grande des trois.">
+      <figcaption><b>Figure 6.1.</b> Le cycle de vie de la covariance. La <b>prédiction</b> (flèche bleue)
+      étire l'ellipse — <span class="math-inline">F</span> la déforme, <span class="math-inline">Q</span>
+      la dilate : on est plus incertain. La <b>correction</b> (flèche verte, chapitre 7) la resserre grâce à
+      la mesure. Cette respiration se répète à chaque cycle. Ce chapitre couvre la première flèche.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        L'inclinaison de l'ellipse prédite (fig. 6.1) n'est pas décorative : c'est
+        <span class="math-inline">F</span> qui <em>corrèle</em> les composantes en les propageant. Sur le
+        modèle <span class="math-inline">[[1, dt],[0, 1]]</span>, la position future dépend de la vitesse
+        courante, ce qui crée un terme croisé position-vitesse dans <span class="math-inline">P⁻</span> (on
+        l'a calculé à l'exercice 2 du chapitre 2). Cette corrélation est <em>précisément</em> ce qui permettra
+        à une mesure de position de corriger la vitesse au chapitre suivant.
+      </p>
+    </div>
+
+    <h2>5. Le cas sans commande</h2>
+    <p>
+      Dans beaucoup d'applications de suivi (poursuite de cible, estimation d'un mobile qu'on ne pilote pas),
+      il n'y a pas de commande connue : <span class="math-inline">u = 0</span>. La prédiction se réduit alors à :
+    </p>
+    <div class="math">
+      x⁻ = F·x&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;P⁻ = F·P·Fᵀ + Q
+    </div>
+    <p>
+      Tout le mouvement réel — y compris les accélérations qu'on ne modélise pas — doit alors être « expliqué »
+      par le seul bruit de process <span class="math-inline">Q</span>. C'est pourquoi, en l'absence de commande,
+      le réglage de <span class="math-inline">Q</span> devient si décisif : c'est le seul endroit où l'on
+      déclare à quel point la cible peut nous surprendre (chapitre 10).
+    </p>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Notations : <span class="math-inline">x⁻, P⁻</span> = <strong>a priori</strong> (prédit, avant mesure) ; <span class="math-inline">x, P</span> = <strong>a posteriori</strong> (corrigé, après mesure).</li>
+        <li>Moyenne : <span class="math-inline">x⁻ = F·x + B·u</span> — pousser l'état à travers la dynamique&nbsp;; le bruit centré ne déplace pas la moyenne.</li>
+        <li>Covariance : <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span> — sandwich (transport par <span class="math-inline">F</span>) + additivité (ajout du bruit indépendant <span class="math-inline">Q</span>).</li>
+        <li><strong>Prédire = perdre de la certitude</strong> : <span class="math-inline">P⁻ ⩾ F·P·Fᵀ</span>, l'ellipse gonfle. Sans correction, dérive.</li>
+        <li><span class="math-inline">F</span> crée des <strong>corrélations</strong> entre composantes — le lien qui rendra la correction capable d'estimer l'inobservé.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Le modèle linéaire-gaussien</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>La correction : le gain optimal</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

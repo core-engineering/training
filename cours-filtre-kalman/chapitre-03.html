@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — La loi gaussienne, reine du filtre</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>La loi gaussienne, reine du filtre</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Reconnaître la gaussienne, scalaire puis multivariée, et lire une <strong>ellipse de covariance</strong>.</li>
+        <li>Comprendre les trois propriétés de clôture qui font tout marcher : stabilité par <strong>transformation linéaire</strong>, par <strong>marginalisation</strong>, par <strong>conditionnement</strong>.</li>
+        <li>Établir la formule de <strong>fusion de deux gaussiennes</strong> (le cas scalaire de la mise à jour de Kalman).</li>
+        <li>Voir pourquoi une gaussienne se résume <em>entièrement</em> à sa moyenne et sa covariance — d'où un filtre qui ne suit que ces deux objets.</li>
+      </ul>
+    </div>
+
+    <h2>1. La cloche, scalaire puis vectorielle</h2>
+    <p>
+      La <strong>loi normale</strong> (ou gaussienne) scalaire de moyenne <span class="math-inline">μ</span>
+      et variance <span class="math-inline">σ²</span> a pour densité la célèbre courbe en cloche :
+    </p>
+    <div class="math">
+      p(x) = ( 1 / √(2π σ²) ) · exp( − (x − μ)² / (2σ²) )
+    </div>
+    <p>
+      Tout est dans l'exposant : un <strong>écart au carré</strong> divisé par la variance. Loin de la
+      moyenne, l'écart au carré explose, la densité s'effondre. La constante devant ne sert qu'à faire une
+      aire totale de 1. On note <span class="math-inline">x ∼ N(μ, σ²)</span>.
+    </p>
+    <p>
+      En dimension <span class="math-inline">n</span>, la variance devient la matrice de covariance
+      <span class="math-inline">Σ</span> du chapitre 2, et l'écart au carré devient une
+      <strong>forme quadratique</strong> :
+    </p>
+    <div class="math">
+      p(x) = ( 1 / √( (2π)ⁿ |Σ| ) ) · exp( − ½ (x − μ)ᵀ Σ⁻¹ (x − μ) )
+    </div>
+    <p>
+      Le cœur est <span class="math-inline">(x − μ)ᵀ Σ⁻¹ (x − μ)</span> : la <strong>distance de
+      Mahalanobis</strong> au carré. C'est une distance à la moyenne <em>pondérée par l'inverse de la
+      covariance</em> — s'écarter dans une direction très incertaine « coûte » peu, s'écarter dans une
+      direction bien connue coûte cher. Cette forme quadratique reviendra à chaque dérivation du filtre.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <span class="math-inline">Σ⁻¹</span> s'appelle la matrice d'<strong>information</strong> (ou de
+        précision). Là où <span class="math-inline">Σ</span> mesure le doute, son inverse mesure la
+        certitude. Fusionner deux gaussiennes, on le verra, revient à <em>additionner leurs informations</em> —
+        ce qui est d'une simplicité désarmante et éclaire tout le filtre.
+      </p>
+    </div>
+
+    <h2>2. Lire une ellipse de covariance</h2>
+    <p>
+      À deux dimensions, les lignes de niveau d'une gaussienne (les points d'égale densité) sont des
+      <strong>ellipses</strong> centrées sur <span class="math-inline">μ</span>. Leur forme est dictée par
+      <span class="math-inline">Σ</span> : les axes de l'ellipse pointent le long des directions propres de
+      <span class="math-inline">Σ</span>, et leurs demi-longueurs valent <span class="math-inline">√λ</span>
+      (racines des valeurs propres). On trace en général l'ellipse à <span class="math-inline">1σ</span>
+      (elle contient environ 39&nbsp;% de la masse en 2D) et à <span class="math-inline">2σ</span> (~86&nbsp;%).
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-gaussian-2d.svg" alt="Nuage de points verts échantillonnés d'une gaussienne bivariée corrélée, avec deux ellipses concentriques inclinées (1 sigma en trait plein, 2 sigma en pointillés), la moyenne marquée d'un point blanc au centre, et les deux axes propres tracés en pointillés ambre le long des directions principales de dispersion.">
+      <figcaption><b>Figure 3.1.</b> Une gaussienne bivariée corrélée. Le nuage se concentre autour de la
+      moyenne <span class="math-inline">μ</span> et s'étire selon les <b>axes propres</b> de
+      <span class="math-inline">Σ</span>. L'inclinaison de l'ellipse traduit la <b>corrélation</b> entre les
+      deux composantes : ici positive (elles grandissent ensemble). L'ellipse 1σ contient l'essentiel de la
+      masse&nbsp;; la 2σ presque tout.</figcaption>
+    </figure>
+
+    <p>
+      Une ellipse <em>ronde</em> signifie des composantes décorrélées et de même variance ; une ellipse
+      <em>allongée et inclinée</em> signale une forte corrélation. Toute la « mémoire » du filtre sur la
+      forme de son incertitude tient dans cette ellipse — que la prédiction va étirer et la correction
+      resserrer (chapitres 6 et 7).
+    </p>
+
+    <h2>3. Trois propriétés magiques (les clôtures)</h2>
+    <p>
+      Si le filtre de Kalman existe, c'est parce que la famille gaussienne est <strong>stable</strong> sous
+      exactement les trois opérations dont le filtrage a besoin. « Stable » veut dire : partez d'une
+      gaussienne, appliquez l'opération, vous retombez sur une gaussienne. Vous n'aurez donc jamais à suivre
+      qu'une moyenne et une covariance — jamais une distribution biscornue.
+    </p>
+
+    <h3>3.1 Stabilité par transformation linéaire</h3>
+    <p>
+      Si <span class="math-inline">x ∼ N(μ, Σ)</span> et <span class="math-inline">y = A·x + b</span>, alors
+      <span class="math-inline">y</span> est encore gaussienne :
+    </p>
+    <div class="math">
+      y ∼ N( A·μ + b , A·Σ·Aᵀ )
+    </div>
+    <p>
+      C'est exactement la règle reine du chapitre 2, avec en prime la garantie que la <em>forme</em> reste
+      gaussienne. Voilà la <strong>prédiction</strong> qui se profile : propager une gaussienne à travers la
+      dynamique linéaire <span class="math-inline">F</span> redonne une gaussienne.
+    </p>
+
+    <h3>3.2 Stabilité par marginalisation</h3>
+    <p>
+      Si on a une gaussienne jointe sur <span class="math-inline">(x₁, x₂)</span> et qu'on « oublie »
+      <span class="math-inline">x₂</span> (on l'intègre), la loi restante sur <span class="math-inline">x₁</span>
+      est gaussienne — et sa moyenne et sa covariance sont simplement les blocs correspondants de la jointe.
+      Marginaliser une gaussienne, c'est juste <strong>rayer des lignes et des colonnes</strong>. Rien à
+      calculer.
+    </p>
+
+    <h3>3.3 Stabilité par conditionnement</h3>
+    <p>
+      C'est la propriété reine pour la <strong>correction</strong>. Si <span class="math-inline">(x₁, x₂)</span>
+      sont conjointement gaussiens et qu'on <em>observe</em> <span class="math-inline">x₁ = z</span>, alors
+      la loi de <span class="math-inline">x₂</span> sachant cette observation reste gaussienne. Sa moyenne se
+      décale vers la valeur observée, et surtout sa covariance <strong>diminue</strong> : observer réduit le
+      doute. C'est ce que montre la figure.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-conditioning.svg" alt="Une ellipse de covariance bleue représente la loi jointe de deux variables x1 (mesurée) et x2 (cachée), inclinée donc corrélée. Une droite verticale ambre marque l'observation x1 = z. Le long de cette droite, une gaussienne verte étroite représente la loi conditionnelle de x2 sachant x1 = z : sa moyenne est recalée par rapport au centre de l'ellipse, et sa dispersion est nettement plus faible que la dispersion marginale de x2.">
+      <figcaption><b>Figure 3.2.</b> Le conditionnement, c'est la mise à jour de Kalman. On part de la loi
+      jointe (ellipse bleue) de la variable cachée <span class="math-inline">x₂</span> et de la variable
+      mesurable <span class="math-inline">x₁</span>. Observer <span class="math-inline">x₁ = z</span> (droite
+      ambre) découpe une <b>tranche</b> : la loi de <span class="math-inline">x₂</span> sachant
+      <span class="math-inline">z</span> (verte) a sa moyenne <b>recalée</b> et sa variance <b>réduite</b>.
+      Plus la corrélation (inclinaison) est forte, plus l'observation est informative.</figcaption>
+    </figure>
+
+    <div class="callout math">
+      <p>
+        Formules du conditionnement gaussien (à connaître — le chapitre 7 les réutilise mot pour mot). Pour
+        <span class="math-inline">(x₁, x₂)</span> gaussiens de moyennes <span class="math-inline">μ₁, μ₂</span>
+        et de blocs de covariance <span class="math-inline">Σ₁₁, Σ₁₂, Σ₂₂</span>, la loi de
+        <span class="math-inline">x₂</span> sachant <span class="math-inline">x₁ = z</span> est
+        <span class="math-inline">N(μ', Σ')</span> avec :
+      </p>
+      <div class="math">
+        μ' = μ₂ + Σ₂₁ Σ₁₁⁻¹ (z − μ₁)<br>
+        Σ' = Σ₂₂ − Σ₂₁ Σ₁₁⁻¹ Σ₁₂
+      </div>
+      <p>
+        Reconnaissez la structure : une moyenne corrigée par un <em>gain</em>
+        <span class="math-inline">Σ₂₁ Σ₁₁⁻¹</span> multipliant l'écart <span class="math-inline">(z − μ₁)</span>,
+        et une covariance <em>diminuée</em> d'un terme toujours positif. Ce gain <strong>est</strong> le gain
+        de Kalman déguisé.
+      </p>
+    </div>
+
+    <h2>4. Fusionner deux gaussiennes (le cas scalaire de la mise à jour)</h2>
+    <p>
+      Prenons deux informations gaussiennes <em>indépendantes</em> sur la même grandeur scalaire : un a priori
+      <span class="math-inline">N(a, A)</span> (issu du modèle) et une mesure <span class="math-inline">N(b, B)</span>
+      (issue du capteur). Les fusionner, c'est multiplier leurs densités puis renormaliser. Le produit de deux
+      gaussiennes est <strong>encore une gaussienne</strong>, de paramètres :
+    </p>
+    <div class="math">
+      1/C = 1/A + 1/B&nbsp;&nbsp;&nbsp;&nbsp;(les <em>informations</em> s'additionnent)<br>
+      c = C · ( a/A + b/B )&nbsp;&nbsp;&nbsp;(moyenne pondérée par les informations)
+    </div>
+    <p>
+      C'est la figure 1.1 du premier chapitre, rendue quantitative. Réécrivons la moyenne fusionnée sous une
+      forme lourde de sens :
+    </p>
+    <div class="math">
+      c = a + K·(b − a)&nbsp;&nbsp;&nbsp;avec&nbsp;&nbsp;&nbsp;K = A / (A + B)<br>
+      C = (1 − K)·A
+    </div>
+
+    <div class="callout demo">
+      <p>De la forme « information » à la forme « gain ». La variance fusionnée :</p>
+      <div class="math">C = ( 1/A + 1/B )⁻¹ = AB / (A + B) = A · B/(A+B) = A · (1 − A/(A+B)) = (1 − K)·A</div>
+      <p>La moyenne, en repartant de <span class="math-inline">c = C(a/A + b/B)</span> et en factorisant :</p>
+      <div class="math">
+        c = C·a/A + C·b/B = (1−K)·a + [AB/(A+B)]·b/B = (1−K)a + K·b = a + K(b − a)
+      </div>
+      <p>
+        On a fait apparaître le <strong>gain</strong> <span class="math-inline">K = A/(A+B)</span> : la part
+        d'incertitude de l'a priori dans l'incertitude totale. L'estimation fusionnée part de l'a priori
+        <span class="math-inline">a</span> et se déplace d'une fraction <span class="math-inline">K</span> de
+        l'écart <span class="math-inline">(b − a)</span> vers la mesure.
+      </p>
+    </div>
+
+    <p>
+      Regardez <span class="math-inline">K = A/(A+B)</span>. Si l'a priori est très incertain
+      (<span class="math-inline">A</span> grand) ou la mesure très sûre (<span class="math-inline">B</span>
+      petit), <span class="math-inline">K → 1</span> : on saute vers la mesure. Si au contraire la mesure est
+      mauvaise (<span class="math-inline">B</span> grand), <span class="math-inline">K → 0</span> : on garde
+      l'a priori. Et la variance finale <span class="math-inline">C = (1−K)A</span> est toujours
+      <em>inférieure</em> à <span class="math-inline">A</span> : on gagne toujours en certitude. Vous venez de
+      dériver la mise à jour scalaire du filtre de Kalman — le chapitre 7 ne fera que la revêtir de matrices.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        Cette fusion suppose les deux sources <strong>indépendantes</strong>. Fusionner deux mesures qui
+        partagent une source d'erreur commune (même horloge, même biais) comme si elles étaient indépendantes
+        conduit à un excès de confiance : la variance fusionnée annoncée est trop petite, le filtre devient
+        « trop sûr de lui » et finit par ignorer la réalité. Garder les hypothèses honnêtes est vital
+        (chapitre 10).
+      </p>
+    </div>
+
+    <h2>5. Deux nombres suffisent</h2>
+    <p>
+      Une gaussienne est <strong>entièrement</strong> caractérisée par sa moyenne et sa covariance : aucun
+      autre paramètre n'existe. Combinée aux trois clôtures, cette propriété a une conséquence énorme pour
+      l'implémentation : un filtre qui travaille en linéaire-gaussien n'a <em>jamais</em> besoin de stocker
+      autre chose que <span class="math-inline">x</span> (la moyenne) et <span class="math-inline">P</span>
+      (la covariance). Toute la richesse d'une distribution de probabilité sur un espace continu tient dans un
+      petit vecteur et une petite matrice, mis à jour par de l'algèbre linéaire. C'est ce qui rend le filtre
+      calculable en temps réel, cycle après cycle.
+    </p>
+
+    <div class="callout note">
+      <p>
+        Résumé stratégique : <em>linéaire</em> → la transformation garde la forme gaussienne (prédiction) ;
+        <em>gaussien</em> → conditionner garde la forme gaussienne (correction) ; <em>deux paramètres</em> →
+        tout tient dans <span class="math-inline">(x, P)</span>. Ces trois faits <strong>sont</strong> le
+        filtre de Kalman. Le reste du cours ne fait que les mettre en musique.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Fusion de deux capteurs</h3>
+      <p>
+        Deux capteurs de température indépendants mesurent la même pièce. Le premier donne
+        <span class="math-inline">20,0 °C</span> avec une variance de <span class="math-inline">1,0</span>,
+        le second <span class="math-inline">22,0 °C</span> avec une variance de <span class="math-inline">0,25</span>.
+        Quelle est l'estimation fusionnée et sa variance&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Informations : <span class="math-inline">1/A = 1</span>, <span class="math-inline">1/B = 4</span>. Somme <span class="math-inline">= 5</span>, donc <span class="math-inline">C = 1/5 = 0,20</span>.</p>
+        <div class="math">
+          c = C·(a/A + b/B) = 0,20 · (20/1 + 22/0,25) = 0,20 · (20 + 88) = 0,20 · 108 = 21,6 °C
+        </div>
+        <p>
+          L'estimation <span class="math-inline">21,6 °C</span> penche vers le capteur le plus précis (le
+          second), et la variance fusionnée <span class="math-inline">0,20</span> est plus petite que les
+          deux (0,25 et 1,0). Vérification par le gain : <span class="math-inline">K = A/(A+B) = 1/1,25 = 0,8</span>,
+          d'où <span class="math-inline">c = 20 + 0,8·(22 − 20) = 21,6</span>. ✓
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Le rôle de la corrélation dans le conditionnement</h3>
+      <p>
+        Dans la formule <span class="math-inline">Σ' = Σ₂₂ − Σ₂₁ Σ₁₁⁻¹ Σ₁₂</span>, que devient la variance
+        conditionnelle de <span class="math-inline">x₂</span> si <span class="math-inline">x₁</span> et
+        <span class="math-inline">x₂</span> sont décorrélés (<span class="math-inline">Σ₂₁ = 0</span>)&nbsp;?
+        Qu'en conclure sur l'utilité d'observer <span class="math-inline">x₁</span>&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Si <span class="math-inline">Σ₂₁ = 0</span>, le terme soustrait s'annule et
+          <span class="math-inline">Σ' = Σ₂₂</span> : la variance de <span class="math-inline">x₂</span> ne
+          change pas. Observer <span class="math-inline">x₁</span> n'apprend <em>rien</em> sur
+          <span class="math-inline">x₂</span> quand les deux sont décorrélés — c'est cohérent avec le §2.1 :
+          pour des gaussiennes, décorrélé = indépendant. Toute l'information transite par les termes croisés
+          <span class="math-inline">Σ₂₁</span>. Un capteur n'améliore une composante cachée que dans la mesure
+          où celle-ci est <em>corrélée</em> à ce qu'il mesure.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Gaussienne : <span class="math-inline">p(x) ∝ exp(−½ (x−μ)ᵀ Σ⁻¹ (x−μ))</span>. Le cœur est la distance de Mahalanobis&nbsp;; <span class="math-inline">Σ⁻¹</span> est l'<strong>information</strong>.</li>
+        <li>En 2D, lignes de niveau = <strong>ellipses</strong> orientées par les axes propres de <span class="math-inline">Σ</span>, de demi-axes <span class="math-inline">√λ</span>.</li>
+        <li>Trois clôtures : <strong>linéaire</strong> (→ prédiction), <strong>marginalisation</strong> (rayer lignes/colonnes), <strong>conditionnement</strong> (→ correction).</li>
+        <li>Conditionner : <span class="math-inline">μ' = μ₂ + Σ₂₁Σ₁₁⁻¹(z−μ₁)</span>, <span class="math-inline">Σ' = Σ₂₂ − Σ₂₁Σ₁₁⁻¹Σ₁₂</span> — un gain qui recale, une covariance qui diminue.</li>
+        <li>Fusion scalaire : informations additives <span class="math-inline">1/C = 1/A + 1/B</span>, et forme gain <span class="math-inline">c = a + K(b−a)</span>, <span class="math-inline">K = A/(A+B)</span>, <span class="math-inline">C = (1−K)A</span> — la mise à jour de Kalman en miniature.</li>
+        <li>Une gaussienne tient en <strong>deux paramètres</strong> <span class="math-inline">(x, P)</span> : c'est ce qui rend le filtre calculable en temps réel.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>Boîte à outils probabiliste</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>Le filtrage bayésien récursif</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>
