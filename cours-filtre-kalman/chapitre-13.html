@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 13 — Fusion multi-fréquences : capteurs à cadences différentes</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 13 · Application</span><br>Fusion multi-fréquences : capteurs à cadences différentes</h1>
+
+    <div class="callout note">
+      <strong>Le cas « filtre complet » du chapitre 12.</strong> Jusqu'ici, un seul capteur à cadence fixe.
+      La réalité est plus riche : un capteur <em>rapide</em> mais bruité, un capteur <em>lent</em> mais
+      précis, des trames qui manquent, des horloges qui ne battent pas ensemble. Ce chapitre montre comment le
+      filtre de Kalman fusionne des mesures de <strong>fréquences différentes</strong> — proprement,
+      optimalement, et sans logique ad hoc.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre le rythme fondamental : <strong>prédire toujours, corriger quand une mesure arrive</strong>.</li>
+        <li>Voir pourquoi il ne faut ni ré-échantillonner le rapide ni « tenir » la valeur du lent.</li>
+        <li>Fusionner plusieurs capteurs par <strong>mises à jour scalaires séquentielles</strong> (chacun son <span class="math-inline">H</span>, son <span class="math-inline">R</span>).</li>
+        <li>Lire la « respiration » de la covariance et s'en servir pour diagnostiquer et <em>gater</em>.</li>
+        <li>Gérer les cas subtils : pas de temps variable, mesures en retard, aberrants — et la structure sur PLC.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le rythme : prédire toujours, corriger si disponible</h2>
+    <p>
+      L'idée qui débloque tout : dans le filtre de Kalman, <strong>prédiction et correction sont deux étapes
+      séparées</strong> (chapitres 6 et 7). Rien n'oblige à les faire ensemble. On peut donc <em>prédire à
+      chaque cycle</em> (à la cadence rapide de l'OB) et n'<em>appliquer une correction que lorsqu'une mesure
+      est effectivement présente</em> — quelle que soit sa cadence.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-multi-schedule.svg" alt="Chronogramme à trois lignes sur un axe de temps de 0 à 6 secondes. Ligne 'prédiction' : des tirets serrés à chaque cycle. Ligne 'capteur rapide 100 Hz' : des points denses à chaque cycle, avec un trou encadré entre 2,5 et 3,3 s marqué 'absent (panne / trame perdue)'. Ligne 'capteur lent 4 Hz' : des points espacés tous les 0,25 s. Une annotation résume : prédire TOUJOURS, corriger SI une mesure est présente.">
+      <figcaption><b>Figure 13.1.</b> Le rythme de la fusion multi-fréquences. La <b>prédiction</b> tourne à
+      chaque cycle de l'OB ; chaque <b>capteur</b> ne déclenche une correction que lorsqu'il livre une mesure.
+      Le capteur rapide corrige presque tous les cycles, le lent seulement de loin en loin — et quand une
+      mesure manque (trou), on saute simplement sa correction. Aucune synchronisation forcée, aucune valeur
+      inventée.</figcaption>
+    </figure>
+
+    <p>
+      Ce découplage règle d'un coup <strong>trois</strong> problèmes qu'on croit souvent distincts :
+    </p>
+    <ul>
+      <li><strong>Cadences différentes</strong> : chaque capteur corrige à son propre rythme.</li>
+      <li><strong>Mesures manquantes</strong> : on saute la correction, on laisse la prédiction seule faire
+        avancer l'état — <span class="math-inline">P</span> croît, honnêtement.</li>
+      <li><strong>Arrivées irrégulières</strong> : peu importe <em>quand</em> une mesure tombe, on la traite
+        au cycle où elle arrive.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        Le filtre ne « perd » jamais les cycles sans mesure : il continue de propager l'état par le modèle. Un
+        capteur lent n'est donc pas « en retard » — entre deux de ses mesures, c'est le modèle (et les autres
+        capteurs) qui tiennent l'estimation à jour. Le capteur lent n'a qu'à <em>recaler</em> de temps en
+        temps.
+      </p>
+    </div>
+
+    <h2>2. Ni ré-échantillonner, ni « tenir » la valeur</h2>
+    <p>
+      Face à des cadences différentes, deux réflexes naïfs — et tous deux nuisibles.
+    </p>
+    <p>
+      <strong>Ré-échantillonner le rapide à la cadence lente</strong> (ne garder qu'un point sur
+      <span class="math-inline">N</span>) jette de l'information : tout ce que le capteur rapide voyait entre
+      deux points lents est perdu. On paie un capteur rapide pour ne pas s'en servir.
+    </p>
+    <p>
+      <strong>« Tenir » (bloquer) la dernière valeur du lent</strong> et l'injecter à chaque cycle rapide comme
+      si elle était fraîche est pire : on présente <span class="math-inline">N</span> fois la
+      <em>même</em> mesure comme <span class="math-inline">N</span> mesures indépendantes. Le filtre croit
+      recevoir <span class="math-inline">N</span> fois plus d'information qu'en réalité, sous-estime son
+      incertitude, devient <strong>trop sûr de lui</strong> — et l'innovation cesse d'être blanche
+      (chapitre 8). C'est une violation directe de l'hypothèse d'indépendance.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        « Tenir » une mesure lente (zero-order hold) et la traiter comme neuve à chaque cycle est l'erreur la
+        plus commune de la fusion multi-cadence. Elle ne provoque pas de plantage — juste un filtre
+        silencieusement surconfiant, que le test de cohérence (NIS &gt; 1, chapitre 12) démasque. La bonne
+        réponse est de <em>ne corriger qu'aux instants où une vraie mesure arrive</em>.
+      </p>
+    </div>
+
+    <h2>3. Fusionner plusieurs capteurs : mises à jour scalaires séquentielles</h2>
+    <p>
+      Chaque capteur a sa propre relation à l'état — sa matrice d'observation
+      <span class="math-inline">Hᵢ</span> — et son propre bruit <span class="math-inline">Rᵢ</span>. Deux
+      inclinomètres d'angle : <span class="math-inline">H = [1, 0]</span> chacun, mais
+      <span class="math-inline">R</span> différents. Un capteur d'angle et un capteur de vitesse :
+      <span class="math-inline">H = [1, 0]</span> pour l'un, <span class="math-inline">H = [0, 1]</span> pour
+      l'autre. Le filtre les fusionne <em>automatiquement</em>, en pondérant chacun par sa précision — c'est
+      <span class="math-inline">H</span> et <span class="math-inline">R</span> qui font tout, aucune logique de
+      fusion à écrire.
+    </p>
+    <p>
+      Quand plusieurs mesures tombent au même cycle, on les applique <strong>l'une après l'autre</strong> :
+      corriger avec la première, puis re-corriger le résultat avec la seconde. Si leurs bruits sont
+      indépendants (<span class="math-inline">R</span> globale diagonale), l'ordre n'a aucune importance et le
+      résultat est identique à une mise à jour vectorielle unique — mais chaque étape n'inverse qu'un
+      <strong>scalaire</strong> <span class="math-inline">S</span>, jamais une matrice. C'est le mode de fusion
+      idéal sur automate (chapitre 12).
+    </p>
+
+    <pre><code class="language-pascal">// SCL — un cycle de fusion multi-fréquences (état [θ, ω]).
+// availFast / availSlow : drapeaux positionnés quand une mesure est fraîche.
+// --- 1) Prédiction : TOUJOURS ---
+CALL kf_predict;              // x⁻ = F·x + B·u ;  P⁻ = F·P·Fᵀ + Q
+
+// --- 2) Corrections : chacune SI sa mesure est présente ---
+IF #availFast THEN
+    kf_update(z := #zFast, R := #Rfast, h0 := 1.0, h1 := 0.0); // H=[1 0]
+    #availFast := FALSE;      // consommer le drapeau
+END_IF;
+
+IF #availSlow THEN
+    kf_update(z := #zSlow, R := #Rslow, h0 := 1.0, h1 := 0.0); // capteur précis
+    #availSlow := FALSE;
+END_IF;
+
+#omEstime := #om;            // sortie, à jour à la cadence rapide</code></pre>
+
+    <div class="callout astuce">
+      <p>
+        Chaque appel <code>kf_update</code> est la mise à jour scalaire du chapitre 11 (une division par
+        <span class="math-inline">S</span>, pas d'inversion). Ajouter un troisième capteur, c'est ajouter un
+        <code>IF … kf_update(…)</code> — la structure ne grossit pas, elle s'allonge d'une ligne. On peut aussi
+        <strong>gater</strong> ici : n'appliquer la correction que si l'innovation passe un seuil de NIS (§6).
+      </p>
+    </div>
+
+    <h2>4. La covariance respire au rythme des mesures</h2>
+    <p>
+      Voici le plus bel effet de la fusion multi-cadence, et un outil de diagnostic gratuit. L'incertitude du
+      filtre — l'écart-type <span class="math-inline">√P₀₀</span> sur l'angle — <strong>monte à chaque
+      prédiction et descend à chaque correction</strong>. Avec des capteurs de cadences et de précisions
+      différentes, cela dessine une <em>dent de scie</em> révélatrice.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-multi-band.svg" alt="Écart-type de l'estimation d'angle (racine de P00) en fonction du temps, sur 6 secondes. La courbe est une dent de scie : elle monte doucement entre les corrections et chute à chaque mise à jour. En régime nominal les dents sont petites (autour de 0,25°). Entre 2,5 et 3,3 s, dans une zone ombrée marquée 'capteur rapide absent', les dents deviennent nettement plus grandes (jusqu'à ~1,1°) car seules les rares mises à jour lentes recalent le filtre, puis elles redeviennent petites une fois le capteur rapide revenu.">
+      <figcaption><b>Figure 13.2.</b> L'incertitude « respire ». Chaque correction rapide fait chuter
+      <span class="math-inline">√P₀₀</span> ; les mises à jour lentes (précises) creusent des chutes plus
+      profondes. Quand le capteur rapide <b>disparaît</b> (zone ombrée), seules les mesures lentes recalent le
+      filtre : <span class="math-inline">P</span> gonfle entre elles (dents ~4× plus hautes), puis se
+      resserre au retour du rapide. La covariance reflète <em>fidèlement</em> ce que le filtre sait, à chaque
+      instant.</figcaption>
+    </figure>
+
+    <div class="callout note">
+      <p>
+        Cette respiration n'est pas un défaut : c'est le filtre qui dit <em>honnêtement</em> « je suis moins
+        sûr en ce moment ». Un système en aval peut lire ce <span class="math-inline">P</span> pour décider —
+        ralentir un mouvement quand l'incertitude monte, déclencher une alarme si elle dépasse un seuil,
+        pondérer une commande. C'est une des raisons de garder le <strong>filtre complet</strong> plutôt qu'un
+        gain constant (chapitre 12) : l'incertitude vivante est exploitable.
+      </p>
+    </div>
+
+    <h2>5. Fusion vs source unique</h2>
+    <p>
+      Que gagne-t-on vraiment&nbsp;? Comparons, sur la vitesse estimée, le filtre <strong>fusionné</strong> à
+      deux filtres n'utilisant qu'<em>une</em> source.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-multi-fusion.svg" alt="Vitesse angulaire en fonction du temps, sinusoïdale. Quatre courbes : la vraie vitesse (tirets), le filtre 'lent seul' (violet, en escalier grossier et en retard car peu de mises à jour), le filtre 'rapide seul' (bleu, qui suit bien mais devient plat et faux dans la zone de dropout), et le filtre 'fusion' (vert épais) qui suit fidèlement la vraie vitesse partout, y compris pendant le dropout du capteur rapide.">
+      <figcaption><b>Figure 13.3.</b> La fusion (vert) suit la vitesse vraie <b>partout</b>. Le
+      <span class="math-inline">lent seul</span> (violet) est grossier et en retard — trop peu de mises à jour
+      pour reconstruire la dynamique. Le <span class="math-inline">rapide seul</span> (bleu) est bon… jusqu'au
+      <b>dropout</b>, où, privé de mesure, il se fige sur sa dernière vitesse et dérive. La fusion, elle, tient
+      pendant le dropout grâce aux mesures lentes qui continuent d'arriver. (RMSE vitesse : fusion ≈ 6 °/s
+      contre ≈ 14 °/s pour le rapide seul.)</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        C'est l'intuition du <strong>filtrage complémentaire</strong>, rendue optimale par Kalman : le capteur
+        rapide fournit le <em>détail et la réactivité</em> (hautes fréquences), le capteur lent fournit
+        l'<em>ancrage et la précision absolue</em> (basses fréquences). Le filtre combine les deux bandes
+        automatiquement, via <span class="math-inline">Q</span>, <span class="math-inline">R</span> et les
+        cadences — sans qu'on ait à concevoir le moindre filtre passe-haut/passe-bas.
+      </p>
+    </div>
+
+    <h2>6. Les cas subtils</h2>
+
+    <h3>6.1 Pas de temps variable (gigue, événementiel)</h3>
+    <p>
+      Si les mesures n'arrivent pas à intervalle régulier — échantillonnage événementiel, gigue réseau — alors
+      <span class="math-inline">dt</span> change d'un pas à l'autre. Il faut <strong>recalculer
+      <span class="math-inline">F(dt)</span> et <span class="math-inline">Q(dt)</span> avec le
+      <span class="math-inline">dt</span> réellement écoulé</strong> (mesuré par horodatage), à chaque
+      prédiction. C'est précisément ce qui casse l'hypothèse LTI du régime permanent : le gain n'est plus
+      constant, et l'on a besoin du filtre complet.
+    </p>
+
+    <pre><code class="language-pascal">// SCL — prédiction à pas variable : F et Q recalculés avec le dt réel.
+#dt := (#tNow - #tPrev);            // horodatage → temps écoulé réel
+#tPrev := #tNow;
+// F(dt)
+th_p := #th + #om*#dt;   om_p := #om;
+// Q(dt) = σα²·[[dt⁴/4, dt³/2],[dt³/2, dt²]]  (recalculé à chaque pas)
+q00 := #sa2*(#dt*#dt*#dt*#dt)/4.0;
+q01 := #sa2*(#dt*#dt*#dt)/2.0;
+q11 := #sa2*(#dt*#dt);
+// … puis P⁻ = F·P·Fᵀ + Q comme d'habitude</code></pre>
+
+    <h3>6.2 Mesures en retard (hors séquence)</h3>
+    <p>
+      Un capteur lent (vision, calcul long) peut livrer une valeur <em>datée du passé</em> : elle décrit
+      l'état d'il y a quelques cycles, mais n'arrive que maintenant. Si la latence est inférieure à un cycle
+      rapide, on la traite comme actuelle sans dommage. Sinon, il faut de la <strong>rétrodiction</strong> :
+      garder en mémoire l'état à l'instant de la mesure, l'y corriger, puis re-propager jusqu'au présent. On
+      l'a évoqué au chapitre 11 pour le temps mort ; c'est le même mécanisme, déclenché à l'arrivée d'une
+      mesure hors séquence.
+    </p>
+
+    <h3>6.3 Rejet d'aberrants (gating) par la NIS</h3>
+    <p>
+      Avec plusieurs capteurs, l'un peut délivrer une valeur fausse (décrochage, reflet, glitch). On la filtre
+      <strong>avant</strong> de corriger, par un test de <strong>NIS</strong> sur son innovation
+      (chapitre 12) : si <span class="math-inline">yᵀ S⁻¹ y</span> dépasse un seuil du
+      <span class="math-inline">χ²</span> (par exemple la valeur à 99 %), la mesure est jugée incohérente et
+      <em>rejetée</em> — on saute sa correction. C'est un filet de sécurité capital en fusion, et il exige la
+      valeur <em>vivante</em> de <span class="math-inline">S</span> : encore une raison du filtre complet.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        Le gating est une arme à double tranchant : un seuil trop serré rejette de bonnes mesures (le filtre
+        s'aveugle et diverge lentement), trop lâche il laisse passer les aberrants. On le règle sur des données
+        réelles, et l'on <strong>compte</strong> les rejets : un capteur dont les mesures sont massivement
+        gatées n'est pas « filtré », il est <em>en panne</em> — mieux vaut le signaler que le masquer.
+      </p>
+    </div>
+
+    <h2>7. La structure sur PLC</h2>
+    <p>
+      On assemble tout dans le FB appelé à la cadence rapide : une prédiction inconditionnelle, puis une
+      correction conditionnelle par capteur, pilotée par des <strong>drapeaux de disponibilité</strong>.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-multi-plc.svg" alt="Schéma d'implémentation. Dans un OB cyclique rapide appelé une fois par cycle, un bloc PRÉDIRE (toujours) alimente deux blocs de correction conditionnels : CORRIGER rapide (100 Hz, si dispo, update scalaire) et CORRIGER lent (4 Hz, si dispo, update scalaire), pilotés par des drapeaux de disponibilité par capteur. Les deux corrections mettent à jour l'état x, P et produisent la vitesse estimée. Un encart indique que si le rapport de fréquences est entier et fixe, le gain devient périodique et l'on peut précalculer un jeu de gains constants, un par phase du cycle.">
+      <figcaption><b>Figure 13.4.</b> La structure sur automate. <b>Prédire</b> à chaque cycle ; <b>corriger</b>
+      chaque capteur seulement quand son drapeau de disponibilité est levé (mise à jour scalaire, sans
+      inversion). Ajouter un capteur = ajouter un bloc conditionnel. Et si le rapport des cadences est
+      <b>entier et fixe</b>, le gain redevient <em>périodique</em> : on peut précalculer hors ligne un petit
+      jeu de gains constants (un par phase du cycle) — l'idée du chapitre 12, étendue au multi-cadence.</figcaption>
+    </figure>
+
+    <div class="callout note">
+      <p>
+        <strong>Constant-gain périodique.</strong> Quand le lent tombe exactement tous les
+        <span class="math-inline">N</span> cycles rapides, la séquence des gains de Kalman est
+        <em>périodique</em> de période <span class="math-inline">N</span> : le gain du cycle « avec mesure
+        lente » diffère de celui des <span class="math-inline">N−1</span> cycles « sans ». On peut donc
+        résoudre hors ligne (Riccati périodique) et n'embarquer que <span class="math-inline">N</span> jeux de
+        gains constants, indexés par la phase du cycle. On garde la légèreté du gain constant (chapitre 12) en
+        gérant le multi-cadence — tant que les cadences restent fixes. Dès qu'elles varient (§6.1) ou qu'il
+        faut gater (§6.3), on revient au filtre complet.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Le piège du « tenir la valeur »</h3>
+      <p>
+        Un collègue, pour « simplifier », bloque la dernière mesure du capteur lent et l'injecte à chaque cycle
+        rapide comme une mesure normale. Son filtre a l'air plus lisse. Quel problème couve, et comment le
+        détecter&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Il présente la même mesure <span class="math-inline">N</span> fois comme
+          <span class="math-inline">N</span> mesures indépendantes → le filtre <strong>sur-estime</strong>
+          l'information reçue, <span class="math-inline">P</span> chute trop, le filtre devient
+          <em>surconfiant</em>. « Plus lisse » est en fait « trop sûr de lui » : il ignorera les vraies
+          variations et pourra diverger. Détection : la <strong>NIS</strong> passe durablement
+          <em>au-dessus</em> de 1 (chapitre 12), et l'innovation n'est plus blanche (autocorrélée à la période
+          du capteur lent). Remède : ne corriger avec le lent qu'aux instants où il livre <em>réellement</em>
+          une mesure fraîche.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Fusionner un capteur d'angle et un capteur de vitesse</h3>
+      <p>
+        On dispose, sur l'état <span class="math-inline">[θ, ω]</span>, d'un inclinomètre (angle, 50 Hz) et
+        d'un capteur de vitesse angulaire (100 Hz). Donnez les <span class="math-inline">Hᵢ</span> de chaque
+        capteur et décrivez le cycle de fusion.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          L'inclinomètre voit l'angle : <span class="math-inline">H_θ = [1, 0]</span>,
+          <span class="math-inline">R_θ = σθ²</span>. Le capteur de vitesse voit
+          <span class="math-inline">ω</span> : <span class="math-inline">H_ω = [0, 1]</span>,
+          <span class="math-inline">R_ω = σω²</span>. Chaque cycle (100 Hz) : <strong>prédire</strong> ;
+          <strong>corriger</strong> avec la vitesse (présente chaque cycle) ; <strong>corriger</strong> avec
+          l'angle un cycle sur deux (50 Hz). Deux mises à jour scalaires, dans l'ordre qu'on veut (bruits
+          indépendants). Le capteur de vitesse rend <span class="math-inline">ω</span> directement observable —
+          l'estimation de vitesse devient excellente, et l'angle intègre proprement une vitesse mesurée plutôt
+          que dérivée. (C'est le principe de la fusion IMU, sujet du prochain chapitre.)
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Prédire toujours, corriger si disponible</strong> : prédiction et correction sont découplées → cadences différentes, mesures manquantes et arrivées irrégulières se gèrent d'un même mécanisme.</li>
+        <li>Ni <strong>ré-échantillonner</strong> le rapide (perte d'info) ni <strong>« tenir »</strong> le lent (surconfiance, innovation non blanche) : ne corriger qu'aux vraies arrivées.</li>
+        <li>Plusieurs capteurs = plusieurs <span class="math-inline">(Hᵢ, Rᵢ)</span>, fusionnés par <strong>mises à jour scalaires séquentielles</strong> (ordre indifférent, aucune inversion).</li>
+        <li>La covariance <strong>respire</strong> (dent de scie) : elle monte sans mesure, chute à chaque correction, gonfle pendant un dropout. Incertitude vivante = diagnostic + décision en aval.</li>
+        <li>La <strong>fusion</strong> bat toute source unique : le rapide donne la réactivité, le lent l'ancrage (filtrage complémentaire optimal).</li>
+        <li>Cas subtils : <span class="math-inline">dt</span> variable → recalculer <span class="math-inline">F(dt), Q(dt)</span> ; mesures en retard → rétrodiction ; aberrants → <strong>gating</strong> par NIS. Tous exigent le filtre complet.</li>
+        <li>Sur PLC : prédire + corrections conditionnelles par drapeaux ; cadences entières fixes → <strong>gain périodique</strong> précalculable (extension du chapitre 12).</li>
+      </ul>
+    </div>
+
+    <div class="callout histoire">
+      <p>
+        <strong>La suite.</strong> L'exercice 2 a ouvert la porte : fusionner un capteur d'angle et un capteur
+        de vitesse, c'est déjà une mini-<strong>IMU</strong>. Le prochain chapitre appliqué combinera
+        inclinomètre et gyromètre — complémentarité basses/hautes fréquences, estimation du biais de
+        gyromètre dans l'état — puis abordera le non-linéaire concret (EKF/UKF) sur un cas d'attitude.
+      </p>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-12.html"><span class="lbl">← Précédent</span>Le même filtre sur PLC</a>
+    <a class="next" href="index.html"><span class="lbl">↩ Sommaire</span>Tous les chapitres</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>
