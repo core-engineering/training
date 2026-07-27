@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 12 — Le même filtre sur PLC : réglage, cohérence, structure</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 12 · Application</span><br>Le même filtre sur PLC : réglage, cohérence, structure</h1>
+
+    <div class="callout note">
+      <strong>Suite directe du chapitre 11.</strong> Le modèle est posé ; reste à le <em>faire vivre</em> sur
+      un automate. On règle <span class="math-inline">Q</span> et <span class="math-inline">R</span>, on
+      <em>vérifie</em> que le filtre ne se ment pas à lui-même, on le blinde numériquement, et — question
+      centrale — on choisit la <strong>structure d'implémentation la plus adaptée au PLC</strong>, en
+      expliquant pourquoi.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Régler <span class="math-inline">R</span> (mesuré) et <span class="math-inline">σα</span>/<span class="math-inline">Q</span> (curseur) avec méthode.</li>
+        <li>Vérifier la <strong>cohérence</strong> par la NIS et la blancheur de l'innovation — le vrai test d'un filtre embarqué.</li>
+        <li>Assurer la <strong>stabilité numérique</strong> sur automate : forme de Joseph, <code>LREAL</code>, mises à jour scalaires séquentielles.</li>
+        <li>Choisir la structure : filtre complet vs <strong>observateur à gain constant</strong> (α-β), et savoir <em>pourquoi</em> le second gagne presque toujours sur PLC.</li>
+      </ul>
+    </div>
+
+    <h2>1. Régler R, puis Q</h2>
+    <p>
+      Les deux covariances ne se règlent pas de la même façon (chapitre 10), et l'ordre compte.
+    </p>
+    <p>
+      <strong><span class="math-inline">R = σθ²</span> d'abord</strong>, parce qu'il est mesurable. On fige le
+      capteur, on enregistre quelques milliers de points, on calcule la variance. Un inclinomètre annoncé à
+      <span class="math-inline">0,4°</span> de bruit RMS donne <span class="math-inline">R ≈ 0,16 deg²</span>.
+      C'est une donnée du capteur, pas un curseur.
+    </p>
+    <p>
+      <strong><span class="math-inline">σα</span> (donc <span class="math-inline">Q</span>) ensuite</strong>,
+      comme unique curseur. On part de la physique (exercice 1 du chapitre 11) puis on affine avec la règle du
+      chapitre 10 :
+    </p>
+    <ul>
+      <li><strong>Petit <span class="math-inline">σα</span></strong> : on croit le modèle → sortie très lisse
+        mais <em>lente</em> à réagir (traîne aux vraies variations de vitesse).</li>
+      <li><strong>Grand <span class="math-inline">σα</span></strong> : on se méfie du modèle → filtre
+        <em>réactif</em> mais qui laisse repasser du bruit.</li>
+    </ul>
+    <p>
+      Le bon <span class="math-inline">σα</span> n'est pas deviné : il est <em>vérifié</em>. C'est l'objet de
+      la section suivante.
+    </p>
+
+    <h2>2. Vérifier la cohérence</h2>
+    <p>
+      Un filtre embarqué qui « a l'air de marcher » n'est pas une preuve. Le critère rigoureux est la
+      <strong>cohérence</strong> : l'incertitude que le filtre <em>annonce</em> (<span class="math-inline">S</span>)
+      doit correspondre à l'erreur qu'il <em>commet</em> réellement. On le teste sans vérité terrain, en ligne,
+      grâce à la <strong>NIS</strong> (chapitre 10) — calculée ici sur la mesure d'angle scalaire :
+    </p>
+    <div class="math">
+      NISₖ = yₖ² / Sₖ&nbsp;&nbsp;&nbsp;&nbsp;(y = innovation, S = P₀₀⁻ + R)
+    </div>
+    <p>
+      Pour un filtre cohérent, la NIS suit une loi du <span class="math-inline">χ²</span> à 1 degré de liberté
+      (mesure scalaire), de moyenne 1. On en trace la moyenne glissante et on vérifie qu'elle reste dans la
+      bande de confiance à 95 %.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-incl-nis.svg" alt="Moyenne glissante de la NIS en fonction du temps, pour trois réglages. Une bande horizontale claire matérialise la zone de cohérence 95 % autour de la cible 1. La courbe 'Q trop petit' (ambre) reste largement au-dessus de la bande (entre 2 et 4,5) : le filtre est trop optimiste. La courbe 'Q correct' (vert) oscille autour de 1, à l'intérieur ou au bord de la bande. La courbe 'Q trop grand' (bleu) reste sous la bande, vers 0,3 : le filtre est trop pessimiste.">
+      <figcaption><b>Figure 12.1.</b> La NIS diagnostique le réglage sans vérité terrain. <b>Q trop petit</b>
+      (ambre) → NIS au-dessus de la bande : le filtre est <em>trop sûr de lui</em>, ses innovations sont plus
+      grandes que <span class="math-inline">S</span> ne le prévoit. <b>Q trop grand</b> (bleu) → NIS
+      sous la bande : filtre <em>trop pessimiste</em>. <b>Q correct</b> (vert) → NIS autour de 1. On ajuste
+      <span class="math-inline">σα</span> jusqu'à faire tomber la courbe dans la bande.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        On complète la NIS par un test de <strong>blancheur</strong> : l'autocorrélation de la suite des
+        innovations doit être quasi nulle hors du décalage zéro (chapitre 8). Une innovation encore
+        <em>corrélée dans le temps</em> signale de l'information non exploitée — modèle trop pauvre (passer à
+        l'ordre 2), retard non modélisé, ou biais. La NIS règle l'<em>amplitude</em> de
+        <span class="math-inline">Q</span> ; la blancheur juge la <em>structure</em> du modèle.
+      </p>
+    </div>
+
+    <div class="callout piege">
+      <p>
+        La NIS moyenne <em>au-dessus</em> de 1 est le cas dangereux : le filtre sous-estime son erreur, et tout
+        ce qui se fie à son <span class="math-inline">P</span> (une porte de validation, une décision de
+        sécurité) hérite d'une confiance injustifiée. En cas de doute sur PLC, préférez pécher par
+        <span class="math-inline">Q</span> légèrement trop grand (filtre un peu pessimiste mais honnête) que
+        trop petit.
+      </p>
+    </div>
+
+    <h2>3. Stabilité numérique sur automate</h2>
+    <p>
+      Un filtre qui tourne des semaines sans redémarrage doit résister aux arrondis. Les parades du chapitre 10,
+      déclinées pour un PLC :
+    </p>
+    <ul>
+      <li><strong>Tout en <code>LREAL</code></strong> (double précision). Les <code>REAL</code> (32 bits) sont
+        proscrits pour les covariances : les produits <span class="math-inline">F·P·Fᵀ</span> perdent trop de
+        chiffres significatifs et <span class="math-inline">P</span> dérive.</li>
+      <li><strong>Forme de Joseph</strong> pour la mise à jour de <span class="math-inline">P</span> : une somme
+        de termes positifs, symétrique définie positive par construction, là où la forme courte
+        <span class="math-inline">(I−KH)P⁻</span> peut devenir négative par arrondi.</li>
+      <li><strong>Resymétrisation</strong> : forcer <span class="math-inline">P ← (P + Pᵀ)/2</span> à chaque
+        pas coûte quelques opérations et supprime la dérive d'asymétrie.</li>
+      <li><strong>Mises à jour scalaires séquentielles</strong> : si plusieurs capteurs, traiter chaque mesure
+        <em>l'une après l'autre</em> (bruits indépendants ⇒ <span class="math-inline">R</span> diagonale). Chaque
+        correction n'inverse qu'un scalaire (<span class="math-inline">S</span>) — jamais de matrice à inverser
+        sur le PLC.</li>
+      <li><strong>dt fixe et garde-fous</strong> : le pas vient de l'OB cyclique, il est constant. Sauter la
+        correction si la mesure manque (et laisser <span class="math-inline">P</span> croître), plutôt que de
+        corriger avec une valeur périmée.</li>
+    </ul>
+
+    <pre><code class="language-pascal">// SCL — mise à jour de Joseph pour le 2×2 (robustesse longue durée).
+// P = M·P⁻·Mᵀ + K·R·Kᵀ , avec M = (I - K·H) et H = [1 0].
+// D'où M = [[1-k0, 0], [-k1, 1]] ; p**_p = P⁻ issu de la prédiction.
+m00 := 1.0 - k0;  m01 := 0.0;
+m10 := -k1;       m11 := 1.0;
+// T = M·P⁻
+t00 := m00*p00_p + m01*p10_p;   t01 := m00*p01_p + m01*p11_p;
+t10 := m10*p00_p + m11*p10_p;   t11 := m10*p01_p + m11*p11_p;
+// P = T·Mᵀ + K·R·Kᵀ  (R scalaire)
+#P00 := t00*m00 + t01*m01 + k0*#R*k0;
+#P01 := t00*m10 + t01*m11 + k0*#R*k1;
+#P10 := t10*m00 + t11*m01 + k1*#R*k0;
+#P11 := t10*m10 + t11*m11 + k1*#R*k1;
+// resymétrisation défensive
+#P01 := 0.5*(#P01 + #P10);   #P10 := #P01;</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Cohérence des unités partout.</strong> Sur PLC on jongle avec des degrés, des radians, des
+        incréments codeur, des millisecondes. <span class="math-inline">F</span>, <span class="math-inline">H</span>,
+        <span class="math-inline">Q</span>, <span class="math-inline">R</span> et <span class="math-inline">dt</span>
+        doivent partager un système d'unités unique. Une <span class="math-inline">Q</span> en deg² et une
+        <span class="math-inline">R</span> en rad² : tout compile, le filtre est faux sans le moindre message
+        d'erreur. Fixez les unités <em>et documentez-les dans l'UDT</em>.
+      </p>
+    </div>
+
+    <h2>4. La structure la plus intéressante pour PLC</h2>
+    <p>
+      Voici le cœur de ce chapitre. Faut-il implémenter le <strong>filtre complet</strong> — prédiction et
+      correction de <span class="math-inline">P</span>, gain recalculé à chaque cycle — ou existe-t-il mieux
+      adapté à un automate ? La réponse tient à une observation faite au chapitre 9 : <em>sur un PLC, les
+      conditions du régime permanent sont réunies presque idéalement</em>.
+    </p>
+
+    <h3>4.1 Pourquoi le régime permanent s'impose sur PLC</h3>
+    <ul>
+      <li>L'OB cyclique tourne à <strong>période fixe</strong> : <span class="math-inline">dt</span> est
+        constant, donc <span class="math-inline">F</span> et <span class="math-inline">Q</span> aussi. Le
+        système est exactement <strong>invariant dans le temps</strong> (LTI) — l'hypothèse même du régime
+        permanent.</li>
+      <li><span class="math-inline">R</span> est fixe (capteur donné), <span class="math-inline">Q</span> est
+        figé une fois réglé.</li>
+      <li>Donc (chapitre 9) <span class="math-inline">P</span> et le gain <strong>convergent vers des
+        constantes</strong> <span class="math-inline">P∞</span>, <span class="math-inline">K∞</span>. Or
+        <span class="math-inline">P</span> et <span class="math-inline">K</span> <em>ne dépendent pas des
+        mesures</em> : on peut les calculer <strong>entièrement hors ligne</strong>.</li>
+    </ul>
+    <p>
+      L'idée décisive : <strong>résoudre l'équation de Riccati une seule fois, sur un PC</strong> (Python,
+      quelques lignes), pour obtenir le gain constant <span class="math-inline">K∞</span> ; puis n'implémenter
+      sur le PLC qu'un <strong>observateur à gain constant</strong> — la prédiction et la correction de l'état,
+      avec un gain figé. Plus de <span class="math-inline">P</span>, plus de Riccati, plus d'inversion en ligne.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-incl-plc.svg" alt="Schéma d'implémentation sur automate. Un cadre représente l'OB cyclique appelé une fois par cycle. À l'intérieur, un bloc fonctionnel 'IncliVitesse' reçoit la mesure z de l'inclinomètre et la commande u ; il exécute trois lignes : prédiction x⁻ = F·x + B·u, innovation y = z − H·x⁻, correction x = x⁻ + K∞·y, avec des gains K∞ constants notés alpha et beta. Sa sortie est la vitesse estimée qui part vers la régulation. L'état x est mémorisé dans la statique du FB et reboucle vers le cycle suivant. Un encart en bas rappelle que hors ligne, on résout l'équation de Riccati (DARE) une seule fois pour obtenir K∞, sans aucune matrice à inverser en ligne.">
+      <figcaption><b>Figure 12.2.</b> L'observateur à gain constant sur PLC. Le FB, appelé une fois par cycle,
+      n'exécute que trois lignes : prédire, innover, corriger avec le gain <b>constant</b>
+      <span class="math-inline">K∞ = (α, β)</span>. Toute la lourdeur (Riccati, covariance) est faite
+      <b>hors ligne, une seule fois</b>. Résultat : un observateur déterministe, minimal, et numériquement
+      inattaquable.</figcaption>
+    </figure>
+
+    <h3>4.2 C'est le filtre α-β</h3>
+    <p>
+      Cet observateur à gain constant sur l'état <span class="math-inline">[θ, ω]</span> porte un nom
+      historique : le <strong>filtre α-β</strong>. Ses deux gains constants
+      <span class="math-inline">α</span> (sur l'angle) et <span class="math-inline">β</span> (sur la vitesse)
+      <em>sont</em> le gain de Kalman en régime permanent. La récurrence par cycle se réduit à :
+    </p>
+    <div class="math">
+      θ⁻ = θ + ω·dt&nbsp;&nbsp;(+ ½·u·dt²)&nbsp;&nbsp;&nbsp;&nbsp;ω⁻ = ω&nbsp;&nbsp;(+ u·dt)<br>
+      y = z − θ⁻<br>
+      θ = θ⁻ + α·y&nbsp;&nbsp;&nbsp;&nbsp;ω = ω⁻ + (β/dt)·y
+    </div>
+    <p>
+      L'ordre 2 <span class="math-inline">[θ, ω, α]</span> donne de la même façon le <strong>filtre
+      α-β-γ</strong>, avec un troisième gain constant sur l'accélération. Une relation de conception classique
+      (Benedict-Bordner) lie les deux gains, <span class="math-inline">β = α² / (2 − α)</span>, ce qui ramène
+      le réglage à un seul curseur <span class="math-inline">α ∈ (0,1)</span> ; les gains strictement
+      Kalman-optimaux, eux, sortent de la résolution de la Riccati à partir de <span class="math-inline">Q</span>
+      et <span class="math-inline">R</span>.
+    </p>
+
+    <pre><code class="language-pascal">// SCL — observateur à gain constant (α-β), 1er ordre + commande.
+// alpha, beta, dt : constantes ; état #th, #om en statique du FB.
+th_p := #th + #om*#dt + 0.5*#u*#dt*#dt;   // prédiction angle (avec commande)
+om_p := #om + #u*#dt;                     // prédiction vitesse
+y    := #z - th_p;                        // innovation (scalaire)
+#th  := th_p + #alpha * y;
+#om  := om_p + (#beta / #dt) * y;         // ← vitesse estimée
+#omEstime := #om;                         // sortie vers la régulation</code></pre>
+
+    <p>
+      Comptez les opérations : une poignée de multiplications-additions, zéro inversion, zéro matrice
+      propagée. Le coût par cycle est <strong>constant et dérisoire</strong> — idéal pour un OB rapide à
+      échéance dure.
+    </p>
+
+    <div class="callout note">
+      <p>
+        <strong>Pourquoi c'est la meilleure structure sur PLC.</strong>
+      </p>
+      <ul>
+        <li><strong>Déterminisme et coût minimal</strong> : quelques MAC par cycle, temps d'exécution borné et
+          constant — ce qu'exige un OB temps réel. Pas de recalcul de covariance, pas d'inversion.</li>
+        <li><strong>Robustesse numérique totale</strong> : aucune matrice <span class="math-inline">P</span>
+          propagée en ligne ⇒ impossible de perdre symétrie ou positivité, impossible de diverger
+          numériquement. Le gain est une constante validée hors ligne.</li>
+        <li><strong>Simplicité d'audit</strong> : trois lignes de SCL, lisibles et certifiables. Précieux en
+          contexte normatif (sécurité machine).</li>
+        <li><strong>Performance identique</strong> : en régime permanent, l'observateur à gain constant produit
+          <em>exactement</em> la même estimation que le filtre de Kalman complet (chapitre 9).</li>
+      </ul>
+    </div>
+
+    <h3>4.3 Quand garder le filtre complet</h3>
+    <p>
+      L'observateur à gain constant suppose le régime permanent établi et les conditions figées. On revient au
+      <strong>filtre complet</strong> (gain recalculé) uniquement si l'une de ces conditions tombe :
+    </p>
+    <ul>
+      <li><strong>Pas de temps variable</strong> : échantillonnage événementiel, gigue importante, mesures
+        asynchrones → <span class="math-inline">F</span>/<span class="math-inline">Q</span> changent, le gain
+        doit s'adapter.</li>
+      <li><strong>Mesures manquantes / intermittentes</strong> : capteur qui décroche, réseau qui perd des
+        trames → il faut sauter des corrections et laisser <span class="math-inline">P</span> croître, ce que
+        le gain constant ne sait pas faire.</li>
+      <li><strong>Rejet d'aberrants (gating)</strong> : filtrer les mesures suspectes par un seuil sur la NIS
+        exige la valeur <em>vivante</em> de <span class="math-inline">S</span>, donc de
+        <span class="math-inline">P</span>.</li>
+      <li><strong>Transitoire critique</strong> : si la convergence initiale doit être très rapide, le fort
+        gain de départ du filtre complet verrouille plus vite l'estimation (on peut aussi simplement
+        <em>préinitialiser</em> l'observateur constant proche de la vérité).</li>
+      <li><strong><span class="math-inline">R</span> variable</strong> : bruit capteur qui change (température,
+        régime) → le gain optimal change avec lui.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Le compromis pragmatique</strong> souvent retenu sur automate : un observateur à gain constant
+        en fonctionnement nominal, <em>plus</em> une gestion simple des cas exceptionnels — geler la correction
+        (et éventuellement gonfler une incertitude scalaire de secours) quand une mesure manque ou est rejetée.
+        On garde 95 % de la simplicité du gain constant tout en survivant aux aléas, sans porter la machinerie
+        complète de la covariance. C'est ce type de structure — gain constant + garde-fous — qui équipe la
+        plupart des estimateurs de vitesse embarqués.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Diagnostiquer par la NIS</h3>
+      <p>
+        En exploitation, la moyenne glissante de la NIS de votre estimateur de vitesse se stabilise autour de
+        <span class="math-inline">0,3</span>. Le filtre est-il bien réglé ? Que faites-vous ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          NIS <span class="math-inline">≈ 0,3</span>, nettement <em>sous</em> 1 : le filtre est
+          <strong>trop pessimiste</strong> — il annonce une incertitude <span class="math-inline">S</span> plus
+          grande que ses innovations réelles. Cause typique : <span class="math-inline">Q</span> (ou
+          <span class="math-inline">R</span>) surdimensionné. On <strong>réduit <span class="math-inline">σα</span></strong>
+          progressivement jusqu'à ramener la NIS vers 1 (dans la bande). Effet secondaire bénéfique : le filtre
+          devient plus lisse. Attention à ne pas passer de l'autre côté (NIS &gt; 1, trop optimiste).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Gain constant ou filtre complet ?</h3>
+      <p>
+        Deux applications : (a) mesure d'inclinaison à 500 Hz, OB cyclique strict, capteur fiable, machine
+        certifiée sécurité ; (b) fusion d'un inclinomètre et d'un GPS dont les trames arrivent de façon
+        irrégulière et parfois manquent. Quelle structure pour chacune ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> <strong>Observateur à gain constant</strong> (α-β) : période fixe, capteur
+            stable, contraintes de temps et de certification fortes — c'est le cas d'école. Riccati résolue hors
+            ligne, trois lignes en SCL, coût borné, code auditable.</li>
+          <li><strong>(b)</strong> <strong>Filtre complet</strong> : pas de temps irrégulier (gain à adapter),
+            mesures manquantes (sauter la correction, laisser <span class="math-inline">P</span> croître),
+            fusion de deux capteurs de précisions différentes (mises à jour scalaires séquentielles). Ici la
+            covariance vivante est indispensable.</li>
+        </ul>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Régler <span class="math-inline">R</span> (mesuré, capteur immobile) <em>puis</em> <span class="math-inline">σα</span> (curseur), et <strong>vérifier</strong> — ne pas deviner.</li>
+        <li><strong>Cohérence</strong> : NIS <span class="math-inline">= y²/S ∼ χ²(1)</span> de moyenne 1, dans la bande 95 % ; au-dessus = trop optimiste (dangereux), en dessous = trop pessimiste. Compléter par la blancheur (juge la <em>structure</em> du modèle).</li>
+        <li><strong>Numérique</strong> : <code>LREAL</code>, forme de Joseph, resymétrisation, mises à jour scalaires séquentielles (jamais d'inversion de matrice), <span class="math-inline">dt</span> fixe, sauter la correction si mesure absente.</li>
+        <li><strong>Meilleure structure PLC</strong> : l'<strong>observateur à gain constant</strong> (α-β / α-β-γ). Sur PLC, <span class="math-inline">dt</span> fixe ⇒ régime permanent ⇒ <span class="math-inline">K∞</span> précalculable hors ligne (Riccati/DARE). Déterministe, minimal, numériquement inattaquable, auditable, et aussi performant que le filtre complet en régime établi.</li>
+        <li>Garder le <strong>filtre complet</strong> seulement si : <span class="math-inline">dt</span> variable, mesures manquantes, gating d'aberrants, transitoire critique, ou <span class="math-inline">R</span> variable. Compromis courant : gain constant + garde-fous.</li>
+      </ul>
+    </div>
+
+    <div class="callout histoire">
+      <p>
+        <strong>La suite.</strong> Les prochains chapitres appliqués pousseront la fusion plus loin :
+        combiner inclinomètre + gyromètre (une IMU), fusionner des capteurs de fréquences différentes, et
+        aborder le non-linéaire concret (EKF/UKF) sur un cas d'attitude. Le socle — modéliser, régler,
+        vérifier, choisir la structure — reste celui de ces deux chapitres.
+      </p>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-11.html"><span class="lbl">← Précédent</span>Vitesse depuis un inclinomètre : le modèle</a>
+    <a class="next" href="index.html"><span class="lbl">↩ Sommaire</span>Tous les chapitres</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>

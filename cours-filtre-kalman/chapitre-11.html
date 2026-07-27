@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 11 — Vitesse depuis un inclinomètre : construire le modèle</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 11 · Application</span><br>Vitesse depuis un inclinomètre : construire le modèle</h1>
+
+    <div class="callout note">
+      <strong>Première application.</strong> On quitte la théorie pure pour un problème concret et fréquent
+      en automatisme : <em>estimer une vitesse angulaire à partir d'un capteur qui ne mesure que l'angle</em>
+      (inclinomètre, capteur de tangage/roulis d'une nacelle, d'un mât, d'un plateau). Ce chapitre construit
+      le <strong>modèle</strong> — pas à pas, du plus simple au plus fidèle. Le chapitre 12 le règlera, le
+      vérifiera et choisira sa structure d'implémentation sur PLC.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Voir pourquoi la dérivation numérique brute d'un angle bruité est inexploitable.</li>
+        <li>Poser le modèle <strong>1er ordre</strong> (vitesse quasi-constante) : état, <span class="math-inline">F</span>, <span class="math-inline">H</span>, <span class="math-inline">Q</span>, <span class="math-inline">R</span>.</li>
+        <li>Passer au <strong>2e ordre</strong> (accélération quasi-constante) et savoir quand c'est nécessaire.</li>
+        <li>Intégrer le <strong>retard</strong> du capteur (dynamique interne et temps de transport) par augmentation d'état.</li>
+        <li>Injecter la <strong>commande</strong> connue en anticipation (<span class="math-inline">B·u</span>).</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi pas une simple dérivée ?</h2>
+    <p>
+      La tentation première est de calculer la vitesse par différence finie :
+      <span class="math-inline">ω ≈ (θₖ − θₖ₋₁) / dt</span>. C'est un désastre. La dérivation
+      <strong>amplifie le bruit</strong> : si l'angle porte un bruit d'écart-type
+      <span class="math-inline">σθ</span>, la différence finie porte un bruit d'écart-type
+      <span class="math-inline">σθ·√2 / dt</span>. Avec <span class="math-inline">σθ = 0,4°</span> et
+      <span class="math-inline">dt = 10 ms</span>, cela fait déjà <span class="math-inline">≈ 57 °/s</span> de
+      bruit — largement plus que le signal utile. Diviser par un petit <span class="math-inline">dt</span>
+      multiplie le bruit d'autant.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-incl-diff.svg" alt="Vitesse angulaire en fonction du temps. La dérivée brute de l'angle bruité (ambre) est un nuage de bruit d'amplitude ±60 deg/s qui masque complètement le signal. La vitesse vraie (tirets gris) est une sinusoïde douce d'amplitude 30 deg/s. L'estimation de Kalman (vert) suit fidèlement la vitesse vraie en lissant tout le bruit.">
+      <figcaption><b>Figure 11.1.</b> La dérivée brute <span class="math-inline">Δθ/Δt</span> (ambre) est
+      noyée dans le bruit — le bruit de mesure, divisé par <span class="math-inline">dt</span>, explose. Le
+      filtre de Kalman (vert) reconstruit la <span class="math-inline">vitesse vraie</span> (tirets) proprement,
+      parce qu'il n'oppose pas « dériver » à « lisser » : il <em>infère</em> la vitesse à partir d'un modèle de
+      mouvement et de la cohérence des angles successifs.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        La différence de fond : la dérivée brute ne regarde que <em>deux</em> points et les croit
+        aveuglément. Le filtre de Kalman intègre <em>tout</em> l'historique via son état, pondéré par les
+        incertitudes. Il ne dérive pas l'angle — il estime une vitesse <em>compatible</em> avec la suite des
+        angles et avec un modèle de mouvement. C'est un lissage et une dérivation <strong>optimaux et
+        simultanés</strong>.
+      </p>
+    </div>
+
+    <h2>2. Le modèle 1er ordre : vitesse quasi-constante</h2>
+    <p>
+      Le modèle le plus simple et le plus utile. On suppose que, sur un pas, la vitesse angulaire est
+      <em>presque</em> constante — les variations sont traitées comme du bruit de process. L'état réunit
+      l'angle et la vitesse :
+    </p>
+    <div class="math">x = [ θ , ω ]ᵀ</div>
+    <p>
+      La cinématique <span class="math-inline">θ̇ = ω</span>, <span class="math-inline">ω̇ = 0</span> (aux
+      perturbations près) se discrétise sur un pas <span class="math-inline">dt</span> en :
+    </p>
+    <div class="math">
+      F = [[ 1 , dt ],[ 0 , 1 ]]&nbsp;&nbsp;&nbsp;&nbsp;H = [ 1 , 0 ]
+    </div>
+    <p>
+      <span class="math-inline">H = [1, 0]</span> traduit « le capteur ne voit que l'angle, pas la
+      vitesse ». C'est exactement le cas position-vitesse du cours théorique (chapitre 5), transposé à
+      l'angulaire. La vitesse sera reconstruite par le couplage <span class="math-inline">θ</span>–<span class="math-inline">ω</span> que <span class="math-inline">F</span> installe dans <span class="math-inline">P</span>.
+    </p>
+
+    <h3>2.1 Le bruit de mesure R</h3>
+    <p>
+      <span class="math-inline">R = [σθ²]</span> est un scalaire : la variance du bruit d'angle de
+      l'inclinomètre. On la lit sur la fiche technique (densité de bruit, ou résolution/répétabilité) ou on
+      la mesure capteur immobile, en calculant la variance empirique de quelques milliers d'échantillons.
+      C'est un fait mesurable, pas un réglage.
+    </p>
+
+    <h3>2.2 Le bruit de process Q</h3>
+    <p>
+      <span class="math-inline">Q</span> exprime « à quel point la vitesse peut varier entre deux pas ». Le
+      modèle standard suppose une <strong>accélération angulaire aléatoire</strong> d'écart-type
+      <span class="math-inline">σα</span>, constante sur le pas. Elle agit sur l'état par le vecteur
+      <span class="math-inline">g = [dt²/2, dt]ᵀ</span> (une accélération déplace l'angle de
+      <span class="math-inline">½α·dt²</span> et la vitesse de <span class="math-inline">α·dt</span>), d'où
+      <span class="math-inline">Q = σα² · g·gᵀ</span> :
+    </p>
+    <div class="math">
+      Q = σα² · [[ dt⁴/4 , dt³/2 ],[ dt³/2 , dt² ]]
+    </div>
+    <p>
+      Les termes croisés ne sont pas décoratifs : une accélération non modélisée affecte <em>ensemble</em>
+      angle et vitesse, leur bruit est donc corrélé. <span class="math-inline">σα</span> est le vrai curseur
+      de réglage — on y revient au chapitre 12. Physiquement, on le choisit de l'ordre de la plus forte
+      accélération angulaire que le système peut subir sans qu'on la commande.
+    </p>
+
+    <pre><code class="language-pascal">// SCL — un pas du filtre 1er ordre [θ, ω], mesure d'angle seule.
+// Types LREAL (double). dt fixe imposé par l'OB cyclique.
+// --- Prédiction : x⁻ = F·x ,  P⁻ = F·P·Fᵀ + Q ---
+th_p  := #th + #om * #dt;                 // θ⁻ = θ + ω·dt
+om_p  := #om;                             // ω⁻ = ω
+// P⁻ = F·P·Fᵀ + Q  (développé à la main pour 2×2, sans boucle matricielle)
+p00_p := #P00 + #dt*(#P10 + #P01) + #dt*#dt*#P11 + #q00;
+p01_p := #P01 + #dt*#P11 + #q01;
+p10_p := #P10 + #dt*#P11 + #q01;          // symétrique de p01
+p11_p := #P11 + #q11;
+
+// --- Correction avec la mesure d'angle z (H = [1 0], R scalaire) ---
+S   := p00_p + #R;                        // S = H·P⁻·Hᵀ + R
+k0  := p00_p / S;                         // gain sur θ
+k1  := p10_p / S;                         // gain sur ω
+y   := #z - th_p;                         // innovation
+#th := th_p + k0 * y;
+#om := om_p + k1 * y;                      // ← la vitesse estimée, jamais mesurée
+// P = (I - K·H)·P⁻  (forme de Joseph au chapitre 12)
+#P00 := (1.0 - k0) * p00_p;
+#P01 := (1.0 - k0) * p01_p;
+#P10 := p10_p - k1 * p00_p;
+#P11 := p11_p - k1 * p01_p;</code></pre>
+
+    <p>
+      Aucune inversion de matrice : la mesure est scalaire, donc <span class="math-inline">S</span> l'est
+      aussi et le « gain » est une simple division. C'est ce qui rend ce filtre si léger sur automate — un
+      point sur lequel le chapitre 12 s'appuiera lourdement.
+    </p>
+
+    <h2>3. Le modèle 2e ordre : accélération quasi-constante</h2>
+    <p>
+      Le modèle 1er ordre suppose la vitesse constante. Dès que la vitesse <em>varie durablement</em> — une
+      rampe d'accélération, un démarrage, un freinage commandé — cette hypothèse est fausse pendant toute la
+      variation, et le filtre <strong>traîne</strong> : son estimation de vitesse reste en retard sur la
+      réalité tant que dure l'accélération. On le voit nettement sur la figure suivante.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-incl-order.svg" alt="Vitesse angulaire en fonction du temps, avec une rampe : la vitesse vraie (tirets) reste nulle jusqu'à t=1s, monte linéairement jusqu'à 55 deg/s entre 1 et 2s, puis reste constante. Le filtre d'ordre 1 (bleu) reste visiblement en dessous de la vitesse vraie pendant toute la rampe (il traîne), puis rattrape sur le plateau. Le filtre d'ordre 2 (vert) suit la rampe presque sans retard, au prix d'un peu plus de bruit sur le plateau.">
+      <figcaption><b>Figure 11.2.</b> Sur une <b>rampe</b> de vitesse (accélération soutenue), le modèle
+      d'ordre 1 (bleu) reste en retard tant que dure la rampe : son hypothèse « vitesse constante » est
+      violée. Le modèle d'ordre 2 (vert), qui estime aussi l'accélération, suit la rampe presque sans retard.
+      Contrepartie visible sur le plateau : un peu plus de bruit, car un état plus riche laisse passer plus
+      d'incertitude.</figcaption>
+    </figure>
+
+    <p>
+      On enrichit alors l'état d'une composante d'accélération angulaire :
+    </p>
+    <div class="math">
+      x = [ θ , ω , α ]ᵀ&nbsp;&nbsp;&nbsp;&nbsp;
+      F = [[ 1 , dt , dt²/2 ],[ 0 , 1 , dt ],[ 0 , 0 , 1 ]]&nbsp;&nbsp;&nbsp;&nbsp;H = [ 1 , 0 , 0 ]
+    </div>
+    <p>
+      Le bruit de process porte maintenant sur le <strong>jerk</strong> (dérivée de l'accélération), d'écart-type
+      <span class="math-inline">σj</span>, via <span class="math-inline">g = [dt³/6, dt²/2, dt]ᵀ</span> et
+      <span class="math-inline">Q = σj² · g·gᵀ</span>. On mesure toujours le seul angle : le filtre reconstruit
+      <em>vitesse et accélération</em> à partir de la seule série des angles.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        Ne prenez pas systématiquement l'ordre 2 « pour être sûr ». Chaque état supplémentaire ajoute de la
+        <strong>variance</strong> à l'estimation et rend le réglage plus délicat. Règle pratique : ordre 1 si
+        les variations de vitesse sont brèves ou rares (le <span class="math-inline">Q</span> les absorbe) ;
+        ordre 2 si le système subit des <em>accélérations soutenues</em> qu'on veut suivre sans retard (mât
+        qui bascule, plateau qui accélère longuement). Au chapitre 12, le test de cohérence tranchera
+        objectivement.
+      </p>
+    </div>
+
+    <h2>4. Inclure le retard du capteur</h2>
+    <p>
+      Un inclinomètre réel n'est jamais instantané. Son signal est <strong>retardé</strong> par rapport à
+      l'angle physique, pour deux raisons de natures différentes qu'il faut distinguer et modéliser
+      séparément.
+    </p>
+
+    <h3>4.1 Le retard dynamique (filtrage interne)</h3>
+    <p>
+      Beaucoup d'inclinomètres (à pendule amorti, à fluide, ou MEMS avec filtre anti-repliement) se comportent
+      comme un <strong>passe-bas du 1er ordre</strong> : leur sortie <span class="math-inline">θ_m</span> suit
+      l'angle vrai <span class="math-inline">θ</span> avec une constante de temps <span class="math-inline">τ</span> :
+    </p>
+    <div class="math">τ · θ̇_m = θ − θ_m</div>
+    <p>
+      On lit <span class="math-inline">τ</span> depuis la bande passante annoncée
+      (<span class="math-inline">τ ≈ 1 / (2π·f_c)</span>). La bonne méthode : <strong>augmenter l'état</strong>
+      de la sortie capteur <span class="math-inline">θ_m</span>, et déclarer que c'est <em>elle</em> qu'on
+      mesure. Pour l'ordre 1 :
+    </p>
+    <div class="math">
+      x = [ θ , ω , θ_m ]ᵀ&nbsp;&nbsp;&nbsp;&nbsp;
+      F = [[ 1 , dt , 0 ],[ 0 , 1 , 0 ],[ dt/τ , 0 , 1 − dt/τ ]]&nbsp;&nbsp;&nbsp;&nbsp;H = [ 0 , 0 , 1 ]
+    </div>
+    <p>
+      Le filtre estime alors l'angle <em>vrai</em> <span class="math-inline">θ</span> (et sa vitesse), tout en
+      sachant que le capteur ne lui montre qu'une version retardée <span class="math-inline">θ_m</span>. Il
+      peut ainsi « devancer » le capteur et récupérer la phase perdue.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-incl-lag.svg" alt="Vitesse angulaire sinusoïdale en fonction du temps. La vitesse vraie (tirets gris) est en avance de phase. Le filtre sans modèle de retard (bleu) est nettement décalé en retard sur la vérité. Le filtre avec retard modélisé (vert) est beaucoup plus proche de la vérité, avec un décalage résiduel faible.">
+      <figcaption><b>Figure 11.3.</b> Un retard capteur non modélisé (bleu) décale la vitesse estimée en
+      retard de phase — dangereux dans une boucle de régulation. En <b>modélisant</b> la dynamique du capteur
+      (vert), le filtre récupère l'essentiel de la phase. Le léger retard résiduel du vert est la latence
+      propre du filtre (<span class="math-inline">Q</span> fini) ; on le réduit encore en desserrant
+      <span class="math-inline">Q</span>, au prix d'un peu de bruit.</figcaption>
+    </figure>
+
+    <div class="callout piege">
+      <p>
+        Un retard non modélisé n'est pas qu'une question de précision : dans une <strong>boucle fermée</strong>
+        (la vitesse estimée sert à réguler), un retard de phase <em>ampute la marge de phase</em> et peut faire
+        <strong>osciller, voire diverger</strong> l'asservissement. C'est souvent la vraie raison qui impose de
+        modéliser le retard, bien plus que l'erreur en boucle ouverte.
+      </p>
+    </div>
+
+    <h3>4.2 Le retard de transport (temps mort)</h3>
+    <p>
+      Autre nature : un <strong>temps mort pur</strong> de <span class="math-inline">d</span> pas —
+      communication bus (Profinet, IO-Link, CAN), échantillonnage asynchrone, traitement du capteur. La mesure
+      d'aujourd'hui reflète l'angle d'il y a <span class="math-inline">d</span> cycles :
+      <span class="math-inline">zₖ = θₖ₋d + bruit</span>. On le modélise par un <strong>registre à
+      décalage</strong> dans l'état — on empile les <span class="math-inline">d</span> derniers angles et on
+      observe le plus ancien :
+    </p>
+    <div class="math">
+      x = [ θₖ , ω , θₖ₋₁ , … , θₖ₋d ]ᵀ&nbsp;&nbsp;&nbsp;&nbsp;H observe θₖ₋d
+    </div>
+    <p>
+      <span class="math-inline">F</span> propage la dynamique sur <span class="math-inline">(θ, ω)</span> et
+      <em>décale</em> les anciens angles d'un cran à chaque pas. Le coût est <span class="math-inline">d</span>
+      états de plus — acceptable pour un petit temps mort. Pour un grand retard, on préfère la
+      <em>rétrodiction</em> (corriger l'état passé mémorisé puis re-propager), plus subtile, hors de portée de
+      ce chapitre.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        En pratique, les deux retards coexistent : une constante de temps <span class="math-inline">τ</span>
+        (dynamique interne) <em>plus</em> quelques pas de temps mort bus. On modélise celui qui domine, ou les
+        deux si l'application est sensible à la phase. Mesurer le retard total : injecter un échelon d'angle
+        connu et chronométrer la réponse du capteur.
+      </p>
+    </div>
+
+    <h2>5. Inclure la commande (anticipation)</h2>
+    <p>
+      Si l'on <em>pilote</em> le mouvement — un moteur qui incline le plateau, un vérin qui lève le mât — on
+      connaît la commande envoyée. C'est de l'information gratuite et certaine. Supposons qu'on commande une
+      accélération angulaire <span class="math-inline">u = α_cmd</span> (couple/courant moteur connu). On
+      l'injecte dans la prédiction de l'ordre 1 par :
+    </p>
+    <div class="math">
+      x⁻ = F·x + B·u&nbsp;&nbsp;&nbsp;&nbsp;avec&nbsp;&nbsp;&nbsp;B = [ dt²/2 , dt ]ᵀ
+    </div>
+    <p>
+      L'effet est spectaculaire : le mouvement commandé n'est plus une « surprise » à absorber par
+      <span class="math-inline">Q</span>. On peut donc <strong>réduire</strong> <span class="math-inline">Q</span>
+      (il ne couvre plus que la perturbation non commandée), ce qui rend le filtre à la fois plus précis et
+      moins en retard.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-incl-command.svg" alt="Vitesse angulaire en fonction du temps, avec une commande d'accélération en créneaux qui fait monter puis descendre la vitesse en trapèze. Le filtre sans commande (bleu) est en léger retard aux changements de pente. Le filtre avec la commande B·u (vert) colle à la vitesse vraie, y compris aux transitions.">
+      <figcaption><b>Figure 11.4.</b> Quand le mouvement est commandé, injecter la commande
+      <span class="math-inline">B·u</span> dans la prédiction (vert) fait coller l'estimation à la vitesse
+      vraie, y compris aux transitions — là où le filtre sans commande (bleu), qui doit « découvrir » chaque
+      changement via la seule mesure, prend du retard. La commande transforme le filtre en
+      <em>anticipateur</em>.</figcaption>
+    </figure>
+
+    <div class="callout piege">
+      <p>
+        <span class="math-inline">u</span> doit être l'accélération <strong>réellement exécutée</strong>, pas
+        seulement demandée. La dynamique de l'actionneur, la saturation, un couple de charge non modélisé font
+        que la commande n'est pas suivie parfaitement. Deux parades : modéliser la dynamique de l'actionneur
+        (encore de l'augmentation d'état), ou garder un <span class="math-inline">Q</span> suffisant pour
+        couvrir l'écart commande↔exécution. Une commande fausse injectée avec un <span class="math-inline">Q</span>
+        trop petit fait diverger le filtre avec assurance.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Dimensionner Q à partir de la physique</h3>
+      <p>
+        Un plateau peut subir des accélérations angulaires non commandées allant jusqu'à
+        <span class="math-inline">≈ 50 °/s²</span> (chocs, vent). On échantillonne à
+        <span class="math-inline">dt = 5 ms</span>. Donnez un point de départ raisonnable pour
+        <span class="math-inline">σα</span> et la forme de <span class="math-inline">Q</span> du modèle 1er ordre.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          On prend <span class="math-inline">σα</span> de l'ordre de l'accélération maximale plausible, soit
+          <span class="math-inline">σα ≈ 50 °/s²</span>. Avec <span class="math-inline">dt = 0,005</span> :
+        </p>
+        <div class="math">
+          Q = 50² · [[ dt⁴/4 , dt³/2 ],[ dt³/2 , dt² ]]
+          = 2500 · [[ 1,56·10⁻¹⁰ , 6,25·10⁻⁸ ],[ 6,25·10⁻⁸ , 2,5·10⁻⁵ ]]
+        </div>
+        <p>
+          Soit <span class="math-inline">Q ≈ [[3,9·10⁻⁷, 1,6·10⁻⁴],[1,6·10⁻⁴, 0,0625]]</span> (unités
+          deg² et deg²/s²). C'est un <em>point de départ</em> : le chapitre 12 l'ajustera par le test de
+          cohérence jusqu'à ce que l'innovation soit blanche. L'ordre de grandeur, lui, vient de la physique.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Choisir la structure d'état</h3>
+      <p>
+        Pour chacun de ces cas, dites quel état choisir : (a) une nacelle stabilisée qui oscille lentement,
+        capteur rapide ; (b) un mât qu'on relève par un vérin commandé, avec un inclinomètre à fluide amorti
+        (bande passante 2 Hz) ; (c) un plateau dont la vitesse fait de longues rampes.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> Ordre 1 <span class="math-inline">[θ, ω]</span> suffit : oscillations
+            lentes, pas d'accélération soutenue, capteur sans retard notable.</li>
+          <li><strong>(b)</strong> Ordre 1 <em>avec commande</em> <span class="math-inline">B·u</span> (le
+            vérin est piloté) <em>et</em> augmentation du retard <span class="math-inline">θ_m</span> :
+            <span class="math-inline">τ ≈ 1/(2π·2) ≈ 80 ms</span>, non négligeable. État
+            <span class="math-inline">[θ, ω, θ_m]</span>.</li>
+          <li><strong>(c)</strong> Ordre 2 <span class="math-inline">[θ, ω, α]</span> : les longues rampes de
+            vitesse sont des accélérations soutenues qu'un ordre 1 suivrait en retard.</li>
+        </ul>
+        <p>Le bon modèle épouse la physique dominante — ni trop pauvre (il traîne ou biaise), ni trop riche
+        (il bruite et se règle mal).</p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>La dérivée brute <span class="math-inline">Δθ/Δt</span> amplifie le bruit par <span class="math-inline">√2/dt</span> : inexploitable. Le filtre <em>infère</em> la vitesse, il ne la dérive pas.</li>
+        <li><strong>Ordre 1</strong> (vitesse quasi-constante) : <span class="math-inline">x = [θ, ω]</span>, <span class="math-inline">F = [[1,dt],[0,1]]</span>, <span class="math-inline">H = [1,0]</span>, <span class="math-inline">Q = σα²·g gᵀ</span> avec <span class="math-inline">g = [dt²/2, dt]ᵀ</span>, <span class="math-inline">R = σθ²</span>.</li>
+        <li><strong>Ordre 2</strong> (accélération quasi-constante) : <span class="math-inline">x = [θ, ω, α]</span> ; nécessaire pour suivre des <em>accélérations soutenues</em> sans retard, au prix de plus de variance.</li>
+        <li><strong>Retard</strong> : dynamique interne → augmenter de <span class="math-inline">θ_m</span> (lag 1er ordre <span class="math-inline">τ</span>) ; temps mort de transport → registre à décalage. Un retard non modélisé ampute la marge de phase en boucle fermée.</li>
+        <li><strong>Commande</strong> : <span class="math-inline">x⁻ = F·x + B·u</span> avec <span class="math-inline">B = [dt²/2, dt]ᵀ</span> ; le mouvement commandé n'est plus une surprise → <span class="math-inline">Q</span> plus petit, filtre plus précis et anticipateur. Mais <span class="math-inline">u</span> = commande <em>exécutée</em>.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-10.html"><span class="lbl">← Précédent</span>Cohérence, réglage &amp; robustesse numérique</a>
+    <a class="next" href="chapitre-12.html"><span class="lbl">Suivant →</span>Le même filtre sur PLC</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>
