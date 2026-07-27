@@ -34,11 +34,12 @@
     </div>
 
     <div class="callout histoire">
-      Ce cours est le <strong>versant théorique</strong> du filtre. L'implémentation temps réel
+      Ce cours part du <strong>versant théorique</strong> (Parties A à D) puis enchaîne sur des
+      <strong>chapitres appliqués</strong> (Partie E). L'implémentation temps réel générique
       (code, <code>nalgebra</code>, zéro allocation) est traitée au
       <a href="../cours-rust-robotique/chapitre-13.html">chapitre&nbsp;13 du cours Rust robotique</a>.
-      Les <strong>chapitres appliqués</strong> — fusion de capteurs, EKF/UKF déroulés sur des cas
-      concrets, réglage sur données réelles — viendront s'ajouter ensuite.
+      D'autres applications — fusion de capteurs, EKF/UKF déroulés sur des cas concrets — viendront
+      s'ajouter à la Partie E.
     </div>
 
     <ul class="klegend" aria-hidden="true">
@@ -74,9 +75,16 @@
       <li><a href="chapitre-10.html"><span class="num">10</span><span><strong>Cohérence, réglage &amp; robustesse numérique</strong><span class="desc">régler <span class="math-inline">Q</span> et <span class="math-inline">R</span>, tester la cohérence (innovation blanche, NIS/NEES), forme de Joseph et racine carrée, puis ouverture vers le non-linéaire (EKF/UKF)</span></span></a></li>
     </ul>
 
+    <div class="part-title">Partie E — Applications : estimer une vitesse</div>
+    <ul class="toc">
+      <li><a href="chapitre-11.html"><span class="num">11</span><span><strong>Vitesse depuis un inclinomètre : construire le modèle</strong><span class="desc">pourquoi pas la dérivée brute ; modèle 1er ordre (θ,ω) et 2e ordre (θ,ω,α) ; inclure le <em>retard</em> du capteur (dynamique &amp; temps mort) ; injecter la <em>commande</em> <span class="math-inline">B·u</span></span></span></a></li>
+      <li><a href="chapitre-12.html"><span class="num">12</span><span><strong>Le même filtre sur PLC : réglage, cohérence, structure</strong><span class="desc">régler <span class="math-inline">Q</span>/<span class="math-inline">R</span>, vérifier la cohérence (NIS), stabilité numérique (Joseph, LREAL) ; et la structure la plus intéressante sur automate : l'<em>observateur à gain constant</em> (α-β) et pourquoi</span></span></a></li>
+    </ul>
+
     <div class="callout note">
-      À la fin, vous saurez reconstruire les cinq équations du filtre de mémoire — parce que vous
-      les aurez <em>dérivées</em>, pas apprises par cœur — et diagnostiquer un filtre qui diverge.
+      À la fin des fondements (A-D), vous saurez reconstruire les cinq équations du filtre de mémoire —
+      parce que vous les aurez <em>dérivées</em>, pas apprises par cœur — et diagnostiquer un filtre qui
+      diverge. La Partie E met tout cela au travail sur un cas d'automatisme concret.
     </div>
   </main>
 

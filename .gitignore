@@ -1,2 +1,5 @@
 # Projets Cargo d'exercices (non versionnés — seulement la partie HTML du cours)
 cours-rust-robotique/chapitre-*-exercices/
+
+__pycache__/
+*.pyc
