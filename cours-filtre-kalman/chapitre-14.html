@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 14 — EKF : suivre une cible avec inclinomètres + caméra</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 14 · Application</span><br>EKF : suivre une cible avec inclinomètres + caméra</h1>
+
+    <div class="callout note">
+      <strong>Le premier cas non-linéaire.</strong> Une plateforme qui s'incline porte deux inclinomètres
+      (rapides, chaque cycle) et une caméra (lente, de loin en loin). On veut suivre la <em>position relative
+      d'une cible</em> dans un repère stabilisé. La mesure caméra est une fonction <strong>non-linéaire</strong>
+      de l'état — c'est le terrain de l'<strong>EKF</strong>, le filtre de Kalman étendu annoncé au chapitre 10.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Voir <em>d'où</em> vient la non-linéarité : la caméra mesure une direction (atan), couplée au tilt.</li>
+        <li>Poser le modèle : dynamique linéaire, mesures inclinomètres (linéaires) et caméra (non-linéaire).</li>
+        <li>Linéariser la mesure caméra par sa <strong>jacobienne</strong> et écrire la mise à jour EKF.</li>
+        <li>Fusionner les cadences et comprendre l'observabilité : seul l'appareil photo « voit » la cible.</li>
+        <li>Connaître les pièges de l'EKF (linéarisation, initialisation, wrapping) et situer l'UKF.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi c'est non-linéaire</h2>
+    <p>
+      Jusqu'au chapitre 13, toutes nos mesures étaient <strong>linéaires</strong> en l'état :
+      <span class="math-inline">z = H·x</span>. Une caméra brise cette linéarité. Elle ne mesure pas une
+      position cartésienne : elle mesure une <strong>direction</strong> — l'angle sous lequel elle voit la
+      cible dans son champ. Et cet angle dépend de l'orientation de la plateforme, elle-même inclinée.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-ekf-geometry.svg" alt="Schéma vue de côté. Une plateforme portant une caméra et deux inclinomètres est en haut. Une verticale en pointillés matérialise la gravité. L'axe optique de la caméra est incliné d'un angle θ (tilt) par rapport à la verticale. Une cible est en bas à distance H (portée connue), à un décalage horizontal px ; la ligne de visée vers la cible fait un angle β = atan(px/H) avec la verticale. Un encart donne la mesure caméra non-linéaire : zx = atan(px/H) − θ, zy = atan(py/H) − φ.">
+      <figcaption><b>Figure 14.1.</b> La géométrie. La cible est à un décalage <span class="math-inline">px</span>
+      et une portée connue <span class="math-inline">H</span> ; sa direction depuis la caméra est
+      <span class="math-inline">β = atan(px/H)</span>. La caméra étant inclinée de <span class="math-inline">θ</span>
+      (mesuré par les inclinomètres), elle voit la cible à l'angle <span class="math-inline">zx = atan(px/H) − θ</span>
+      dans son image. Le <span class="math-inline">atan</span> — la <em>projection</em> — est la source de la
+      non-linéarité.</figcaption>
+    </figure>
+
+    <p>
+      L'ingrédient non-linéaire est universel dès qu'un capteur <strong>tourne</strong> ou <strong>projette</strong>
+      : rotations (sin/cos des angles), distances (racines de sommes de carrés), perspective (division par la
+      profondeur), directions (atan). Aucune de ces fonctions n'est de la forme <span class="math-inline">H·x</span>.
+      La croyance cesse de rester gaussienne (chapitre 3), et les cinq équations exactes ne s'appliquent plus
+      telles quelles.
+    </p>
+
+    <h2>2. L'idée de l'EKF : garder la structure, linéariser</h2>
+    <p>
+      L'EKF, vu au chapitre 10, ne réinvente rien : il garde <strong>exactement</strong> le cycle
+      prédiction / correction, mais remplace la matrice constante par la <strong>jacobienne</strong> — la
+      matrice des dérivées partielles de la fonction non-linéaire, évaluée à l'estimation courante. On
+      approche localement la fonction courbe par sa tangente (chapitre 10, §4). Ici, seule la mesure est
+      non-linéaire ; la dynamique reste linéaire, donc seule l'observation demande une jacobienne.
+    </p>
+
+    <h2>3. Le modèle</h2>
+    <p>
+      On suit la cible dans un repère <strong>stabilisé</strong> (aligné sur la gravité). L'état réunit la
+      position relative de la cible, sa vitesse, et l'attitude de la plateforme :
+    </p>
+    <div class="math">x = [ px , py , vx , vy , θ , φ ]ᵀ</div>
+    <ul>
+      <li><span class="math-inline">px, py</span> : position relative de la cible — <em>ce qu'on veut suivre</em> ;</li>
+      <li><span class="math-inline">vx, vy</span> : sa vitesse (modèle à vitesse constante) ;</li>
+      <li><span class="math-inline">θ, φ</span> : tangage et roulis de la plateforme (attitude).</li>
+    </ul>
+
+    <h3>3.1 La dynamique (linéaire)</h3>
+    <p>
+      La cible avance à vitesse quasi-constante ; l'attitude dérive lentement (marche aléatoire, entretenue
+      par les mouvements de la plateforme). <span class="math-inline">F</span> est donc bloc-diagonale et
+      <strong>linéaire</strong> — la prédiction est celle des chapitres 6 et 11 :
+    </p>
+    <div class="math">
+      px⁻ = px + vx·dt&nbsp;&nbsp;;&nbsp;&nbsp;py⁻ = py + vy·dt&nbsp;&nbsp;;&nbsp;&nbsp;vx,vy,θ,φ inchangés (+ bruit)
+    </div>
+    <p>
+      <span class="math-inline">Q</span> porte un bruit d'accélération sur la position (comme au chapitre 11)
+      et un bruit de taux sur l'attitude. Rien de nouveau : la non-linéarité n'est <em>pas</em> dans la
+      dynamique.
+    </p>
+
+    <h3>3.2 Les mesures</h3>
+    <p>
+      Deux capteurs, deux natures :
+    </p>
+    <ul>
+      <li><strong>Inclinomètres</strong> (chaque cycle) : <span class="math-inline">z_inc = [θ, φ] + bruit</span>.
+        <strong>Linéaire</strong> — <span class="math-inline">H</span> sélectionne les composantes d'attitude.
+        Deux mises à jour scalaires (chapitre 13).</li>
+      <li><strong>Caméra</strong> (occasionnelle) : <span class="math-inline">z_cam = [atan(px/H) − θ, atan(py/H) − φ] + bruit</span>.
+        <strong>Non-linéaire</strong> — c'est elle qui exige l'EKF.</li>
+    </ul>
+
+    <h2>4. Linéariser la caméra : la jacobienne</h2>
+    <p>
+      Notons <span class="math-inline">h(x)</span> la fonction de mesure caméra. La jacobienne
+      <span class="math-inline">H = ∂h/∂x</span> est la matrice de ses dérivées partielles, évaluée à
+      l'estimation courante <span class="math-inline">x⁻</span>. Pour la composante en
+      <span class="math-inline">x</span>, <span class="math-inline">hₓ = atan(px/H) − θ</span> :
+    </p>
+    <div class="math">
+      ∂hₓ/∂px = H / (H² + px²)&nbsp;&nbsp;&nbsp;&nbsp;∂hₓ/∂θ = −1&nbsp;&nbsp;&nbsp;&nbsp;(le reste = 0)
+    </div>
+    <p>
+      La dérivée de l'<span class="math-inline">atan</span> est <span class="math-inline">H/(H²+px²)</span> :
+      c'est la pente de la tangente à la courbe au point courant. Loin de ce point, la tangente s'écarte de la
+      vraie courbe — c'est l'<strong>erreur de linéarisation</strong>, le talon d'Achille de l'EKF.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-ekf-linearization.svg" alt="Courbe de atan(px/H) en fonction de px/H, en forme de S. Au point d'estimation courant p-chapeau, une tangente en tirets bleus approche la courbe. Près du point, tangente et courbe coïncident ; loin du point (vers px/H = 3,4), un segment ambre marque l'écart croissant entre la tangente et la vraie courbe : l'erreur de linéarisation.">
+      <figcaption><b>Figure 14.2.</b> L'EKF remplace la courbe <span class="math-inline">atan</span> par sa
+      <b>tangente</b> (jacobienne) au point d'estimation <span class="math-inline">p̂</span>. Près du point,
+      l'approximation est excellente ; loin, l'écart grandit (segment ambre). L'EKF est donc d'autant meilleur
+      que l'estimation est <em>déjà</em> bonne et l'incertitude <em>petite</em> — d'où l'importance d'une bonne
+      initialisation.</figcaption>
+    </figure>
+
+    <h2>5. La mise à jour EKF</h2>
+    <p>
+      La mise à jour EKF est celle du chapitre 7, avec <strong>une</strong> subtilité capitale :
+    </p>
+    <div class="callout demo">
+      <p>Pour chaque composante de mesure (on traite en scalaire, chapitre 13) :</p>
+      <div class="math">
+        innovation :&nbsp;&nbsp;y = z − <strong>h(x⁻)</strong>&nbsp;&nbsp;&nbsp;← la vraie fonction non-linéaire<br>
+        covariance :&nbsp;&nbsp;S = <strong>H</strong>·P⁻·<strong>H</strong>ᵀ + R&nbsp;&nbsp;&nbsp;← H = jacobienne<br>
+        gain :&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;K = P⁻·Hᵀ·S⁻¹<br>
+        état :&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;x = x⁻ + K·y<br>
+        covariance :&nbsp;&nbsp;P = (I − K·H)·P⁻&nbsp;&nbsp;(forme de Joseph en pratique)
+      </div>
+      <p>
+        L'<strong>innovation utilise <span class="math-inline">h(·)</span> exacte</strong> (on compare la
+        vraie mesure à la vraie mesure <em>prédite</em>) ; la <strong>covariance et le gain utilisent la
+        jacobienne <span class="math-inline">H</span></strong> (pour propager l'incertitude). Mélanger les deux
+        — linéariser aussi l'innovation en <span class="math-inline">H·x⁻</span> — détruit tout l'intérêt de
+        l'EKF.
+      </p>
+    </div>
+
+    <pre><code class="language-pascal">// SCL — mise à jour EKF caméra, composante x (état 6 : px,py,vx,vy,θ,φ).
+// atan2 est disponible ; Hd = portée connue.
+h_x  := ATAN(#px / #Hd) - #theta;         // mesure PRÉDITE (non-linéaire)
+y    := #zCamX - h_x;                      // innovation
+// Jacobienne (ligne) : H = [ Hd/(Hd²+px²), 0, 0, 0, -1, 0 ]
+j_px := #Hd / (#Hd*#Hd + #px*#px);
+j_th := -1.0;
+// S = H·P⁻·Hᵀ + R  (n'implique que les colonnes px et θ)
+S := j_px*(j_px*#P[0,0] + j_th*#P[4,0])
+   + j_th*(j_px*#P[0,4] + j_th*#P[4,4]) + #Rcam;
+// K = P⁻·Hᵀ / S   (colonne : pour chaque état i)
+FOR #i := 0 TO 5 DO
+    #K[#i] := (j_px*#P[#i,0] + j_th*#P[#i,4]) / S;
+    #x[#i] := #x[#i] + #K[#i]*y;            // correction de l'état
+END_FOR;
+// puis P := (I - K·H)·P⁻  (forme de Joseph — voir chapitre 12)</code></pre>
+
+    <div class="callout piege">
+      <p>
+        <strong>Vérifiez vos jacobiennes.</strong> Une jacobienne fausse est l'erreur EKF numéro un : le
+        filtre semble tourner mais diverge ou devient incohérent. Test imparable : comparer chaque dérivée
+        analytique à une <em>différence finie</em> <span class="math-inline">(h(x+ε) − h(x))/ε</span> sur
+        quelques points. Si les deux ne coïncident pas, la jacobienne est buggée — pas le filtre.
+      </p>
+    </div>
+
+    <h2>6. Fusion des cadences &amp; observabilité</h2>
+    <p>
+      On assemble comme au chapitre 13 : <strong>prédire chaque cycle</strong> ; corriger avec les
+      inclinomètres <strong>chaque cycle</strong> (linéaire) ; corriger avec la caméra <strong>quand une image
+      arrive</strong> (EKF). Mais une asymétrie fondamentale apparaît, liée à l'<strong>observabilité</strong>
+      (chapitre 9).
+    </p>
+    <div class="callout astuce">
+      <p>
+        Les inclinomètres observent <span class="math-inline">θ, φ</span> — <em>l'attitude</em> — mais
+        <strong>pas</strong> la position de la cible <span class="math-inline">px, py</span>. Seule la caméra
+        « voit » la cible. Conséquence : l'incertitude d'<em>attitude</em> reste basse en permanence (recalée
+        chaque cycle), tandis que l'incertitude de <em>position</em> ne peut baisser qu'aux instants de fix
+        caméra — et gonfle entre eux.
+      </p>
+    </div>
+
+    <figure class="fig">
+      <img src="figures/fig-ekf-uncert.svg" alt="Deux courbes d'incertitude (racine de P) en fonction du temps sur 8 secondes. La courbe de position (px,py) en vert est une dent de scie : après un grand pic initial, elle monte entre les fix caméra (marqués par des traits ambre en bas, à 2 Hz) et chute à chaque fix. La courbe d'attitude θ en bleu est plate et basse tout du long, avec de minuscules dentelures à chaque cycle : les inclinomètres la maintiennent précise en permanence.">
+      <figcaption><b>Figure 14.3.</b> L'incertitude « respire » de façon <b>asymétrique</b>. La position
+      (vert) ne baisse qu'aux fix caméra (2 Hz) et gonfle entre eux : c'est le seul capteur qui l'observe.
+      L'attitude (bleu) reste <em>plate et basse</em> — les inclinomètres la recalent à chaque cycle. Le filtre
+      exprime honnêtement <em>ce qu'il sait de chaque grandeur</em>.</figcaption>
+    </figure>
+
+    <p>
+      Malgré la non-linéarité, la cadence lente de la caméra et l'incertitude initiale, l'EKF converge et suit
+      fidèlement la cible dans le repère stabilisé.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-ekf-track.svg" alt="Vue de dessus du plan (px, py) en mètres. La trajectoire vraie de la cible est une droite en tirets. L'estimation EKF (vert) part d'un point 'départ (P grand)' décalé de la vérité, puis converge et suit la trajectoire vraie. Des ellipses de covariance jalonnent le parcours : les ellipses aux fix caméra (ambre) sont resserrées, celles entre les fix (teal) un peu plus larges et allongées le long de la trajectoire.">
+      <figcaption><b>Figure 14.4.</b> Le suivi vu de dessus. Parti d'une estimation grossière (grande
+      incertitude), l'EKF <b>converge</b> sur la trajectoire vraie et la suit. Les <b>ellipses de covariance</b>
+      se resserrent à chaque fix caméra (ambre) et s'allongent entre eux le long du mouvement. C'est le filtre
+      bayésien de toujours — seule la <em>linéarisation</em> de la caméra le distingue d'un Kalman linéaire.</figcaption>
+    </figure>
+
+    <div class="callout note">
+      <p>
+        <strong>Observabilité et portée connue.</strong> Ici <span class="math-inline">H</span> (la portée)
+        est connue, donc un seul fix caméra suffit à situer la cible (on inverse l'atan). Si la portée était
+        <em>inconnue</em> (caméra monoculaire pure), une seule image ne donnerait qu'une direction — la
+        distance resterait <strong>inobservable</strong> sans mouvement relatif (parallaxe). C'est le cœur des
+        problèmes de « bearing-only tracking » : l'observabilité y dépend de la <em>trajectoire</em>, pas
+        seulement des capteurs.
+      </p>
+    </div>
+
+    <h2>7. Les pièges de l'EKF</h2>
+    <ul>
+      <li><strong>Erreur de linéarisation</strong> : si la fonction est très courbée <em>à l'échelle de
+        l'incertitude</em>, la tangente est une mauvaise approximation → estimation biaisée, voire divergence.
+        Remède : réduire l'incertitude (meilleurs capteurs, meilleure init), ou passer à l'UKF (§8).</li>
+      <li><strong>Initialisation</strong> : l'EKF linéarise <em>autour de l'estimation courante</em>. Une init
+        trop fausse linéarise au mauvais endroit et peut ne jamais converger. Bonne pratique : initialiser la
+        position depuis le <em>premier</em> fix caméra plutôt que de deviner.</li>
+      <li><strong>Wrapping des angles</strong> : innovations et fonctions d'angle doivent être ramenées dans
+        <span class="math-inline">(−π, π]</span> (utiliser <code>atan2</code>, normaliser
+        <span class="math-inline">y</span>). Oublier le wrapping fait « sauter » le filtre de
+        <span class="math-inline">2π</span> près des discontinuités.</li>
+      <li><strong>Jacobienne fausse</strong> : le piège du §5 — à vérifier par différences finies.</li>
+      <li><strong>Cohérence</strong> : la NIS (chapitre 12) reste l'outil de diagnostic, mais attention — une
+        NIS correcte ne garantit plus l'optimalité (perdue avec la linéarisation), seulement la cohérence
+        <em>locale</em>.</li>
+    </ul>
+
+    <h2>8. L'UKF, sans jacobienne</h2>
+    <p>
+      Quand la linéarisation devient trop grossière — forte courbure, grande incertitude — le <strong>filtre
+      « unscented » (UKF)</strong> offre une alternative. Au lieu de dériver la fonction, il propage un petit
+      jeu de points choisis (<em>sigma points</em>) à travers la vraie fonction non-linéaire, puis reconstruit
+      moyenne et covariance à partir de leurs images. Il capture la courbure au deuxième ordre, sans aucune
+      jacobienne à calculer ni à vérifier — pour un coût comparable. Sur notre cas caméra, l'UKF gérerait
+      mieux les grands décalages initiaux. Il fera l'objet d'un chapitre dédié.
+    </p>
+
+    <h2>9. Sur PLC</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Pas de gain constant.</strong> La jacobienne dépend de l'état, donc <span class="math-inline">P</span>
+          et <span class="math-inline">K</span> dépendent des mesures : on ne peut pas précalculer un gain
+          (contrairement au chapitre 12). L'EKF impose le <strong>filtre complet</strong> en ligne.</li>
+        <li><strong>Coût maîtrisé quand même</strong> : mesures traitées en scalaire (une division chacune),
+          jacobienne = quelques formules fermées, état de dimension modeste. <code>atan2</code> est disponible
+          en SCL.</li>
+        <li><strong>Robustesse</strong> : <code>LREAL</code>, forme de Joseph, resymétrisation (chapitre 12),
+          normalisation des angles, et gating par NIS pour rejeter une image aberrante.</li>
+        <li><strong>Initialisation</strong> depuis le premier fix caméra ; <span class="math-inline">P</span>
+          initial large sur la position, petit sur l'attitude (bien mesurée d'emblée).</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Vérifier une jacobienne</h3>
+      <p>
+        Pour <span class="math-inline">hₓ = atan(px/H) − θ</span> avec <span class="math-inline">H = 3</span>,
+        vérifiez la dérivée <span class="math-inline">∂hₓ/∂px</span> en <span class="math-inline">px = 2</span>
+        par différence finie (<span class="math-inline">ε = 10⁻⁴</span>).
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Analytique : <span class="math-inline">H/(H²+px²) = 3/(9+4) = 3/13 ≈ 0,2308</span>.</p>
+        <p>Différence finie : <span class="math-inline">[atan((2,0001)/3) − atan((1,9999)/3)] / 10⁻⁴</span>.
+        <span class="math-inline">atan(0,66670) − atan(0,66663) ≈ 0,0000231</span>, divisé par
+        <span class="math-inline">10⁻⁴</span> → <span class="math-inline">≈ 0,231</span>. ✓ Les deux
+        coïncident : la jacobienne est correcte. C'est le test à faire <em>systématiquement</em> avant de
+        déployer un EKF.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Pourquoi la position gonfle-t-elle entre les fix ?</h3>
+      <p>
+        Les inclinomètres corrigent l'attitude à chaque cycle. Pourtant l'incertitude de <em>position</em>
+        (figure 14.3) monte entre les fix caméra. Expliquez, et dites ce qui la borne malgré tout.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Les inclinomètres n'observent que <span class="math-inline">θ, φ</span> : la position
+          <span class="math-inline">px, py</span> est <strong>inobservable</strong> par eux (§6). Entre deux
+          fix caméra, la position n'est donc que <em>prédite</em> (modèle à vitesse constante) — et la
+          prédiction gonfle la covariance (<span class="math-inline">+ Q</span>, chapitre 6). Ce qui la borne :
+          le <strong>modèle de mouvement</strong> lui-même. Tant que la vitesse est bien estimée, la position
+          prédite reste correcte quelques instants ; <span class="math-inline">P</span> croît lentement, pas
+          explosivement. Un modèle de vitesse fiable « achète » du temps entre les fix — d'où l'utilité
+          d'estimer <span class="math-inline">vx, vy</span> dans l'état.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>La caméra mesure une <strong>direction</strong> (atan) couplée au tilt → mesure <strong>non-linéaire</strong> ⇒ EKF. Rotations / projections / distances sont toutes non-linéaires.</li>
+        <li>État <span class="math-inline">[px, py, vx, vy, θ, φ]</span> : dynamique <strong>linéaire</strong> ; seule la mesure caméra l'est pas.</li>
+        <li><strong>Jacobienne</strong> caméra : <span class="math-inline">∂(atan(px/H))/∂px = H/(H²+px²)</span>, <span class="math-inline">∂/∂θ = −1</span>. Tangente locale (fig. 14.2).</li>
+        <li>Mise à jour EKF : <strong>innovation avec <span class="math-inline">h(·)</span> exacte</strong>, <strong>covariance/gain avec la jacobienne <span class="math-inline">H</span></strong>. Ne jamais confondre les deux.</li>
+        <li>Fusion : prédire + inclinos chaque cycle (linéaire) + caméra à l'occasion (EKF). <strong>Observabilité</strong> : seuls les fix caméra réduisent l'incertitude de position, qui « respire » ; l'attitude reste précise.</li>
+        <li>Pièges EKF : erreur de linéarisation, initialisation, wrapping des angles, jacobienne fausse (vérifier par différences finies). <strong>UKF</strong> = alternative sans jacobienne.</li>
+        <li>Sur PLC : pas de gain constant (jacobienne dépend de l'état) → filtre complet, mais scalaire, <code>LREAL</code>, Joseph, init depuis le premier fix.</li>
+      </ul>
+    </div>
+
+    <div class="callout histoire">
+      <p>
+        <strong>La suite.</strong> Deux prolongements naturels : un chapitre <strong>UKF</strong> (sigma
+        points, sans jacobienne) sur ce même cas caméra, et une <strong>fusion IMU</strong> complète
+        (inclinomètre + gyromètre avec estimation de biais). Le socle ne bouge plus : modéliser, linéariser si
+        besoin, fusionner les cadences, vérifier la cohérence.
+      </p>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-13.html"><span class="lbl">← Précédent</span>Fusion multi-fréquences</a>
+    <a class="next" href="index.html"><span class="lbl">↩ Sommaire</span>Tous les chapitres</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>
