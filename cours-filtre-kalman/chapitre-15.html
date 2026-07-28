@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 15 — Caméra lente + cinématique robot : choisir le repère d'état</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 15 · Application</span><br>Caméra lente + cinématique robot : choisir le repère d'état</h1>
+
+    <div class="callout note">
+      <strong>Le choix qui compte le plus.</strong> Une caméra <em>eye-in-hand</em> (montée sur l'effecteur)
+      envoie la pose d'une cible — de loin en loin, sans se caler sur l'OB de régulation. On dispose en
+      revanche, <em>à chaque cycle</em>, de la pose et de la vitesse cartésiennes de l'effecteur (cinématique
+      directe + Jacobien, calibrés). But : sortir une estimation de la cible <strong>à chaque cycle</strong>.
+      Avant tout code, une décision domine toutes les autres : <strong>dans quel repère mettre l'état ?</strong>
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre pourquoi filtrer la pose <em>relative</em> directement est une fausse bonne idée.</li>
+        <li>Poser le principe : estimer là où l'inconnu est le plus <strong>lent</strong> — le repère <strong>base</strong>.</li>
+        <li>Utiliser la cinématique effecteur comme <strong>transformation déterministe</strong> (déprojection + recomposition), pas comme bruit à filtrer.</li>
+        <li>Gérer l'asynchronisme et la latence par un <strong>buffer horodaté</strong>.</li>
+        <li>Ne pas oublier le terme de repère tournant <span class="math-inline">−ω×p_rel</span> dans la vitesse relative.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le faux réflexe : filtrer le relatif</h2>
+    <p>
+      La caméra sort une pose <strong>relative</strong> (cible vue depuis l'effecteur). Le réflexe est de
+      filtrer cette pose relative directement. C'est le piège. Cette pose relative varie <em>vite</em> — mais
+      son mouvement rapide vient à 99 % de <strong>l'effecteur lui-même</strong>, dont on connaît
+      <em>exactement</em> le déplacement (CD + Jacobien). Filtrer le relatif, c'est demander au filtre
+      d'absorber, via un gros <span class="math-inline">Q</span>, un mouvement qu'on connaît déjà parfaitement :
+      filtre nerveux, en retard, et bruité pour rien.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Règle d'or de la fusion : <strong>ne filtre jamais ce que tu connais déjà</strong>. Le mouvement de
+        l'effecteur est connu — il doit sortir du filtre et devenir une transformation déterministe. Ce qui
+        reste à estimer, c'est seulement la partie <em>inconnue</em> : où est la cible.
+      </p>
+    </div>
+
+    <h2>2. Le principe : estimer là où l'inconnu est lent</h2>
+    <p>
+      La même cible a deux dynamiques opposées selon le repère où on la regarde.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-frame-two.svg" alt="Position X de la cible en fonction du temps, deux courbes. En vert, la cible exprimée en repère base : une ligne quasi horizontale, lente et lisse (autour de 1,6 m). En bleu, la même cible exprimée en repère effecteur (ce que voit la caméra) : une oscillation rapide de grande amplitude entre 0,7 et 2,1 m, dominée par le mouvement du robot.">
+      <figcaption><b>Figure 15.1.</b> Une seule cible, deux dynamiques. En <b>repère base</b> (vert), elle est
+      <em>lente</em> (elle bouge peu) → bruit de process <span class="math-inline">Q</span> minuscule. En
+      <b>repère effecteur</b> (bleu, ce que voit la caméra), elle est <em>rapide</em> — dominée par le
+      mouvement du robot. On veut estimer là où l'inconnu est lent : le <b>repère base</b>.</figcaption>
+    </figure>
+
+    <p>
+      D'où la décision : <strong>l'état est la pose de la cible dans le repère base</strong> (stabilisé, fixe).
+      Comme la cible y est lente — c'est votre hypothèse « dynamique cible faible devant celle du système » —
+      un modèle à vitesse constante avec un tout petit <span class="math-inline">Q</span> suffit, et le filtre
+      reste serré même entre deux images éloignées.
+    </p>
+    <div class="math">x = [ X , Y , Z , ψ , Vx , Vy , Vz ]ᵀ&nbsp;&nbsp;&nbsp;(pose cible + vitesse lente, repère base)</div>
+
+    <h2>3. La structure : la cinématique en transformation déterministe</h2>
+    <p>
+      La cinématique effecteur (connue chaque cycle) intervient à <strong>deux</strong> endroits, en entrée et
+      en sortie du filtre — jamais dedans.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-frame-structure.svg" alt="Schéma. Dans un OB cyclique rapide, un KF linéaire dont l'état est la pose cible en repère base. En entrée, la caméra asynchrone passe par un bloc déprojection z_base avant de corriger le KF. Le bloc CD+Jacobien fournit p_eff, v_eff, θ, ω chaque cycle : la pose à l'instant de capture alimente la déprojection, et la pose courante alimente un bloc recomposition en sortie qui produit p_rel et v_rel (avec le terme −ω×p_rel) pour la régulation. Un buffer horodaté des poses effecteur permet d'associer chaque image à la pose à l'instant de capture malgré la latence.">
+      <figcaption><b>Figure 15.2.</b> La cinématique effecteur (CD + Jacobien) n'est pas filtrée : elle sert de
+      transformation connue. <b>En entrée</b>, la <em>déprojection</em> ramène l'image dans le repère base avec
+      la pose effecteur à l'instant de capture. <b>En sortie</b>, la <em>recomposition</em> renvoie la pose
+      relative (et sa vitesse) à la régulation, à chaque cycle. Le KF, au milieu, ne fait qu'estimer une cible
+      lente.</figcaption>
+    </figure>
+
+    <p>
+      Point capital : comme la pose de l'effecteur (y compris son orientation
+      <span class="math-inline">R_eff</span>) est <strong>connue et calibrée</strong>, ces transformations
+      sont <strong>linéaires</strong>. La mesure caméra, ramenée en base, devient une mesure directe de la pose
+      cible (<span class="math-inline">H = I</span>). <strong>Pas besoin d'EKF ici</strong> — un filtre de
+      Kalman linéaire suffit (contrairement au chapitre 14, où l'angle inconnu était <em>dans</em> l'état).
+    </p>
+
+    <h2>4. Déprojection &amp; latence : le buffer horodaté</h2>
+    <p>
+      À l'arrivée d'une image, on ramène la mesure relative <span class="math-inline">z_rel</span> dans le
+      repère base en la composant avec la pose effecteur <strong>à l'instant de la prise de vue</strong>
+      <span class="math-inline">t_c</span> :
+    </p>
+    <div class="math">
+      z_base = p_eff(t_c) + R_eff(t_c) · z_rel<br>
+      R_base = R_eff(t_c) · R_cam · R_eff(t_c)ᵀ&nbsp;&nbsp;&nbsp;(covariance transportée — le « sandwich », chapitre 2)
+    </div>
+    <p>
+      La caméra n'étant pas synchrone et présentant une latence, <span class="math-inline">t_c</span> n'est
+      pas « maintenant ». On garde donc un <strong>buffer horodaté des poses effecteur</strong> (on les a à
+      chaque cycle) et on y relit <span class="math-inline">p_eff(t_c)</span>,
+      <span class="math-inline">R_eff(t_c)</span>. Comme la cible est <em>lente</em> en base, appliquer cette
+      correction (légèrement datée) sur l'estimé courant n'introduit qu'une erreur bornée par
+      <span class="math-inline">vitesse_cible × latence</span> — négligeable ici. Le pas de temps entre
+      corrections étant irrégulier, on recalcule <span class="math-inline">Q(dt)</span> à chaque prédiction
+      (chapitre 13, §6.1) : c'est un <strong>filtre complet</strong>, pas un gain constant.
+    </p>
+
+    <pre><code class="language-pascal">// SCL — à l'arrivée d'une image caméra (drapeau availCam).
+IF #availCam THEN
+    // 1) pose effecteur à l'instant de capture (relue dans le buffer horodaté)
+    ReadPoseBuffer(t := #tCapture, pEff => #pEff_c, Reff => #Reff_c);
+    // 2) déprojection : z_base = p_eff + R_eff · z_rel
+    #zbX := #pEff_c[0] + #Reff_c[0,0]*#zRelX + #Reff_c[0,1]*#zRelY;
+    #zbY := #pEff_c[1] + #Reff_c[1,0]*#zRelX + #Reff_c[1,1]*#zRelY;
+    // 3) mesure directe de la pose cible base : deux updates scalaires (H=I)
+    kf_update(z := #zbX, R := #Rcam, h := X);
+    kf_update(z := #zbY, R := #Rcam, h := Y);   // (idem Z, ψ)
+    #availCam := FALSE;
+END_IF;</code></pre>
+
+    <h2>5. Une sortie lisse à chaque cycle</h2>
+    <p>
+      À chaque cycle, on <strong>recompose</strong> l'estimé base avec la pose effecteur <em>courante</em> pour
+      rendre à la régulation la pose relative dont elle a besoin :
+    </p>
+    <div class="math">p_rel(t) = R_eff(t)ᵀ · ( X̂_base − p_eff(t) )</div>
+    <p>
+      Le résultat est <strong>lisse</strong> — il combine un estimé base lisse (petit
+      <span class="math-inline">Q</span>) et une cinématique effecteur lisse par cycle. La gigue et la rareté
+      de la caméra <em>ne traversent pas</em>.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-frame-output.svg" alt="Position relative X (ce que reçoit la régulation) sur la fenêtre 1,5 à 4,5 secondes. La vérité relative est en tirets. Les images caméra sont des points ambre rares et légèrement dispersés. La sortie filtrée est une courbe verte lisse qui suit fidèlement la vérité à chaque cycle, malgré la rareté des images.">
+      <figcaption><b>Figure 15.3.</b> La sortie relative <b>filtrée</b> (vert), produite à chaque cycle, suit
+      fidèlement la vérité (tirets) tout en absorbant la rareté et la gigue des <span class="math-inline">images
+      caméra</span> (points ambre). La régulation reçoit un signal propre et cadencé, alors même que la caméra
+      est lente et asynchrone.</figcaption>
+    </figure>
+
+    <h2>6. Le piège du repère tournant : −ω×p_rel</h2>
+    <p>
+      La régulation veut souvent aussi la <strong>vitesse relative</strong>. Attention : comme la caméra
+      <em>tourne</em> avec l'effecteur, la vitesse relative n'est <strong>pas</strong> simplement
+      <span class="math-inline">R_effᵀ(V − v_eff)</span>. En dérivant <span class="math-inline">p_rel = R_effᵀ(X_base − p_eff)</span>,
+      la rotation du repère fait apparaître un terme de transport :
+    </p>
+    <div class="math">
+      v_rel = R_effᵀ · ( V̂_base − v_eff )&nbsp;&nbsp;<strong>− ω_eff × p_rel</strong>
+    </div>
+    <p>
+      <span class="math-inline">ω_eff</span> (vitesse angulaire de l'effecteur) vient du Jacobien. Oublier le
+      terme <span class="math-inline">−ω_eff × p_rel</span> — le « Coriolis de repère » — est l'erreur la plus
+      fréquente de ce montage : même cible <em>immobile</em>, si l'effecteur tourne, la cible « défile » dans
+      l'image, et une vitesse relative sans ce terme est fausse.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-frame-velocity.svg" alt="Vitesse relative Vx en fonction du temps. La vraie vitesse (tirets) est parfaitement recouverte par la courbe verte 'correcte (avec −ω×p_rel)'. La courbe ambre 'naïve (sans le terme)' s'en écarte fortement, avec une amplitude et une phase très différentes, se trompant de plusieurs m/s.">
+      <figcaption><b>Figure 15.4.</b> La vitesse relative avec et sans le terme de repère tournant. La version
+      <b>correcte</b> (vert, avec <span class="math-inline">−ω_eff×p_rel</span>) se superpose à la vérité
+      (tirets). La version <b>naïve</b> (ambre) se trompe massivement — ici d'un facteur ~80 en erreur
+      quadratique. Le terme de transport n'est pas un détail : c'est l'essentiel du signal dès que l'effecteur
+      tourne.</figcaption>
+    </figure>
+
+    <pre><code class="language-pascal">// SCL — recomposition en sortie, CHAQUE cycle. (2D ; Z, ψ analogues)
+// p_rel = R_effᵀ · (X_base − p_eff)
+dx := #Xbase - #pEff[0];   dy := #Ybase - #pEff[1];
+#pRelX :=  #Reff[0,0]*dx + #Reff[1,0]*dy;   // Rᵀ = transposée
+#pRelY :=  #Reff[0,1]*dx + #Reff[1,1]*dy;
+// v_rel = R_effᵀ·(V_base − v_eff) − ω_eff × p_rel
+dvx := #Vxbase - #vEff[0]; dvy := #Vybase - #vEff[1];
+vbx :=  #Reff[0,0]*dvx + #Reff[1,0]*dvy;
+vby :=  #Reff[0,1]*dvx + #Reff[1,1]*dvy;
+#vRelX := vbx - #omEff*(-#pRelY);    // − ω×p_rel  (en 2D : ω×p = ω·[−py, px])
+#vRelY := vby - #omEff*( #pRelX);</code></pre>
+
+    <h2>7. Robustesse &amp; implémentation</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Gating NIS</strong> sur chaque image (chapitre 13, §6.3) : une fausse détection est
+          catastrophique. Rejeter si <span class="math-inline">yᵀS⁻¹y</span> dépasse le seuil
+          <span class="math-inline">χ²</span> — exige le <span class="math-inline">P</span> vivant, donc le
+          filtre complet.</li>
+        <li><strong>Pas variable</strong> : <span class="math-inline">Q(dt)</span> recalculé (corrections
+          irrégulières) — pas de gain constant possible.</li>
+        <li><strong>Numérique</strong> : <code>LREAL</code>, forme de Joseph, resymétrisation (chapitre 12).</li>
+        <li><strong>Sortie toujours définie</strong> : même sans image depuis longtemps, la recomposition
+          fournit une pose relative (l'estimé base prédit, recomposé) — la régulation n'est jamais privée de
+          consigne, juste avec un <span class="math-inline">P</span> qui grandit (à surveiller).</li>
+      </ul>
+    </div>
+
+    <h2>8. Quand ce choix bascule</h2>
+    <p>
+      Le KF linéaire en repère base tient tant que deux hypothèses tiennent :
+    </p>
+    <ul>
+      <li><strong>La pose effecteur est fiable</strong> (CD + Jacobien calibrés). Si l'on devait au contraire
+        <em>estimer</em> une orientation effecteur incertaine, la composition de rotations deviendrait
+        non-linéaire → retour à l'<strong>EKF</strong> (chapitre 14).</li>
+      <li><strong>La cible est lente</strong> devant le système. Si elle devenait rapide, le petit
+        <span class="math-inline">Q</span> ne suffirait plus : il faudrait enrichir son modèle (accélération,
+        modèle de mouvement dédié), mais <em>toujours en repère base</em> — le choix du repère, lui, ne change
+        pas.</li>
+    </ul>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Pourquoi Q est-il si petit ?</h3>
+      <p>
+        On estime la cible en repère base avec un modèle à vitesse constante. La cible peut dériver de
+        <span class="math-inline">≈ 2 cm/s</span> au plus, avec des changements très progressifs. Quel ordre de
+        grandeur pour <span class="math-inline">σα</span> (bruit d'accélération), et pourquoi le repère base
+        rend-il ce réglage facile ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Les changements de vitesse de la cible sont lents : une accélération de quelques
+          <span class="math-inline">cm/s²</span> tout au plus. On prend donc
+          <span class="math-inline">σα</span> de cet ordre (petit). En repère base, tout le mouvement rapide
+          (celui du robot) a <em>disparu</em> de l'état — il est porté par les transformations déterministes.
+          Le <span class="math-inline">Q</span> ne couvre plus que la vraie incertitude de la cible, qui est
+          minuscule. En repère relatif, au contraire, <span class="math-inline">σα</span> aurait dû couvrir les
+          accélérations du robot (des <span class="math-inline">m/s²</span>) — un <span class="math-inline">Q</span>
+          des milliers de fois plus grand, donc un filtre bien pire.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Cible immobile, effecteur qui tourne</h3>
+      <p>
+        La cible est parfaitement immobile (<span class="math-inline">V_base = 0</span>) et l'effecteur ne fait
+        que <em>tourner</em> sur place (<span class="math-inline">v_eff = 0</span>,
+        <span class="math-inline">ω_eff ≠ 0</span>). Quelle est la vraie vitesse relative
+        <span class="math-inline">v_rel</span> ? Que donnerait la formule naïve ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Formule complète : <span class="math-inline">v_rel = R_effᵀ(0 − 0) − ω_eff × p_rel = −ω_eff × p_rel</span>.
+          Non nulle&nbsp;! La cible <em>défile</em> dans l'image parce que le champ tourne, alors qu'elle ne
+          bouge pas dans le monde. La formule <strong>naïve</strong> donnerait
+          <span class="math-inline">v_rel = 0</span> — complètement faux. C'est exactement l'écart massif de la
+          figure 15.4, et la raison pour laquelle une régulation en vitesse alimentée par la formule naïve
+          serait instable dès que l'effecteur tourne.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Ne filtre pas le relatif</strong> : son mouvement rapide vient du robot, que tu connais déjà. Ne filtre que l'inconnu.</li>
+        <li><strong>État en repère base</strong> (où la cible est lente) : <span class="math-inline">[X,Y,Z,ψ,Vx,Vy,Vz]</span>, vitesse constante, <span class="math-inline">Q</span> minuscule.</li>
+        <li>La <strong>cinématique effecteur</strong> (CD + Jacobien) est une <strong>transformation déterministe</strong> : déprojection en entrée, recomposition en sortie — jamais dans le filtre.</li>
+        <li>Pose effecteur connue ⇒ tout est <strong>linéaire</strong> : KF linéaire, pas d'EKF ; mesure base directe (<span class="math-inline">H = I</span>).</li>
+        <li><strong>Buffer horodaté</strong> pour la latence : déprojeter avec <span class="math-inline">p_eff(t_c)</span> ; cible lente ⇒ correction datée quasi valide ; <span class="math-inline">Q(dt)</span> recalculé (filtre complet).</li>
+        <li><strong>Sortie lisse chaque cycle</strong> : la gigue caméra ne traverse pas.</li>
+        <li><strong>Vitesse relative</strong> : ne pas oublier <span class="math-inline">−ω_eff×p_rel</span> (repère tournant) — sinon erreur massive.</li>
+        <li>Bascule vers l'EKF seulement si l'orientation effecteur devient un <em>inconnu</em> à estimer.</li>
+      </ul>
+    </div>
+
+    <div class="callout histoire">
+      <p>
+        <strong>La leçon transversale.</strong> Ce chapitre ne parle presque pas de Kalman — il parle de
+        <em>modélisation</em> : choisir l'état dans le repère où l'inconnu est le plus simple, et repousser
+        tout le connu dans des transformations déterministes. C'est le geste qui distingue un filtre qui marche
+        d'un filtre qu'on n'arrive jamais à régler. Les chapitres suivants (UKF, fusion IMU) reposeront sur ce
+        même réflexe.
+      </p>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-14.html"><span class="lbl">← Précédent</span>EKF : inclinomètres + caméra</a>
+    <a class="next" href="index.html"><span class="lbl">↩ Sommaire</span>Tous les chapitres</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>
