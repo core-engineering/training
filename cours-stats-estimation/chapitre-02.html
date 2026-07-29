@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — Décrire une variable : distribution, espérance, variance</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>Décrire une variable : distribution, espérance, variance</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Décrire une VA par sa <strong>distribution</strong> (loi) — discrète ou continue (densité).</li>
+        <li>Comprendre l'<strong>espérance</strong> comme centre de gravité et sa propriété maîtresse : la linéarité.</li>
+        <li>Comprendre la <strong>variance</strong> et l'<strong>écart-type</strong> — et leurs unités.</li>
+        <li>Savoir lire les <strong>règles 68 / 95 / 99,7</strong> et raisonner en ±kσ sur un capteur.</li>
+      </ul>
+    </div>
+
+    <h2>1. La distribution : la carte des possibles</h2>
+    <p>
+      Une VA est décrite par sa <strong>distribution</strong> (ou loi) : la répartition des chances entre les
+      valeurs possibles. Pour une VA <strong>discrète</strong> (un dé, un compteur d'événements), on liste
+      les probabilités : <span class="math-inline">P(Z = 1) = 1/6</span>, etc. — des nombres positifs qui
+      somment à 1.
+    </p>
+    <p>
+      Nos capteurs vivent dans le <strong>continu</strong> : une lecture d'angle peut prendre n'importe
+      quelle valeur réelle. La probabilité d'une valeur <em>exacte</em> y est nulle
+      (<span class="math-inline">P(Z = 5,000000…) = 0</span>) — on décrit donc la loi par une
+      <strong>densité de probabilité</strong> <span class="math-inline">p(z)</span> : une fonction dont
+      l'<em>aire</em> sur un intervalle donne la probabilité d'y tomber.
+    </p>
+    <div class="math">
+      P( a ≤ Z ≤ b ) = ∫ₐᵇ p(z) dz&nbsp;&nbsp;&nbsp;&nbsp;avec&nbsp;&nbsp;∫ p(z) dz = 1 (aire totale)
+    </div>
+
+    <div class="callout piege">
+      <p>
+        Une densité n'est <strong>pas</strong> une probabilité : elle peut dépasser 1 (si la VA est très
+        concentrée), et elle a une <em>unité</em> — l'inverse de celle de la variable
+        (<span class="math-inline">p(z)</span> en 1/° pour un angle en degrés). Seules ses <em>aires</em>
+        sont des probabilités, sans dimension. C'est le même piège que la densité spectrale du chapitre 7 :
+        « densité » signifie toujours « quelque chose à intégrer ».
+      </p>
+    </div>
+
+    <h2>2. L'espérance : le centre de gravité</h2>
+    <p>
+      Résumer toute une distribution par quelques nombres — c'est le rôle des <strong>moments</strong>. Le
+      premier est l'<strong>espérance</strong> <span class="math-inline">E[Z]</span>, notée
+      <span class="math-inline">μ</span> : la moyenne pondérée des valeurs possibles, chacune comptée avec
+      sa chance.
+    </p>
+    <div class="math">
+      discret : E[Z] = Σ zᵢ·P(Z = zᵢ)&nbsp;&nbsp;&nbsp;&nbsp;continu : E[Z] = ∫ z·p(z) dz
+    </div>
+    <p>
+      Image mécanique : si la densité était une plaque de tôle, <span class="math-inline">μ</span> serait
+      son <strong>centre de gravité</strong>. Interprétation fréquentielle (le pont avec le niveau
+      réalisation du chapitre 1) : si l'on rejouait l'expérience un grand nombre de fois, la moyenne des
+      réalisations s'approcherait de <span class="math-inline">μ</span> — c'est la loi des grands nombres,
+      que le chapitre 8 rendra quantitative.
+    </p>
+    <p>
+      Sa propriété reine, utilisée sans arrêt dans tout le cours de Kalman : l'espérance est
+      <strong>linéaire</strong>, sans <em>aucune</em> condition d'indépendance :
+    </p>
+    <div class="math">
+      E[aZ + b] = a·E[Z] + b&nbsp;&nbsp;&nbsp;&nbsp;E[Z₁ + Z₂] = E[Z₁] + E[Z₂]&nbsp;&nbsp;(toujours)
+    </div>
+
+    <h2>3. La variance : l'étalement</h2>
+    <p>
+      Deux capteurs peuvent avoir la même moyenne et des comportements très différents : l'un colle à
+      <span class="math-inline">μ</span>, l'autre s'en écarte largement. Le deuxième moment mesure cet
+      étalement : la <strong>variance</strong> est la moyenne des <em>carrés</em> des écarts au centre.
+    </p>
+    <div class="math">
+      Var[Z] = E[ (Z − μ)² ] = E[Z²] − μ²&nbsp;&nbsp;&nbsp;&nbsp;σ = √Var[Z]&nbsp;&nbsp;(écart-type)
+    </div>
+    <p>
+      Pourquoi le <em>carré</em> et pas la valeur absolue ? Trois raisons pratiques : le carré pénalise
+      davantage les grands écarts, il rend le calcul différentiable (indispensable pour minimiser — le
+      MMSE du chapitre 9), et surtout il rend les variances <strong>additives</strong> pour des variables
+      indépendantes (chapitre 4) — la propriété qui fait tenir tout l'édifice, du
+      <span class="math-inline">√N</span> de la marche aléatoire au <span class="math-inline">+Q</span> du
+      filtre.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Les unités.</strong> La variance porte l'unité <em>au carré</em> :
+        <span class="math-inline">deg²</span>, <span class="math-inline">m²</span>,
+        <span class="math-inline">(m/s)²</span>. Seul l'écart-type <span class="math-inline">σ</span> partage
+        l'unité de la variable — c'est lui qu'on lit comme un « ± », lui qu'on compare à une tolérance. Dire
+        « le bruit est de 0,16 » sans préciser si c'est <span class="math-inline">σ</span> (0,16°) ou
+        <span class="math-inline">σ²</span> (0,16 deg², soit <span class="math-inline">σ = 0,4°</span>)
+        est l'erreur d'inattention la plus coûteuse du métier — un facteur arbitraire au carré dans
+        <span class="math-inline">R</span>.
+      </p>
+    </div>
+
+    <p>Sous transformation affine, l'écho de la linéarité — avec le carré qui apparaît :</p>
+    <div class="math">
+      Var[aZ + b] = a²·Var[Z]&nbsp;&nbsp;&nbsp;(le b, qui translate, ne change pas l'étalement)
+    </div>
+
+    <h2>4. Lire une loi en ±kσ</h2>
+    <p>
+      Pour la gaussienne — qu'on justifiera au chapitre 4 — la paire
+      <span class="math-inline">(μ, σ)</span> dit <em>tout</em>, et trois chiffres suffisent à raisonner :
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-pdf.svg" alt="Densité gaussienne en cloche, centrée sur μ, avec trois zones d'aires imbriquées de plus en plus claires : ±1σ contient 68 % de l'aire, ±2σ en contient 95 %, ±3σ en contient 99,7 %. L'axe horizontal est gradué en μ−3σ, μ−σ, μ, μ+σ, μ+3σ et légendé 'mesure de l'inclinomètre (°), capteur immobile'.">
+      <figcaption><b>Figure 2.1.</b> La règle 68–95–99,7. Pour une loi gaussienne, environ <b>68 %</b> des
+      réalisations tombent dans <span class="math-inline">μ ± σ</span>, <b>95 %</b> dans
+      <span class="math-inline">μ ± 2σ</span>, <b>99,7 %</b> dans <span class="math-inline">μ ± 3σ</span>.
+      C'est la table de conversion mentale entre « la loi » (niveau ensemble) et « ce que je vais voir à
+      l'écran » (niveau réalisation).</figcaption>
+    </figure>
+
+    <p>
+      Cette règle est l'outil de terrain par excellence :
+    </p>
+    <ul>
+      <li>Un inclinomètre de bruit <span class="math-inline">σ = 0,4°</span> : les lectures s'étalent
+        typiquement sur <span class="math-inline">± 0,8°</span> (2σ), et une excursion à
+        <span class="math-inline">± 1,2°</span> (3σ) reste normale — pas une panne.</li>
+      <li>À l'inverse, une datasheet qui annonce « ± 1,2° crête-à-crête » décrit vraisemblablement
+        <span class="math-inline">± 3σ</span>, d'où <span class="math-inline">σ ≈ 0,4°</span> — la règle
+        <span class="math-inline">σ ≈ pk-pk/6</span> du chapitre 16 du cours Kalman.</li>
+      <li>Une mesure à <span class="math-inline">5σ</span> de ce qu'on attendait a une chance sur
+        des millions d'être due au hasard modélisé : c'est un <em>aberrant</em> — le fondement du gating
+        par NIS.</li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>
+        Remarquez le raisonnement : la loi (ensemble) vous dit <em>à l'avance</em> dans quel couloir les
+        réalisations vont tomber. C'est exactement ce que fait le filtre de Kalman quand il annonce
+        <span class="math-inline">x̂ ± √P</span> : il trace le couloir à ±1σ dans lequel la vraie valeur se
+        trouve avec ~68 % de chances. Une bande d'incertitude <em>est</em> une règle 68–95–99,7 en marche.
+      </p>
+    </div>
+
+    <h2>5. Estimer μ et σ² depuis des mesures — l'aperçu</h2>
+    <p>
+      En pratique on ne connaît pas <span class="math-inline">μ</span> et
+      <span class="math-inline">σ²</span> : on les <em>estime</em> à partir de réalisations — moyenne
+      empirique, variance empirique (celle du chapitre 16 du cours Kalman, avec le
+      <span class="math-inline">N−1</span> de Bessel). Mais attention, chapitre 1 : ces estimations sont
+      <em>elles-mêmes des réalisations de VA</em>, avec leur propre étalement. Combien de mesures pour une
+      estimation fiable ? C'est tout l'objet du chapitre 8. Ici, retenez seulement la hiérarchie :
+      <strong>la loi possède μ et σ² ; les données permettent de les approcher</strong>.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Calcul complet sur un cas discret</h3>
+      <p>
+        Un capteur de comptage renvoie 0 défaut avec probabilité 0,7, 1 défaut avec probabilité 0,2 et
+        2 défauts avec probabilité 0,1. Calculez <span class="math-inline">E[Z]</span>,
+        <span class="math-inline">E[Z²]</span>, <span class="math-inline">Var[Z]</span> et
+        <span class="math-inline">σ</span>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <div class="math">
+          E[Z] = 0×0,7 + 1×0,2 + 2×0,1 = 0,4<br>
+          E[Z²] = 0×0,7 + 1×0,2 + 4×0,1 = 0,6<br>
+          Var[Z] = E[Z²] − (E[Z])² = 0,6 − 0,16 = 0,44&nbsp;&nbsp;&nbsp;σ = √0,44 ≈ 0,66
+        </div>
+        <p>
+          Notez la mécanique <span class="math-inline">Var = E[Z²] − μ²</span> : souvent plus rapide que la
+          définition, et c'est la forme qu'utilise l'algorithme de calcul en ligne (Welford, cours Kalman
+          ch. 16, qui en est une version numériquement stabilisée).
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Raisonner en σ sur votre inclinomètre</h3>
+      <p>
+        Votre inclinomètre a un bruit <span class="math-inline">σ = 0,05°</span>, capteur immobile à
+        <span class="math-inline">μ = 2,00°</span>. (a) Dans quelle plage attendez-vous ~95 % des lectures ?
+        (b) Une lecture à 2,30° arrive : bruit normal ou événement ? (c) Le seuil d'alarme d'une
+        surveillance est fixé à ±0,10° autour de 2,00° : quelle fraction du temps sonnera-t-elle pour rien ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> <span class="math-inline">μ ± 2σ = 2,00 ± 0,10°</span> → entre 1,90 et 2,10°.</li>
+          <li><strong>(b)</strong> 2,30° est à <span class="math-inline">0,30/0,05 = 6σ</span> : quasi impossible par le seul bruit modélisé. C'est un événement réel (choc, décrochage) ou un aberrant — à gater, pas à filtrer.</li>
+          <li><strong>(c)</strong> ±0,10° = ±2σ : ~5 % des lectures sortent de la bande par pur bruit — l'alarme sonnera pour rien environ 1 lecture sur 20. À 10 Hz, une fausse alarme toutes les 2 s : seuil inutilisable. D'où la règle : un seuil sur mesure <em>brute</em> se place à 4–5σ, ou mieux, sur la sortie <em>filtrée</em> (dont le σ est bien plus petit).</li>
+        </ul>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — L'unité qui trahit</h3>
+      <p>
+        Dans un projet, vous trouvez <code>R := 0.4;</code> commenté « bruit inclinomètre 0,4° ». Qu'en
+        pensez-vous, et que vaut la bonne valeur ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <span class="math-inline">R</span> est une <strong>variance</strong> : il doit valoir
+          <span class="math-inline">σ² = 0,4² = 0,16 deg²</span>, pas 0,4. Avec
+          <span class="math-inline">R = 0,4</span>, le filtre croit le capteur 2,5 fois plus bruité qu'il
+          n'est (en variance) : il le sous-pondère, lisse trop, traîne. Le bug ne plante rien — il dégrade
+          silencieusement. Réflexe : à chaque covariance écrite, vérifier l'unité <em>au carré</em>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Distribution</strong> : la carte des possibles. En continu, une <strong>densité</strong> <span class="math-inline">p(z)</span> — seules ses <em>aires</em> sont des probabilités ; elle a une unité (1/unité de z).</li>
+        <li><strong>Espérance</strong> <span class="math-inline">μ = E[Z]</span> : centre de gravité ; <strong>linéaire sans condition</strong> : <span class="math-inline">E[aZ+b] = aμ+b</span>, <span class="math-inline">E[Z₁+Z₂] = E[Z₁]+E[Z₂]</span>.</li>
+        <li><strong>Variance</strong> <span class="math-inline">σ² = E[(Z−μ)²] = E[Z²]−μ²</span> ; <span class="math-inline">Var[aZ+b] = a²σ²</span> ; unités <strong>au carré</strong> ; l'écart-type <span class="math-inline">σ</span> se lit comme un « ± ».</li>
+        <li><strong>68 / 95 / 99,7</strong> dans <span class="math-inline">±1σ / ±2σ / ±3σ</span> : la conversion mentale loi ↔ observations ; fonde le pk-pk/6, les bandes <span class="math-inline">x̂ ± √P</span> et le gating des aberrants.</li>
+        <li><span class="math-inline">μ, σ²</span> appartiennent à la <em>loi</em> ; les données permettent seulement de les <em>estimer</em> (chapitre 8).</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Le hasard et ses deux visages</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>Plusieurs variables : jointe, conditionnelle, covariance</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

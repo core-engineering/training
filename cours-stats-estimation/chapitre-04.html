@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — La gaussienne et le théorème central limite</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>La gaussienne et le théorème central limite</h1>
+
+    <div class="callout note">
+      Pourquoi la cloche gaussienne est-elle <em>partout</em> — dans les datasheets, dans le filtre de
+      Kalman, dans le bruit de votre inclinomètre ? Ce n'est pas une convention paresseuse : c'est un
+      théorème. Ce chapitre montre <strong>d'où vient</strong> la gaussienne, puis pourquoi elle est si
+      confortable à manipuler.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Voir le <strong>théorème central limite</strong> (TCL) à l'œuvre : la somme de nombreux petits hasards devient gaussienne.</li>
+        <li>Savoir quand l'hypothèse gaussienne est <em>justifiée</em> pour un capteur — et quand elle ne l'est pas.</li>
+        <li>Connaître les propriétés de <strong>stabilité</strong> : somme, transformation linéaire.</li>
+        <li>Retenir la conséquence pratique : deux nombres (<span class="math-inline">μ, σ²</span>) décrivent tout.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le théorème central limite : le hasard qui s'additionne devient une cloche</h2>
+    <p>
+      Prenez n'importe quel petit bruit — même grossier, même non gaussien : une pièce de monnaie, une
+      erreur de quantification uniforme, un parasite électronique. Additionnez-en beaucoup, indépendants
+      entre eux. Le <strong>théorème central limite</strong> affirme que la somme, convenablement
+      normalisée, suit une loi <strong>gaussienne</strong> — quelle que soit la loi de départ.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-tcl.svg" alt="Trois histogrammes côte à côte. Pour n = 1 (une seule variable uniforme), l'histogramme est plat, rectangulaire, très loin de la cloche. Pour n = 2 (somme de deux uniformes), il devient triangulaire. Pour n = 12, il épouse presque parfaitement la gaussienne tracée en tirets par-dessus. La légende indique que les tirets gris sont la gaussienne N(0,1), point de convergence universel.">
+      <figcaption><b>Figure 4.1.</b> Le TCL en marche, calculé sur 6000 tirages réels. À gauche, la loi de
+      départ : <b>uniforme</b>, aussi peu gaussienne que possible (plate !). Somme de 2 : déjà une tente.
+      Somme de 12 : la cloche, presque parfaite. La forme de départ s'oublie ; seules survivent la moyenne
+      et la variance. C'est <em>le</em> théorème qui explique l'omniprésence de la gaussienne.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Pourquoi votre capteur est (presque) gaussien.</strong> Le bruit d'un inclinomètre n'est
+        pas <em>une</em> cause : c'est la superposition de dizaines de micro-causes indépendantes — bruit
+        thermique de chaque résistance, bruit de grenaille, micro-vibrations, arrondi du CAN… Le TCL fait
+        le reste : la somme de tous ces petits hasards <em>est</em> une cloche, quelles que soient leurs
+        lois individuelles. L'hypothèse gaussienne des datasheets et du filtre de Kalman n'est pas un choix
+        esthétique : c'est la physique statistique du capteur.
+      </p>
+    </div>
+
+    <div class="callout piege">
+      <p>
+        <strong>Quand la cloche ment.</strong> Le TCL exige des causes <em>nombreuses, petites et
+        indépendantes</em>. Trois situations le mettent en échec : une <strong>cause dominante</strong> non
+        gaussienne (un parasite de commutation à 2 points discrets : la loi est bimodale) ; des
+        <strong>aberrants</strong> (fausse détection caméra : la vraie loi a des « queues lourdes » — d'où
+        le gating, car le filtre gaussien pondère mal ces événements) ; une <strong>saturation</strong>
+        (capteur en butée : la loi s'écrase contre la limite). Réflexe : tracer l'<em>histogramme</em> des
+        mesures au repos (cours Kalman, ch. 16) — si ce n'est pas une cloche, comprendre pourquoi
+        <em>avant</em> de remplir <span class="math-inline">R</span>.
+      </p>
+    </div>
+
+    <h2>2. La loi gaussienne : deux paramètres, tout le comportement</h2>
+    <p>
+      La densité gaussienne <span class="math-inline">N(μ, σ²)</span> :
+    </p>
+    <div class="math">
+      p(z) = (1 / √(2πσ²)) · exp( −(z − μ)² / (2σ²) )
+    </div>
+    <p>
+      Tout est dans l'exposant : un écart au carré, pénalisé d'autant plus vite qu'on s'éloigne de
+      <span class="math-inline">μ</span>, à l'échelle <span class="math-inline">σ</span>. Le point capital
+      n'est pas la formule, c'est ceci : la gaussienne est <strong>entièrement déterminée</strong> par
+      <span class="math-inline">(μ, σ²)</span>. Pas de troisième paramètre, pas de forme cachée. Connaître
+      la moyenne et la variance, c'est connaître <em>toute</em> la loi — les 68/95/99,7 du chapitre 2, les
+      quantiles, tout.
+    </p>
+    <p>
+      C'est ce qui rend possible un filtre de Kalman <em>calculable</em> : suivre une croyance gaussienne,
+      c'est ne suivre que <span class="math-inline">(x̂, P)</span>. Si les lois pouvaient prendre des
+      formes arbitraires, il faudrait suivre une fonction entière à chaque cycle (c'est ce que fait, à
+      grands frais, un filtre particulaire).
+    </p>
+
+    <h2>3. La stabilité : la gaussienne survit aux opérations linéaires</h2>
+    <p>
+      Deuxième vertu, aussi importante : la famille gaussienne est <strong>stable</strong>. Les opérations
+      qu'on fait subir aux signaux — sommer, amplifier, combiner — ne la font pas sortir de la famille.
+    </p>
+    <div class="math">
+      X ∼ N(μ, σ²)  ⟹  aX + b ∼ N(aμ + b, a²σ²)<br>
+      X₁ ⊥ X₂ gaussiennes  ⟹  X₁ + X₂ ∼ N(μ₁ + μ₂, σ₁² + σ₂²)
+    </div>
+    <p>
+      La somme de deux gaussiennes indépendantes est gaussienne, <em>exactement</em> — moyennes ajoutées,
+      variances ajoutées (l'additivité du chapitre 3, plus la conservation de la forme). Là où le TCL dit
+      « toute somme <em>devient</em> gaussienne à la longue », la stabilité dit « une somme de gaussiennes
+      l'<em>est</em> immédiatement ». Les deux se renforcent : le monde converge vers la gaussienne, et une
+      fois dedans, on n'en sort plus.
+    </p>
+
+    <div class="callout math">
+      <p>
+        <strong>Retour sur la chaîne de mesure.</strong> L'exercice 2 du chapitre 3 (capteur + CAN + EMI)
+        prend tout son sens : chaque source est ~gaussienne (TCL), leur somme est gaussienne (stabilité), de
+        variance la somme des variances. La chaîne complète reste donc décrite par un seul
+        <span class="math-inline">σ</span> — celui qu'on met au carré dans <span class="math-inline">R</span>.
+        Sans la stabilité, « le bruit total du capteur » n'aurait même pas de forme simple.
+      </p>
+    </div>
+
+    <p>
+      La stabilité vaut plus généralement pour toute <strong>transformation linéaire</strong> d'un vecteur
+      gaussien (le sandwich <span class="math-inline">AΣAᵀ</span>), pour la <strong>marginalisation</strong>
+      et pour le <strong>conditionnement</strong> — les « trois clôtures » détaillées au
+      <a href="../cours-filtre-kalman/chapitre-03.html">chapitre 3 du cours Kalman</a>, qui font
+      exactement tourner la prédiction et la correction du filtre.
+    </p>
+
+    <h2>4. Ce que la gaussienne ne pardonne pas</h2>
+    <p>
+      Une seule opération courante fait sortir de la famille : la <strong>non-linéarité</strong>. Passer une
+      gaussienne dans un <span class="math-inline">atan</span>, un sinus, une saturation produit une loi qui
+      n'est plus gaussienne — c'est tout le problème de l'EKF
+      (<a href="../cours-filtre-kalman/chapitre-14.html">cours Kalman, ch. 14</a>), qui rattrape le coup en
+      linéarisant localement. Retenez la ligne de partage : <em>linéaire = on reste gaussien, exactement ;
+      non-linéaire = on approxime</em>.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Le CAN et le TCL</h3>
+      <p>
+        L'erreur de quantification d'un CAN est uniforme sur <span class="math-inline">[−q/2, +q/2]</span>,
+        de variance <span class="math-inline">q²/12</span> — et pas du tout gaussienne. Votre chaîne moyenne
+        16 échantillons successifs avant de livrer une valeur. Que peut-on dire de la loi de l'erreur de
+        quantification <em>moyennée</em>, et de sa variance ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          La moyenne de 16 erreurs ~indépendantes est une somme normalisée : par le <strong>TCL</strong>
+          (déjà bien engagé à n = 16, cf. figure 4.1 où n = 12 suffit), elle est quasi gaussienne. Sa
+          variance : additivité puis division par 16² —
+          <span class="math-inline">Var = 16·(q²/12)/16² = q²/(12·16)</span>, soit un écart-type divisé par
+          4. Moralité doublement utile : le moyennage <em>gaussianise</em> les bruits non gaussiens
+          <em>et</em> les réduit en <span class="math-inline">1/√N</span> (chapitre 8). C'est pour cela
+          qu'on peut presque toujours traiter le bruit de quantification comme un petit bruit gaussien de
+          plus.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Fusion de deux bruits, en gaussien</h3>
+      <p>
+        Deux inclinomètres indépendants, <span class="math-inline">σ₁ = 0,3°</span> et
+        <span class="math-inline">σ₂ = 0,4°</span>, visent le même angle. (a) Quelle est la loi de la
+        <em>différence</em> <span class="math-inline">Z₁ − Z₂</span> de leurs lectures (capteurs sains) ?
+        (b) Un jour, cette différence vaut 2,1°. Diagnostic ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> Différence de gaussiennes indépendantes = gaussienne (stabilité, avec
+            <span class="math-inline">a = −1</span> sur la seconde) : moyenne 0 (elles mesurent le même
+            angle, les biais étant supposés calibrés), variance
+            <span class="math-inline">0,3² + 0,4² = 0,25</span> →
+            <span class="math-inline">σ_diff = 0,5°</span>. Remarquez : les variances <em>s'ajoutent</em>
+            même pour une différence (le signe part au carré).</li>
+          <li><strong>(b)</strong> 2,1° = <span class="math-inline">4,2σ</span> : probabilité ~2/100 000
+            par le seul bruit. L'un des deux capteurs est en défaut (ou décalé mécaniquement). Ce test de
+            l'écart entre capteurs redondants — seuillé en kσ de la loi de la différence — est un
+            diagnostic standard, et un petit avant-goût de la NIS.</li>
+        </ul>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Deux nombres suffisent… quand ?</h3>
+      <p>
+        Vrai ou faux : « pour n'importe quelle VA, connaître <span class="math-inline">μ</span> et
+        <span class="math-inline">σ²</span> détermine la probabilité de dépasser
+        <span class="math-inline">μ + 2σ</span> ». Justifiez, et dites ce que ça change pour un capteur.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <strong>Faux</strong> en général : deux lois peuvent partager
+          <span class="math-inline">(μ, σ²)</span> et différer partout ailleurs (une bimodale et une cloche,
+          par exemple). Les 68/95/99,7 sont des propriétés <em>de la gaussienne</em>, pas de tout couple
+          <span class="math-inline">(μ, σ²)</span>. C'est <strong>vrai</strong> si la loi est gaussienne —
+          et c'est précisément pourquoi on vérifie l'histogramme au repos avant de raisonner en ±kσ : le
+          seuillage d'aberrants, la bande <span class="math-inline">x̂ ± 2√P</span>, le pk-pk/6 supposent
+          tous la cloche. (Il existe une borne valable pour <em>toute</em> loi — l'inégalité de Tchebychev,
+          <span class="math-inline">P(|Z−μ| ≥ kσ) ≤ 1/k²</span> — mais elle est bien plus lâche : ≤ 25 % à
+          2σ, contre 5 % pour la gaussienne.)
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>TCL</strong> : la somme de nombreux petits hasards indépendants devient gaussienne, quelle que soit leur loi. C'est la <em>raison physique</em> de l'omniprésence de la cloche dans les capteurs.</li>
+        <li>Limites du TCL : cause dominante, aberrants (queues lourdes), saturation → vérifier l'<strong>histogramme</strong> avant de croire à la cloche.</li>
+        <li>La gaussienne est <strong>entièrement décrite par (μ, σ²)</strong> → un filtre n'a à suivre que <span class="math-inline">(x̂, P)</span>.</li>
+        <li><strong>Stabilité</strong> : <span class="math-inline">aX+b</span> et <span class="math-inline">X₁+X₂</span> (indépendantes) restent gaussiennes — moyennes ajoutées, variances ajoutées. Linéaire = exact ; non-linéaire = on sort de la famille (EKF).</li>
+        <li>Moyenner <em>gaussianise</em> (TCL) et <em>réduit</em> (1/√N) : deux services rendus d'un coup.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>Plusieurs variables</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Processus aléatoires : le hasard dans le temps</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

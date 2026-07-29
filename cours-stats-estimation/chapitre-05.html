@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Processus aléatoires : le hasard dans le temps</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Processus aléatoires : le hasard dans le temps</h1>
+
+    <div class="callout note">
+      Jusqu'ici, une VA = <em>un</em> tirage. Mais un capteur ne tire pas une fois : il produit un
+      <em>signal</em>, un tirage par cycle, indéfiniment. L'objet qui décrit cela est le
+      <strong>processus aléatoire</strong> — et c'est ici que la question « variable aléatoire vs
+      réalisation <em>temporelle</em> » se résout complètement.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Définir un <strong>processus aléatoire</strong> et sa <strong>trajectoire</strong> (réalisation temporelle).</li>
+        <li>Comprendre <strong>stationnarité</strong> et <strong>ergodicité</strong> — et pourquoi elles autorisent à mesurer une loi sur un seul enregistrement.</li>
+        <li>Manier l'<strong>autocorrélation</strong> : la mémoire d'un signal.</li>
+        <li>Définir proprement le <strong>bruit blanc</strong> — l'hypothèse centrale du filtre de Kalman.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le processus : une variable aléatoire par instant</h2>
+    <p>
+      Un <strong>processus aléatoire</strong> <span class="math-inline">{Zₖ}</span> est une <em>famille de
+      variables aléatoires indexée par le temps</em> : une VA <span class="math-inline">Z₁</span> pour le
+      cycle 1, une VA <span class="math-inline">Z₂</span> pour le cycle 2, etc. Le modèle du bruit de votre
+      inclinomètre n'est pas <em>une</em> VA : c'en est une <em>par échantillon</em>, plus la donnée de
+      leurs liens mutuels.
+    </p>
+    <p>
+      Et la réalisation ? Quand l'expérience a lieu — quand votre capteur tourne —, <em>chaque</em> VA de la
+      famille tire sa valeur : il en sort une <strong>suite de nombres</strong>
+      <span class="math-inline">z₁, z₂, z₃, …</span> — un <em>signal</em>. Cette suite s'appelle une
+      <strong>trajectoire</strong> (ou réalisation) du processus. Voilà, énoncée en une phrase, la réponse
+      à la question qui bloque tout le monde :
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Une réalisation temporelle n'est pas « la VA devenue signal » : c'est un tirage <em>par
+        instant</em>.</strong> Le processus (niveau ensemble) est la pile de machines à tirer — une par
+        cycle ; la trajectoire (niveau réalisation) est la suite des valeurs sorties. Rejouez le monde : les
+        machines sont les mêmes, la trajectoire est différente. C'est exactement la figure 1.1 : les
+        signaux gris et vert sont des trajectoires ; la gaussienne de droite est la loi de la VA d'<em>un</em>
+        instant.
+      </p>
+    </div>
+
+    <h2>2. Stationnarité : quand les règles ne changent pas</h2>
+    <p>
+      Le processus est <strong>stationnaire</strong> si ses propriétés statistiques ne dépendent pas de
+      l'instant : même moyenne <span class="math-inline">μ</span>, même variance
+      <span class="math-inline">σ²</span> à chaque cycle, et des liens entre instants qui ne dépendent que
+      de leur <em>écart</em>, pas de la date. En clair : la machine à tirer du cycle 1000 est identique à
+      celle du cycle 1.
+    </p>
+    <p>
+      Le bruit d'un capteur en régime thermique établi est bien modélisé ainsi. Contre-exemples immédiats :
+      un capteur qui chauffe (la moyenne dérive — non stationnaire en moyenne), une marche aléatoire (la
+      variance croît avec le temps — chapitre 6). La stationnarité est ce qui donne un <em>sens</em> à des
+      phrases comme « le σ de ce capteur » : sans elle, il y aurait un σ par instant.
+    </p>
+
+    <h2>3. Ergodicité : le temps peut remplacer l'ensemble</h2>
+    <p>
+      Question pratique cruciale : la loi (moyenne, variance…) est définie <em>sur l'ensemble</em> — sur
+      tous les mondes possibles. Or vous n'avez qu'<strong>un</strong> monde : un seul enregistrement de
+      votre capteur. De quel droit calcule-t-on « la variance du capteur » en moyennant <em>dans le
+      temps</em> sur cette unique trajectoire ?
+    </p>
+    <p>
+      Réponse : parce que le processus est <strong>ergodique</strong>. Un processus (stationnaire) est
+      ergodique si les moyennes <em>temporelles</em> le long d'une seule trajectoire convergent vers les
+      moyennes <em>d'ensemble</em> :
+    </p>
+    <div class="math">
+      (1/N) Σₖ zₖ  ⟶  μ&nbsp;&nbsp;&nbsp;&nbsp;(1/N) Σₖ (zₖ − μ)²  ⟶  σ²&nbsp;&nbsp;&nbsp;(quand N → ∞)
+    </div>
+
+    <figure class="fig">
+      <img src="figures/fig-processus.svg" alt="Douze trajectoires d'un processus stationnaire fluctuent dans une bande horizontale violette matérialisant μ plus ou moins σ, la bande d'ensemble, constante dans le temps. Une trajectoire est en vert. Une courbe orange représente la moyenne temporelle cumulée de cette seule trajectoire verte : elle oscille au début puis converge vers la ligne μ. Légende : le processus est ergodique, une seule longue trajectoire suffit pour estimer les statistiques d'ensemble.">
+      <figcaption><b>Figure 5.1.</b> L'ergodicité, l'hypothèse qui sauve la pratique. Les statistiques
+      d'<b>ensemble</b> (bande violette <span class="math-inline">μ ± σ</span>, calculée sur toutes les
+      trajectoires) sont constantes : le processus est stationnaire. La moyenne <b>temporelle</b> cumulée
+      d'une <em>seule</em> trajectoire (orange) converge vers <span class="math-inline">μ</span> : le
+      processus est ergodique. Conséquence : enregistrer <em>longtemps</em> équivaut à rejouer le monde
+      <em>plusieurs fois</em> — c'est ce qui légitime de mesurer <span class="math-inline">R</span> sur un
+      seul enregistrement au repos.</figcaption>
+    </figure>
+
+    <div class="callout piege">
+      <p>
+        L'ergodicité n'est pas gratuite. Contre-exemple parlant : un lot de capteurs dont chaque exemplaire
+        a un <em>biais de fabrication</em> différent (fixe dans le temps). Moyenner <em>dans le temps</em>
+        votre exemplaire donne <em>son</em> biais — jamais la moyenne du lot. Le temps ne peut remplacer
+        l'ensemble que pour les grandeurs qui <em>fluctuent</em> au fil de la trajectoire ; il est aveugle à
+        ce qui est figé une fois pour toutes dans votre monde. C'est exactement la différence entre bruit
+        (ergodique, mesurable au repos) et biais (à calibrer) du chapitre 16 du cours Kalman.
+      </p>
+    </div>
+
+    <h2>4. L'autocorrélation : la mémoire du signal</h2>
+    <p>
+      Pour un processus, la question nouvelle par rapport à une VA isolée est celle des <strong>liens entre
+      instants</strong> : la valeur d'aujourd'hui renseigne-t-elle sur celle de demain ? La covariance du
+      chapitre 3, appliquée au couple <span class="math-inline">(Zₖ, Zₖ₊ℓ)</span>, donne
+      l'<strong>autocorrélation</strong> (normalisée) :
+    </p>
+    <div class="math">
+      ρ(ℓ) = Cov[Zₖ, Zₖ₊ℓ] / σ²&nbsp;&nbsp;&nbsp;(ne dépend que du décalage ℓ, par stationnarité)
+    </div>
+    <p>
+      <span class="math-inline">ρ(0) = 1</span> toujours (une valeur est parfaitement corrélée à
+      elle-même). La forme de <span class="math-inline">ρ(ℓ)</span> pour <span class="math-inline">ℓ ≥ 1</span>
+      est la carte d'identité dynamique du signal : sa <em>mémoire</em>.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-autocorr.svg" alt="Deux diagrammes en bâtons de l'autocorrélation en fonction du décalage. À gauche, bruit blanc : un bâton à 1 pour le décalage 0, puis des bâtons quasi nuls partout — aucune mémoire. À droite, bruit corrélé (filtré) : le bâton à 1 décroît progressivement, en s'éteignant sur une dizaine de décalages — le signal a de la mémoire.">
+      <figcaption><b>Figure 5.2.</b> L'autocorrélation, calculée sur 4000 échantillons réels. <b>À
+      gauche</b>, un bruit <b>blanc</b> : <span class="math-inline">ρ(0) = 1</span> et plus rien ensuite —
+      chaque échantillon est un tirage neuf, sans lien avec le précédent. <b>À droite</b>, le même bruit
+      passé dans un filtre passe-bas : la corrélation s'étire sur plusieurs décalages — le signal a de la
+      <b>mémoire</b> (chaque valeur « traîne » un peu des précédentes). Filtrer lisse, donc corrèle.</figcaption>
+    </figure>
+
+    <h2>5. Le bruit blanc : le hasard sans mémoire</h2>
+    <p>
+      Le <strong>bruit blanc</strong> (discret) est le processus le plus simple : des VA de moyenne nulle,
+      de même variance, et <strong>décorrélées entre instants</strong> :
+    </p>
+    <div class="math">
+      E[Wₖ] = 0&nbsp;&nbsp;&nbsp;Var[Wₖ] = σ²&nbsp;&nbsp;&nbsp;Cov[Wₖ, Wⱼ] = 0 pour k ≠ j
+    </div>
+    <p>
+      « Blanc » vient de l'optique : comme la lumière blanche contient toutes les couleurs, ce bruit
+      contient toutes les fréquences à parts égales (on le verra au chapitre 7). Sans mémoire, il est
+      <em>imprévisible au sens fort</em> : connaître tout le passé n'aide en rien à deviner le prochain
+      tirage — la meilleure prédiction est toujours 0.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Pourquoi le filtre de Kalman exige du blanc.</strong> Les hypothèses « bruit de mesure
+        blanc, bruit de process blanc » (cours Kalman, ch. 5) ne sont pas décoratives : si le bruit avait de
+        la mémoire, sa valeur passée <em>contiendrait de l'information</em> sur sa valeur future — information
+        que le filtre, tel quel, ne saurait pas exploiter (il serait sous-optimal), et qui rendrait fausse
+        sa comptabilité d'incertitude. La parade standard face à un bruit coloré : <em>modéliser sa
+        mémoire dans l'état</em> (un état de biais, un filtre formeur), pour que le résidu, lui, soit blanc.
+        Et le test de blancheur de l'innovation (ch. 8 et 12 du cours Kalman) n'est rien d'autre que la
+        vérification <span class="math-inline">ρ(ℓ) ≈ 0</span> de la figure 5.2, appliquée aux innovations.
+      </p>
+    </div>
+
+    <h2>6. Un exemple de mémoire : le bruit filtré (AR-1)</h2>
+    <p>
+      Le modèle à mémoire le plus utile est l'<strong>autorégressif d'ordre 1</strong> — un bruit blanc
+      « lissé » par récurrence, exactement ce que produit un capteur avec filtre interne (le retard
+      1<sup>er</sup> ordre du cours Kalman, ch. 11) :
+    </p>
+    <div class="math">
+      Xₖ₊₁ = a·Xₖ + Wₖ&nbsp;&nbsp;&nbsp;(0 &lt; a &lt; 1)&nbsp;&nbsp;&nbsp;⟹&nbsp;&nbsp;ρ(ℓ) = a^ℓ
+    </div>
+    <p>
+      Chaque valeur garde une fraction <span class="math-inline">a</span> de la précédente : la corrélation
+      décroît géométriquement (la décroissance de la figure 5.2, à droite). Plus le filtre est agressif
+      (<span class="math-inline">a</span> proche de 1), plus la mémoire est longue — et plus l'estimateur
+      de variance naïf se trompe si on l'applique sans précaution (c'est le « piège de la fenêtre » du
+      chapitre 16 du cours Kalman, et l'exercice 2 ci-dessous).
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Stationnaire ? Ergodique ? Blanc ?</h3>
+      <p>
+        Pour chaque signal, dites s'il est (approximativement) stationnaire, et si son bruit est blanc :
+        (a) le bruit de votre inclinomètre en régime thermique établi ; (b) la sortie du même inclinomètre
+        <em>pendant la chauffe</em> (30 premières minutes) ; (c) la dérive intégrée d'un gyromètre ;
+        (d) l'innovation d'un filtre de Kalman <em>bien réglé</em>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> Stationnaire (mêmes statistiques à tout instant), et ~blanc si le capteur ne filtre pas trop en interne.</li>
+          <li><strong>(b)</strong> Non stationnaire : la moyenne (le biais thermique) dérive — la « machine à tirer » change au fil des minutes. Mesurer R pendant la chauffe donne un résultat pollué.</li>
+          <li><strong>(c)</strong> Non stationnaire : c'est une marche aléatoire, sa variance croît avec le temps (chapitre 6). Aucun σ unique ne la décrit.</li>
+          <li><strong>(d)</strong> Stationnaire (en régime permanent) et <strong>blanche</strong> — c'est même la <em>définition</em> opérationnelle du bon réglage : si l'innovation a de la mémoire, le filtre a laissé de l'information sur la table.</li>
+        </ul>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — La mémoire fausse le comptage</h3>
+      <p>
+        Vous mesurez la variance d'un capteur qui filtre en interne (AR-1 avec
+        <span class="math-inline">a = 0,9</span>). Vos N échantillons ne sont donc pas indépendants.
+        L'estimation de la <em>variance</em> reste correcte (elle converge, ergodicité), mais l'estimation
+        de la <em>moyenne</em> est moins précise que le σ/√N habituel. Expliquez qualitativement pourquoi,
+        et donnez l'idée du remède.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Avec de la mémoire, deux échantillons voisins répètent en partie la <em>même</em> information :
+          vos N points ne valent pas N tirages indépendants, mais l'équivalent de
+          <span class="math-inline">N_eff &lt; N</span> tirages « frais » (pour un AR-1,
+          <span class="math-inline">N_eff ≈ N·(1−a)/(1+a)</span> — ici ≈ N/19 !). La moyenne converge donc en
+          <span class="math-inline">σ/√N_eff</span>, bien plus lentement. Remèdes : enregistrer plus
+          longtemps (le temps « décorrèle »), sous-échantillonner à un pas supérieur à la mémoire, ou
+          estimer via les <em>différences</em> successives qui, elles, tuent la partie lente (l'estimateur
+          lag-1 du cours Kalman, ch. 16). Moralité : avant de compter des échantillons, regarder
+          l'autocorrélation.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Relire la figure 1.1</h3>
+      <p>
+        Avec le vocabulaire de ce chapitre, redécrivez la figure 1.1 du chapitre 1 (les spaghetti + la
+        gaussienne) en une phrase utilisant les mots : processus, trajectoire, VA d'un instant,
+        stationnaire.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          « Les courbes grises et verte sont des <strong>trajectoires</strong> du même
+          <strong>processus</strong> stationnaire ; la coupe verticale isole la <strong>VA d'un
+          instant</strong>, dont la loi (la gaussienne de droite) est la même à tout instant puisque le
+          processus est <strong>stationnaire</strong>. » — Si cette phrase vous paraît limpide, l'objectif
+          principal du cours est atteint : les « deux niveaux » et le temps ne font plus qu'un seul cadre
+          cohérent.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Processus</strong> = une VA <em>par instant</em> (+ leurs liens). <strong>Trajectoire</strong> = un tirage par instant = le signal observé. « Passer de la VA à la réalisation temporelle » = tirer chaque instant.</li>
+        <li><strong>Stationnaire</strong> : mêmes statistiques à tout instant — donne un sens à « le σ du capteur ».</li>
+        <li><strong>Ergodique</strong> : moyennes temporelles (une trajectoire) → moyennes d'ensemble (la loi). Légitime la mesure de <span class="math-inline">R</span> sur un seul enregistrement. Limite : aveugle aux grandeurs figées (biais d'exemplaire).</li>
+        <li><strong>Autocorrélation</strong> <span class="math-inline">ρ(ℓ)</span> : la mémoire. <strong>Bruit blanc</strong> : <span class="math-inline">ρ(ℓ) = 0</span> pour ℓ ≠ 0 — imprévisible, l'hypothèse clé de Kalman ; bruit filtré (AR-1) : <span class="math-inline">ρ(ℓ) = a^ℓ</span>, mémoire géométrique.</li>
+        <li>Bruit à mémoire → le modéliser dans l'état ; échantillons corrélés → moins d'information par point (<span class="math-inline">N_eff &lt; N</span>).</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>La gaussienne et le TCL</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>Accumuler le hasard : marche aléatoire et dérive</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

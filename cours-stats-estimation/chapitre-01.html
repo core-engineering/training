@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Le hasard et ses deux visages</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Le hasard et ses deux visages</h1>
+
+    <div class="callout note">
+      <strong>Le chapitre le plus important du cours.</strong> Presque toutes les confusions en
+      probabilités — y compris dans le filtre de Kalman — viennent d'un seul point mal posé : la
+      différence entre une <em>variable aléatoire</em> (un objet de modèle) et sa
+      <em>réalisation</em> (une valeur concrète, observée). On prend le temps de l'installer
+      proprement, avec votre inclinomètre comme fil rouge.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Définir expérience aléatoire, variable aléatoire, réalisation — et ne plus jamais les confondre.</li>
+        <li>Comprendre les <strong>deux niveaux de description</strong> : le niveau <em>ensemble</em> (la loi) et le niveau <em>réalisation</em> (les valeurs observées).</li>
+        <li>Savoir classer chaque grandeur d'un problème de capteur dans son niveau.</li>
+        <li>Voir où chaque niveau « vit » en pratique : le modèle, la simulation, la mesure.</li>
+      </ul>
+    </div>
+
+    <h2>1. Une expérience qu'on pourrait rejouer</h2>
+    <p>
+      Tout part d'une idée simple : une <strong>expérience aléatoire</strong> est une expérience dont le
+      résultat n'est pas prévisible exactement, mais qu'on pourrait — au moins en pensée —
+      <em>rejouer</em> autant de fois qu'on veut. Lancer un dé. Mais aussi, et c'est notre monde :
+      <em>lire un échantillon d'inclinomètre</em>. Le capteur est immobile, l'angle vrai ne change pas, et
+      pourtant deux lectures successives diffèrent : l'électronique, la thermique, la quantification
+      injectent une part imprévisible.
+    </p>
+    <p>
+      Chaque « rejeu » de l'expérience produit un résultat concret : <span class="math-inline">5,13°</span>,
+      puis <span class="math-inline">4,97°</span>, puis <span class="math-inline">5,08°</span>… Ces valeurs
+      s'appellent des <strong>réalisations</strong>. Elles sont ordinaires : des nombres, rien de plus.
+    </p>
+
+    <h2>2. La variable aléatoire : un modèle, pas un nombre</h2>
+    <p>
+      Face à ces valeurs qui fluctuent, le probabiliste fait un pas de côté. Plutôt que de courir après
+      chaque valeur, il décrit la <strong>règle du jeu</strong> : l'objet mathématique qui dit
+      <em>quelles valeurs sont possibles et avec quelles chances</em>. Cet objet est la
+      <strong>variable aléatoire</strong> (VA). On la note en majuscule — <span class="math-inline">Z</span> —
+      et ses réalisations en minuscule — <span class="math-inline">z₁, z₂, …</span>
+    </p>
+    <div class="math">
+      Z  = « une lecture d'inclinomètre »&nbsp;&nbsp;&nbsp;(le modèle : Z ∼ N(5, 0,25))<br>
+      z₁ = 5,13°&nbsp;&nbsp;&nbsp;z₂ = 4,97°&nbsp;&nbsp;&nbsp;z₃ = 5,08°&nbsp;&nbsp;&nbsp;(les réalisations : des nombres)
+    </div>
+    <p>
+      Retenez la formule : <strong>la VA est la machine, la réalisation est ce qui sort de la
+      machine</strong>. La machine ne « vaut » rien tant qu'on ne tire pas ; et une fois qu'on a tiré, la
+      valeur obtenue n'est plus aléatoire du tout — c'est un fait.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        Analogie robuste : la VA est au nombre ce que le <em>plan d'une pièce</em> est à la pièce usinée.
+        Le plan (avec ses tolérances) décrit <em>toutes</em> les pièces conformes possibles ; chaque pièce
+        sortie de la machine en est <em>une</em> réalisation, avec ses cotes précises. Personne ne confond
+        le plan et la pièce — il ne faut pas davantage confondre <span class="math-inline">Z</span> et
+        <span class="math-inline">z₁</span>.
+      </p>
+    </div>
+
+    <h2>3. Les deux niveaux de description</h2>
+    <p>
+      Cette distinction fonde <strong>deux niveaux</strong> auxquels on peut décrire la même situation —
+      et le grand art est de toujours savoir à quel niveau on parle.
+    </p>
+    <ul>
+      <li>Le <strong>niveau réalisation</strong> : ce qui se passe <em>dans ce monde-ci</em>. Une exécution,
+        une série temporelle, des valeurs concrètes. C'est le monde de vos mesures, de vos
+        enregistrements, de la valeur vraie de l'angle à cet instant.</li>
+      <li>Le <strong>niveau ensemble</strong> : la description de <em>tous les mondes possibles</em>. La
+        loi, la moyenne, la variance. C'est le monde du modèle — et, on le verra, celui des matrices
+        <span class="math-inline">P</span>, <span class="math-inline">Q</span>,
+        <span class="math-inline">R</span> du filtre de Kalman.</li>
+    </ul>
+
+    <figure class="fig">
+      <img src="figures/fig-deux-niveaux.svg" alt="À gauche, une quinzaine de signaux temporels d'un capteur immobile : quatorze en gris (les réalisations qui auraient pu se produire) et une en vert (celle que le capteur a réellement produite), toutes fluctuant autour d'une moyenne μ. Une coupe verticale ambre est tracée à un instant donné. À droite, l'histogramme vertical des valeurs prises à cet instant par toutes les réalisations, épousant une gaussienne violette : c'est la loi, le niveau ensemble.">
+      <figcaption><b>Figure 1.1.</b> Les deux visages du même capteur. <b>À gauche</b>, le niveau
+      réalisation : des signaux dans le temps — la verte est <em>celle que vous observez</em>, les grises
+      sont celles que le hasard aurait pu produire à la place. <b>À droite</b>, le niveau ensemble : si l'on
+      coupe à un instant donné et qu'on regarde où tombent <em>toutes</em> les réalisations possibles, on
+      obtient la <em>loi</em> (ici une gaussienne). La loi ne « vit » pas dans le temps : elle décrit
+      l'éventail des possibles à chaque instant.</figcaption>
+    </figure>
+
+    <div class="callout piege">
+      <p>
+        <strong>On ne « convertit » jamais un niveau en l'autre.</strong> Il n'existe pas d'opération qui
+        transforme une VA en réalisation temporelle — les deux coexistent. La question « comment passe-t-on
+        de la variable aléatoire à la réalisation ? » a une réponse en un mot : <strong>en tirant</strong>
+        (l'expérience a lieu, la nature tire une valeur). Et dans l'autre sens : en observant <em>beaucoup</em>
+        de réalisations, on peut <em>estimer</em> la loi (ce sera le chapitre 8) — mais on ne la « voit »
+        jamais directement.
+      </p>
+    </div>
+
+    <h2>4. Classer les grandeurs : l'exercice réflexe</h2>
+    <p>
+      Prenons votre problème type — un inclinomètre bruité, un filtre qui estime — et classons chaque
+      grandeur. Ce tableau est à relire jusqu'à ce qu'il devienne un réflexe.
+    </p>
+    <table>
+      <thead><tr><th>Grandeur</th><th>Niveau</th><th>Nature</th></tr></thead>
+      <tbody>
+        <tr><td>L'angle vrai <span class="math-inline">θ</span> à l'instant <span class="math-inline">k</span></td><td>réalisation</td><td>une valeur — inconnue de vous, mais unique et bien définie</td></tr>
+        <tr><td>La lecture <span class="math-inline">zₖ = 5,13°</span> affichée</td><td>réalisation</td><td>un nombre observé — plus rien d'aléatoire une fois lu</td></tr>
+        <tr><td>« La lecture <span class="math-inline">Zₖ</span> » <em>avant</em> de la lire</td><td>ensemble</td><td>une VA : l'éventail de ce que le capteur peut afficher</td></tr>
+        <tr><td>Le bruit <span class="math-inline">vₖ</span> qui a réellement entaché <span class="math-inline">zₖ</span></td><td>réalisation</td><td>une valeur tirée — jamais observable séparément</td></tr>
+        <tr><td>La variance <span class="math-inline">R = σ²</span> du bruit</td><td>ensemble</td><td>un paramètre de la loi — un fait du capteur, pas d'un tirage</td></tr>
+        <tr><td>L'estimé <span class="math-inline">x̂ₖ</span> du filtre</td><td>réalisation</td><td>un nombre calculé à partir des mesures observées</td></tr>
+        <tr><td>La covariance <span class="math-inline">Pₖ</span> du filtre</td><td>ensemble</td><td>l'étalement des erreurs <em>sur tous les mondes possibles</em></td></tr>
+        <tr><td>La moyenne de 1000 lectures</td><td>les deux !</td><td>le <em>nombre</em> calculé est une réalisation… de la VA « moyenne de 1000 lectures » (chapitre 8)</td></tr>
+      </tbody>
+    </table>
+    <p>
+      La dernière ligne est subtile et capitale : une quantité <em>calculée à partir de réalisations</em>
+      est elle-même la réalisation d'une VA (si on rejouait l'expérience, le calcul donnerait un autre
+      nombre). C'est la clé de toute la statistique — on y consacrera le chapitre 8.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Le test des deux questions.</strong> Devant une grandeur, demandez : « si je rejouais
+        l'expérience, cette grandeur changerait-elle ? » Si oui → il existe une VA derrière, et ce que vous
+        avez sous les yeux en est une réalisation. Puis : « ce que je manipule, est-ce <em>la valeur</em>
+        ou <em>la description de ses possibles</em> ? » La valeur = niveau réalisation ; la description
+        (loi, moyenne, variance) = niveau ensemble.
+      </p>
+    </div>
+
+    <h2>5. Où vit chaque niveau en pratique</h2>
+    <ul>
+      <li><strong>Sur la machine</strong> (le PLC, le capteur) : tout est réalisation. Le capteur produit
+        <em>des nombres</em> ; le filtre calcule <em>des nombres</em> (<span class="math-inline">x̂</span>)…
+        et propage aussi, en parallèle, des objets de niveau ensemble
+        (<span class="math-inline">P</span>) qui décrivent son incertitude. Deux récurrences côte à côte :
+        l'une avance le <em>pari</em>, l'autre avance le <em>doute</em>.</li>
+      <li><strong>Dans le modèle</strong> (sur papier) : tout est ensemble. Quand on écrit
+        <span class="math-inline">zₖ = θₖ + vₖ</span>, <span class="math-inline">vₖ ∼ N(0, R)</span>, on
+        décrit la <em>règle</em> qui gouverne toutes les exécutions possibles.</li>
+      <li><strong>En simulation</strong> : on fait les deux ! Le simulateur <em>tire</em> des réalisations
+        (une vérité terrain, des bruits) — c'est le seul endroit où l'on fabrique explicitement des
+        réalisations à partir de la loi. Puis on donne les mesures simulées au filtre et on vérifie que ses
+        objets d'ensemble (<span class="math-inline">P</span>) décrivent bien la dispersion réelle des
+        erreurs. Toutes les figures de ce cours sont fabriquées ainsi.</li>
+    </ul>
+
+    <div class="callout histoire">
+      <p>
+        Le vocabulaire garde la trace de cette dualité : on parle de moyenne <em>d'ensemble</em> (sur tous
+        les mondes possibles, à un instant donné) et de moyenne <em>temporelle</em> (le long d'une seule
+        réalisation). Les deux ne coïncident pas toujours — la question de savoir <em>quand</em> elles
+        coïncident (l'ergodicité) sera au cœur du chapitre 5, et c'est elle qui justifie qu'on puisse
+        mesurer un <span class="math-inline">R</span> (objet d'ensemble) à partir d'un seul enregistrement
+        (une réalisation).
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Classer sans se tromper</h3>
+      <p>
+        Pour chaque grandeur, dites si c'est une réalisation, un objet d'ensemble, ou la réalisation d'une
+        VA « calculée » : (a) la température affichée à l'instant par la sonde de l'armoire ;
+        (b) le <span class="math-inline">σ = 0,4°</span> écrit sur la datasheet de l'inclinomètre ;
+        (c) la NIS calculée au cycle <span class="math-inline">k</span> par votre filtre ;
+        (d) la matrice <span class="math-inline">Q</span> de votre modèle ; (e) l'erreur
+        <span class="math-inline">x − x̂</span> commise à cet instant par le filtre.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> Réalisation : un nombre observé.</li>
+          <li><strong>(b)</strong> Ensemble : un paramètre de la loi du bruit — il ne change pas d'un tirage à l'autre.</li>
+          <li><strong>(c)</strong> Réalisation d'une VA calculée : le nombre <span class="math-inline">y²/S</span> obtenu ce cycle-ci est un tirage de la VA « NIS », dont la <em>loi</em> (χ², niveau ensemble) sert justement de référence pour juger la cohérence.</li>
+          <li><strong>(d)</strong> Ensemble : la covariance du bruit de process, un paramètre du modèle.</li>
+          <li><strong>(e)</strong> Réalisation : une valeur précise… que vous ne connaîtrez jamais (il faudrait connaître <span class="math-inline">x</span>). Vous ne connaissez que sa <em>loi</em> : moyenne nulle (si le filtre est non biaisé) et covariance <span class="math-inline">P</span>.</li>
+        </ul>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Le capteur rejoué</h3>
+      <p>
+        Votre inclinomètre immobile affiche <span class="math-inline">z₁ = 5,13°</span>. Un collègue
+        déclare : « la probabilité que <span class="math-inline">z₁</span> dépasse 5° est de 40 % ». Que
+        répondez-vous, en distinguant les niveaux ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          <span class="math-inline">z₁</span> est une <strong>réalisation</strong> : elle vaut 5,13°, point.
+          Elle dépasse 5° avec certitude — la probabilité n'a pas de sens pour un nombre déjà observé.
+          La phrase correcte au niveau <strong>ensemble</strong> serait : « la probabilité qu'une lecture
+          <span class="math-inline">Z</span> (avant de la faire) dépasse 5° est de 40 % » — un énoncé sur la
+          VA, c'est-à-dire sur la population de toutes les lectures possibles. Le glissement entre les deux
+          formulations paraît anodin ; c'est pourtant lui qui rend les chapitres de probabilité
+          incompréhensibles quand on le laisse passer.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Où est la VA ?</h3>
+      <p>
+        Dans la prédiction du filtre de Kalman, on écrit <span class="math-inline">x⁻ = F·x̂</span> (des
+        nombres) puis <span class="math-inline">P⁻ = F·P·Fᵀ + Q</span> (des matrices). Aucun bruit
+        <span class="math-inline">w</span> n'apparaît dans le calcul. Où est-il passé ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Le bruit <span class="math-inline">w</span> est une VA dont on ne connaîtra jamais la réalisation.
+          Le filtre l'utilise donc <em>par sa loi seulement</em> : sa moyenne (nulle) ne déplace pas
+          <span class="math-inline">x⁻</span> — c'est pourquoi il « disparaît » de la première équation —
+          et sa covariance <span class="math-inline">Q</span> vient gonfler
+          <span class="math-inline">P⁻</span> dans la seconde. Les deux équations travaillent à deux niveaux
+          différents : la première avance le <strong>pari</strong> (réalisation calculée), la seconde avance
+          le <strong>doute</strong> (objet d'ensemble). C'est exactement la lecture à avoir des chapitres
+          6.2 et 6.3 du cours Kalman.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Expérience aléatoire</strong> : rejouable, résultat imprévisible. <strong>Réalisation</strong> : le résultat concret d'un rejeu (un nombre). <strong>Variable aléatoire</strong> : la règle qui décrit tous les résultats possibles (la machine, pas ce qui en sort).</li>
+        <li><strong>Deux niveaux</strong> : réalisation (ce monde-ci — mesures, valeurs vraies, estimés) et ensemble (tous les mondes possibles — lois, moyennes, variances, <span class="math-inline">P/Q/R</span>).</li>
+        <li>On ne convertit pas un niveau en l'autre : on <strong>tire</strong> (loi → valeur, ce que fait la nature ou un simulateur) ou on <strong>estime</strong> (valeurs → loi, chapitre 8).</li>
+        <li>Une grandeur <em>calculée à partir de mesures</em> est la réalisation d'une VA : elle aurait été différente dans un autre monde. C'est le fondement de la statistique.</li>
+        <li>Dans le filtre de Kalman : <span class="math-inline">x̂</span> avance le pari (niveau réalisation), <span class="math-inline">P</span> avance le doute (niveau ensemble) — deux récurrences en parallèle.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="index.html"><span class="lbl">← Précédent</span>Sommaire</a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>Décrire une variable : distribution, espérance, variance</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>
