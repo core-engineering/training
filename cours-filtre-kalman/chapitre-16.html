@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 16 — Estimer la variance d'un capteur (R) : datasheet &amp; mesures</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎯 Filtre de Kalman <span>· fondements théoriques</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 16 · Application</span><br>Estimer la variance d'un capteur (R) : datasheet &amp; mesures</h1>
+
+    <div class="callout note">
+      <strong>Le chiffre qu'on entre sans trop savoir d'où il vient.</strong> Tout le cours répète que
+      <span class="math-inline">R = σ²</span> est « un fait mesurable, pas un réglage » (chapitres 5, 11, 12).
+      Encore faut-il l'obtenir correctement — depuis une <strong>fiche technique</strong> au vocabulaire piégeux,
+      ou depuis des <strong>mesures</strong> qui cachent leurs propres traquenards (biais, dérive). Ce chapitre
+      détaille les deux voies.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Rappeler ce qu'est <span class="math-inline">R</span> — et ce qu'il n'est <em>pas</em> (le biais, la justesse).</li>
+        <li>Décoder une datasheet : densité spectrale, RMS, crête-à-crête, résolution → <span class="math-inline">σ</span>.</li>
+        <li>Mesurer <span class="math-inline">R</span> au repos : variance empirique, nombre d'échantillons, calcul en ligne.</li>
+        <li>Déjouer le <strong>bruit non-blanc</strong> (dérive) : variance d'Allan, estimateur à différences.</li>
+        <li>Refermer la boucle avec la cohérence (NIS) et gérer le cas multi-capteur.</li>
+      </ul>
+    </div>
+
+    <h2>1. Ce que R est — et n'est pas</h2>
+    <p>
+      <span class="math-inline">R</span> est la <strong>variance du bruit de mesure</strong> : le bruit
+      supposé <em>blanc</em> (sans mémoire) et <em>centré</em> (sans biais) du modèle
+      <span class="math-inline">z = H·x + v</span>, <span class="math-inline">v ∼ N(0, R)</span> (chapitre 5).
+      C'est une variance : ses unités sont des <strong>carrés</strong> (deg², m², (m/s²)²).
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <strong>Le piège numéro un : confondre bruit et justesse.</strong> Une datasheet mélange deux choses
+        très différentes. Le <em>bruit</em> (répétabilité, <em>noise</em>, RMS) est la dispersion aléatoire
+        autour de la vraie valeur → il va dans <span class="math-inline">R</span>. La <em>justesse</em>
+        (<em>accuracy</em>, offset, erreur de gain, non-linéarité, dérive en température) est une erreur
+        <strong>systématique</strong> — un <strong>biais</strong>, pas du bruit. La mettre dans
+        <span class="math-inline">R</span> gonfle artificiellement l'incertitude ; pire, un biais non traité
+        fait <em>dériver</em> l'estimation quoi qu'on fasse. Un biais se <strong>calibre</strong> ou
+        s'<strong>estime dans l'état</strong> (chapitre 10), il ne se noie pas dans <span class="math-inline">R</span>.
+      </p>
+    </div>
+
+    <h2>2. Depuis la datasheet : décoder le vocabulaire</h2>
+    <p>
+      Les fiches donnent rarement « la variance ». Elles donnent l'une des formes suivantes, qu'il faut
+      traduire en <span class="math-inline">σ</span> (puis <span class="math-inline">R = σ²</span>).
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Spécification donnée</th><th>Comment obtenir σ</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Densité spectrale de bruit</strong><br>(µg/√Hz, mdps/√Hz, nV/√Hz…)</td>
+            <td><span class="math-inline">σ = densité × √(BW)</span><br>BW = bande passante de bruit effective ≈ <span class="math-inline">1,57·f_c</span> (filtre 1<sup>er</sup> ordre) ou l'ODR/filtre en sortie</td></tr>
+        <tr><td><strong>Bruit RMS</strong> (à une BW précisée)</td>
+            <td><span class="math-inline">σ = RMS</span> directement (le bruit est centré ⇒ RMS = σ)</td></tr>
+        <tr><td><strong>Bruit crête-à-crête</strong> (pk-pk, ±X)</td>
+            <td><span class="math-inline">σ ≈ (pk-pk) / 6</span> (gaussien : ±3σ ≈ 99,7 %)</td></tr>
+        <tr><td><strong>Résolution / LSB</strong> <span class="math-inline">q</span></td>
+            <td>bruit de quantification <span class="math-inline">σ_q = q/√12</span> (plancher, à combiner)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout math">
+      <p>
+        <strong>D'où vient <span class="math-inline">√BW</span> ?</strong> Une densité spectrale
+        <span class="math-inline">d</span> (en unité/√Hz) est une <em>racine</em> de densité de puissance. La
+        puissance (variance) est l'intégrale de la densité de puissance <span class="math-inline">d²</span> sur
+        la bande : <span class="math-inline">σ² = ∫ d² df = d²·BW</span>, d'où
+        <span class="math-inline">σ = d·√BW</span>. Le <span class="math-inline">1,57 = π/2</span> est la
+        bande de bruit <em>équivalente</em> d'un filtre 1<sup>er</sup> ordre de coupure
+        <span class="math-inline">f_c</span> (elle laisse passer un peu plus que <span class="math-inline">f_c</span>).
+      </p>
+    </div>
+
+    <div class="callout demo">
+      <p><strong>Exemple — accéléromètre.</strong> Densité <span class="math-inline">150 µg/√Hz</span>, filtre
+      de sortie à <span class="math-inline">f_c = 50 Hz</span> :</p>
+      <div class="math">
+        BW = 1,57 × 50 = 78,5 Hz&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;σ = 150·10⁻⁶ × √78,5 ≈ 1,33·10⁻³ g<br>
+        σ ≈ 1,33 mg ≈ 0,013 m/s²&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;R = σ² ≈ 1,7·10⁻⁴ (m/s²)²
+      </div>
+      <p><strong>Exemple — inclinomètre.</strong> Fiche : « bruit RMS <span class="math-inline">0,008°</span>
+      à 10 Hz », résolution <span class="math-inline">0,001°</span>. Bruit analogique
+      <span class="math-inline">σ = 0,008°</span> ; quantification <span class="math-inline">σ_q = 0,001/√12 ≈ 0,0003°</span>
+      (négligeable). <span class="math-inline">R ≈ (0,008)² = 6,4·10⁻⁵ deg²</span>.</p>
+    </div>
+
+    <div class="callout piege">
+      <p>
+        La datasheet donne le bruit <strong>à une bande passante précise</strong>. Si vous filtrez davantage
+        (sortie plus lente), <span class="math-inline">R</span> <em>diminue</em> (moins de bande = moins de
+        bruit) — mais vous ajoutez du <strong>retard</strong> (chapitre 11). Réduire <span class="math-inline">R</span>
+        par filtrage n'est pas gratuit : c'est un compromis bruit ↔ latence, pas une amélioration pure.
+      </p>
+    </div>
+
+    <h2>3. Depuis des mesures : la méthode de référence</h2>
+    <p>
+      La datasheet donne un ordre de grandeur ; <em>votre</em> montage a son propre bruit (câblage, CAN,
+      environnement). La mesure directe est la référence. Le protocole : capteur <strong>immobile</strong> (ou
+      mesurant une grandeur constante connue), on enregistre <span class="math-inline">N</span> échantillons,
+      et :
+    </p>
+    <div class="math">
+      moyenne (= biais) :&nbsp;&nbsp;&nbsp;μ̂ = (1/N) Σ zᵢ<br>
+      variance (Bessel) :&nbsp;&nbsp;&nbsp;s² = (1/(N−1)) Σ (zᵢ − μ̂)²&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;R = s²
+    </div>
+    <p>
+      Le diviseur <span class="math-inline">N−1</span> (correction de Bessel) rend l'estimateur non biaisé —
+      on a « dépensé » un degré de liberté à estimer <span class="math-inline">μ̂</span>. La moyenne
+      <span class="math-inline">μ̂</span> <em>n'est pas</em> du bruit : c'est le biais du capteur, à retirer
+      (§1).
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-var-hist.svg" alt="Histogramme de 4000 mesures d'un capteur immobile, en forme de cloche, avec une gaussienne ajustée superposée en vert. Une ligne verticale ambre marque la moyenne (le biais, ≈ 0,15°) avec la mention 'à retirer, ce n'est pas du bruit'. Des lignes pointillées marquent ±1σ et ±2σ. Un encart indique σ = 0,402° et R = s² = 0,1618 deg².">
+      <figcaption><b>Figure 16.1.</b> Mesurer <span class="math-inline">R</span> au repos. Les échantillons
+      forment une cloche&nbsp;; on ajuste une gaussienne. La <b>moyenne</b> (ambre) est le <em>biais</em> — on
+      la retire. La <b>dispersion</b> autour de la moyenne donne <span class="math-inline">σ</span>, et
+      <span class="math-inline">R = s²</span>. (Ici <span class="math-inline">σ ≈ 0,40°</span> pour un bruit
+      injecté de <span class="math-inline">0,40°</span> : l'estimateur retombe sur la vérité.)</figcaption>
+    </figure>
+
+    <div class="callout math">
+      <p>
+        <strong>Combien d'échantillons ?</strong> L'estimation elle-même a une incertitude. Pour un bruit
+        gaussien, l'écart-type relatif de <span class="math-inline">s²</span> vaut
+        <span class="math-inline">√(2/(N−1))</span>. Pour connaître <span class="math-inline">R</span> à ±10 %
+        il faut <span class="math-inline">N ≈ 200</span> ; à ±3 %, <span class="math-inline">N ≈ 2000</span>.
+        Quelques milliers d'échantillons suffisent donc largement. L'intervalle de confiance exact vient du
+        <span class="math-inline">χ²</span> : <span class="math-inline">(N−1)s²/R ∼ χ²(N−1)</span>.
+      </p>
+    </div>
+
+    <p>
+      Sur automate, on n'accumule pas un tableau : on calcule moyenne <em>et</em> variance <strong>en un
+      seul passage</strong>, de façon numériquement stable, par l'algorithme de <strong>Welford</strong>.
+    </p>
+
+    <pre><code class="language-pascal">// SCL — variance en ligne (Welford), un échantillon à la fois.
+// #n, #mean, #M2 en statique, initialisés à 0 ; z = échantillon courant.
+#n    := #n + 1.0;
+#d1   := #z - #mean;
+#mean := #mean + #d1 / #n;          // moyenne courante (le biais)
+#d2   := #z - #mean;
+#M2   := #M2 + #d1 * #d2;           // somme des carrés des écarts
+IF #n > 1.0 THEN
+    #variance := #M2 / (#n - 1.0);  // R = variance (Bessel)
+END_IF;</code></pre>
+
+    <h2>4. Le piège du bruit non-blanc</h2>
+    <p>
+      La variance empirique suppose un bruit <strong>blanc</strong>. Or un capteur réel dérive : biais lentement
+      variable, instabilité de biais, bruit basse fréquence (1/f). Ces composantes sont <em>corrélées dans le
+      temps</em> — elles violent l'hypothèse, et la variance naïve calculée sur une <strong>longue</strong>
+      fenêtre les compte comme du bruit : elle <strong>gonfle</strong> avec la durée d'observation.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-var-window.svg" alt="Variance estimée en fonction de la durée de la fenêtre de mesure, de 0 à 60 s. Une ligne horizontale en tirets marque le R vrai (bruit blanc). La variance naïve (ambre) part correctement mais grimpe fortement à partir de ~35 s, à mesure que la dérive contamine l'estimation. L'estimateur lag-1 (vert) reste collé au R vrai sur toute la fenêtre.">
+      <figcaption><b>Figure 16.2.</b> La variance <b>naïve</b> (ambre) sur une longue fenêtre gonfle : elle
+      capte la <em>dérive</em> en plus du bruit blanc. L'estimateur à <b>différences successives</b> (lag-1,
+      vert) reste collé au vrai <span class="math-inline">R</span> — la différence
+      <span class="math-inline">zᵢ₊₁ − zᵢ</span> annule la dérive lente et ne garde que le bruit blanc.</figcaption>
+    </figure>
+
+    <p>
+      Deux parades. La plus simple : l'<strong>estimateur à différences successives</strong> (lag-1), robuste à
+      la dérive lente :
+    </p>
+    <div class="math">
+      R̂ = (1 / (2(N−1))) · Σ (zᵢ₊₁ − zᵢ)²
+    </div>
+    <p>
+      La différence <span class="math-inline">zᵢ₊₁ − zᵢ</span> soustrait deux instants voisins : la dérive
+      (quasi constante d'un pas à l'autre) disparaît, seul le bruit blanc subsiste. Le facteur
+      <span class="math-inline">2</span> vient de <span class="math-inline">Var[zᵢ₊₁ − zᵢ] = 2σ²</span> pour un
+      bruit blanc.
+    </p>
+    <p>
+      La plus complète : la <strong>variance d'Allan</strong>. On calcule l'écart-type des moyennes de blocs
+      de durée croissante <span class="math-inline">τ</span> et on le trace en log-log. Chaque type de bruit y
+      a sa signature de pente.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-var-allan.svg" alt="Courbe de la déviation d'Allan en fonction du temps d'intégration τ, en échelle log-log, en forme de vallée. À gauche, une pente −½ marquée 'bruit blanc, lire R ici (τ = τ0)'. Au fond de la vallée, un point marqué 'plancher : instabilité de biais'. À droite, une pente +½ marquée 'dérive'.">
+      <figcaption><b>Figure 16.3.</b> La <b>variance d'Allan</b> sépare les bruits par leur pente. Pente
+      <b>−½</b> (à gauche) : <em>bruit blanc</em> — c'est là qu'on lit le <span class="math-inline">R</span> du
+      filtre (à <span class="math-inline">τ = τ₀</span>, un pas). <b>Plancher</b> : <em>instabilité de biais</em>
+      (irréductible, on ne peut pas moyenner en dessous). Pente <b>+½</b> (à droite) : <em>dérive</em> (marche
+      aléatoire). Un seul graphe dit quelle part du « bruit » est vraiment blanche.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        Retenez la lecture : le <span class="math-inline">R</span> à mettre dans le filtre est la part
+        <strong>blanche</strong> (pente −½), lue au temps d'intégration le plus court. La part
+        <strong>dérive</strong> (pente +½) n'est pas du bruit de mesure : c'est un biais lentement variable,
+        que le filtre gère mieux en l'<em>estimant dans l'état</em> (chapitre 10) qu'en gonflant
+        <span class="math-inline">R</span>.
+      </p>
+    </div>
+
+    <h2>5. R dépend des conditions</h2>
+    <p>
+      <span class="math-inline">R</span> n'est pas toujours une constante universelle. Il dépend de :
+    </p>
+    <ul>
+      <li><strong>La bande passante / le filtrage</strong> : plus on filtre, plus <span class="math-inline">R</span>
+        baisse — mais plus le retard monte (chapitre 11). Mesurez <span class="math-inline">R</span> <em>avec</em>
+        le filtrage réellement utilisé.</li>
+      <li><strong>Le point de fonctionnement</strong> : un capteur peut être plus bruité en bout d'échelle ; une
+        caméra a un bruit de position qui croît avec la distance (le même bruit angulaire projette plus loin).
+        <span class="math-inline">R</span> peut alors être <em>fonction de l'état</em> — recalculé à chaque
+        mesure.</li>
+      <li><strong>L'environnement</strong> : température, vibrations, EMI. Une <span class="math-inline">R</span>
+        mesurée au repos, au calme, <em>sous-estime</em> le bruit en marche. Mesurez en conditions
+        représentatives.</li>
+    </ul>
+
+    <h2>6. Refermer la boucle : la cohérence valide R</h2>
+    <p>
+      Datasheet et mesure donnent un <strong>point de départ</strong>. Le juge final est le filtre lui-même,
+      en fonctionnement, via le test de <strong>cohérence</strong> (chapitre 12) : si la NIS est
+      systématiquement trop grande, l'incertitude annoncée est trop petite (<span class="math-inline">R</span>
+      ou <span class="math-inline">Q</span> sous-estimés) ; trop petite, c'est l'inverse. Concrètement, en
+      régime permanent, la variance <em>empirique</em> des innovations doit coïncider avec la
+      <span class="math-inline">S</span> prédite par le filtre. On ajuste alors <span class="math-inline">R</span>
+      (dans la fourchette plausible du capteur) et <span class="math-inline">Q</span> jusqu'à la cohérence.
+    </p>
+
+    <h2>7. Le cas multi-capteur : la matrice R</h2>
+    <p>
+      Pour une mesure vectorielle, <span class="math-inline">R</span> est une matrice. Deux cas :
+    </p>
+    <ul>
+      <li><strong>Bruits indépendants</strong> (capteurs distincts, chaînes séparées) →
+        <span class="math-inline">R</span> <strong>diagonale</strong> : les variances sur la diagonale, zéro
+        ailleurs. C'est le cas par défaut, et il autorise les mises à jour scalaires séquentielles (chapitre 13).</li>
+      <li><strong>Source d'erreur commune</strong> (même CAN, même horloge, même référence, pixels voisins
+        d'une caméra) → termes <strong>hors-diagonale</strong> : le bruit est corrélé. On les mesure comme la
+        covariance croisée empirique des deux voies au repos. Les ignorer rend le filtre trop confiant sur les
+        combinaisons corrélées.</li>
+    </ul>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — De la densité à R</h3>
+      <p>
+        Un gyromètre annonce une densité de bruit de <span class="math-inline">0,008 °/s/√Hz</span> et un
+        filtre de sortie à <span class="math-inline">f_c = 20 Hz</span>. Donnez <span class="math-inline">σ</span>
+        (en °/s) puis <span class="math-inline">R</span>.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <div class="math">
+          BW = 1,57 × 20 = 31,4 Hz<br>
+          σ = 0,008 × √31,4 ≈ 0,008 × 5,60 ≈ 0,0448 °/s<br>
+          R = σ² ≈ 2,0·10⁻³ (°/s)²
+        </div>
+        <p>
+          Si l'on abaisse le filtre à <span class="math-inline">f_c = 5 Hz</span>, <span class="math-inline">σ</span>
+          est divisé par <span class="math-inline">2</span> (<span class="math-inline">√4</span>) et
+          <span class="math-inline">R</span> par <span class="math-inline">4</span> — au prix d'un retard accru.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Pourquoi lag-1 et pas la variance globale ?</h3>
+      <p>
+        On enregistre un capteur au repos pendant 10 minutes ; il présente une lente dérive thermique. La
+        variance globale donne <span class="math-inline">0,05 deg²</span>, l'estimateur lag-1 donne
+        <span class="math-inline">0,009 deg²</span>. Laquelle mettre dans <span class="math-inline">R</span>,
+        et que faire de l'autre&nbsp;?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          On met <strong><span class="math-inline">R = 0,009 deg²</span></strong> (lag-1) : c'est la part
+          <em>blanche</em>, seule légitime pour le bruit de mesure. La variance globale
+          <span class="math-inline">0,05</span> est gonflée par la <em>dérive</em> thermique — un biais
+          lentement variable. Le mettre dans <span class="math-inline">R</span> rendrait le filtre inutilement
+          méfiant. La bonne réponse à la dérive : l'<strong>estimer dans l'état</strong> (augmenter d'un état de
+          biais, chapitre 10) ou la compenser par calibration en température — pas la noyer dans
+          <span class="math-inline">R</span>.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><span class="math-inline">R = σ²</span> = variance du bruit <strong>blanc, centré</strong>. Ce n'est <strong>pas</strong> la justesse (biais, gain, dérive) : celle-ci se calibre ou s'estime, jamais dans <span class="math-inline">R</span>.</li>
+        <li><strong>Datasheet</strong> : densité <span class="math-inline">× √BW</span> (BW ≈ <span class="math-inline">1,57·f_c</span>) ; RMS = σ ; pk-pk/6 = σ ; résolution <span class="math-inline">q</span> → <span class="math-inline">q/√12</span>. Puis <span class="math-inline">R = σ²</span>.</li>
+        <li><strong>Mesure</strong> : capteur immobile, <span class="math-inline">s² = Σ(zᵢ−μ̂)²/(N−1)</span> ; <span class="math-inline">μ̂</span> = biais (à retirer). Précision <span class="math-inline">√(2/(N−1))</span> → quelques milliers d'échantillons. Welford en ligne.</li>
+        <li><strong>Bruit non-blanc</strong> : la variance naïve gonfle avec la fenêtre. <strong>lag-1</strong> <span class="math-inline">R̂ = Σ(zᵢ₊₁−zᵢ)²/(2(N−1))</span> annule la dérive ; la <strong>variance d'Allan</strong> sépare blanc (−½) / instabilité (plancher) / dérive (+½).</li>
+        <li><span class="math-inline">R</span> dépend du <strong>filtrage</strong>, du <strong>point de fonctionnement</strong> et de l'<strong>environnement</strong> — mesurer en conditions représentatives.</li>
+        <li>La <strong>cohérence</strong> (NIS, chapitre 12) valide et affine <span class="math-inline">R</span> in situ.</li>
+        <li><strong>Multi-capteur</strong> : <span class="math-inline">R</span> diagonale si bruits indépendants ; termes croisés si source commune.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-15.html"><span class="lbl">← Précédent</span>Caméra lente + cinématique robot</a>
+    <a class="next" href="index.html"><span class="lbl">↩ Sommaire</span>Tous les chapitres</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Filtre de Kalman, fondements théoriques 🎯
+  </footer>
+</body>
+</html>
