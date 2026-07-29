@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — Plusieurs variables : jointe, conditionnelle, covariance</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>Plusieurs variables : jointe, conditionnelle, covariance</h1>
+
+    <div class="callout note">
+      L'estimation ne devient intéressante qu'à plusieurs variables : un angle <em>et</em> une vitesse, une
+      mesure <em>et</em> un état caché. Ce chapitre installe le vocabulaire du « ensemble » à plusieurs :
+      loi jointe, indépendance, covariance, et surtout la <strong>loi conditionnelle</strong> — l'opération
+      « j'ai observé ceci, que sais-je maintenant de cela ? » qui <em>est</em> le cœur du filtrage.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Décrire deux VA à la fois : loi <strong>jointe</strong>, lois <strong>marginales</strong>.</li>
+        <li>Définir l'<strong>indépendance</strong> — et savoir ce qu'elle autorise (et n'autorise pas).</li>
+        <li>Mesurer un lien : <strong>covariance</strong> et <strong>corrélation</strong> — et leurs limites.</li>
+        <li>Comprendre la <strong>loi conditionnelle</strong> : apprendre sur une variable en observant l'autre.</li>
+      </ul>
+    </div>
+
+    <h2>1. La loi jointe : deux variables, une seule carte</h2>
+    <p>
+      Deux VA <span class="math-inline">X</span> et <span class="math-inline">Y</span> (disons : l'erreur
+      d'angle et l'erreur de vitesse de votre filtre à un instant donné) sont décrites <em>ensemble</em>
+      par leur <strong>loi jointe</strong> : la densité <span class="math-inline">p(x, y)</span> qui dit où
+      tombent les <em>couples</em> de valeurs. Ce n'est pas la donnée des deux lois séparées : la jointe
+      contient en plus toute l'information sur leur <em>lien</em>.
+    </p>
+    <p>
+      De la jointe, on retrouve chaque loi individuelle — la <strong>marginale</strong> — en « écrasant »
+      l'autre variable (on intègre sur elle) :
+    </p>
+    <div class="math">
+      p(x) = ∫ p(x, y) dy&nbsp;&nbsp;&nbsp;&nbsp;(la loi de X, tout Y confondu)
+    </div>
+    <p>
+      Le mot vient des tableaux : la loi de <span class="math-inline">X</span> s'obtenait en sommant chaque
+      ligne et en écrivant le total <em>dans la marge</em>. Marginaliser = renoncer à l'information sur
+      l'autre variable.
+    </p>
+
+    <h2>2. L'indépendance : quand la carte se factorise</h2>
+    <p>
+      <span class="math-inline">X</span> et <span class="math-inline">Y</span> sont
+      <strong>indépendantes</strong> si connaître l'une n'apprend rien sur l'autre. Mathématiquement, la
+      jointe se factorise :
+    </p>
+    <div class="math">
+      p(x, y) = p(x) · p(y)&nbsp;&nbsp;&nbsp;(indépendance)
+    </div>
+    <p>
+      C'est une hypothèse <em>de modélisation</em> qu'on fait sans arrêt — « le bruit de l'inclinomètre A
+      est indépendant de celui de l'inclinomètre B », « le bruit de mesure est indépendant du bruit de
+      process » — et elle a des conséquences en or :
+    </p>
+    <div class="math">
+      E[X·Y] = E[X]·E[Y]&nbsp;&nbsp;&nbsp;&nbsp;Var[X + Y] = Var[X] + Var[Y]&nbsp;&nbsp;(sous indépendance)
+    </div>
+    <p>
+      L'<strong>additivité des variances</strong> est la propriété la plus utilisée de tout ce cours : elle
+      donnera le <span class="math-inline">√N</span> de la moyenne (chapitre 8), la marche aléatoire
+      (chapitre 6), le <span class="math-inline">+Q</span> de la prédiction de Kalman. À chaque fois que
+      deux sources de hasard <em>indépendantes</em> se cumulent, leurs variances s'ajoutent — jamais leurs
+      écarts-types.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        <span class="math-inline">σ_total ≠ σ₁ + σ₂</span> ! Deux bruits indépendants de 3° et 4° donnent
+        <span class="math-inline">σ = √(9 + 16) = 5°</span>, pas 7°. Les écarts-types s'ajoutent « en
+        Pythagore » (quadratiquement) — les grandes sources dominent, les petites deviennent vite
+        négligeables. C'est pour cela qu'améliorer le <em>deuxième</em> pire capteur d'une chaîne ne change
+        presque rien.
+      </p>
+    </div>
+
+    <h2>3. Covariance et corrélation : mesurer le lien</h2>
+    <p>
+      Entre l'indépendance totale et la dépendance parfaite, il faut une mesure graduée. La
+      <strong>covariance</strong> étend la variance au couple :
+    </p>
+    <div class="math">
+      Cov[X, Y] = E[ (X − μ_X)(Y − μ_Y) ]
+    </div>
+    <p>
+      Lisez le produit : il est positif quand les deux écarts sont du <em>même</em> côté de leurs moyennes,
+      négatif quand ils sont de côtés opposés. Une covariance positive dit donc : « quand X est au-dessus
+      de sa moyenne, Y tend à l'être aussi ». Sa version normalisée, la <strong>corrélation</strong>,
+      élimine les unités :
+    </p>
+    <div class="math">
+      ρ = Cov[X, Y] / (σ_X · σ_Y)&nbsp;&nbsp;&nbsp;∈ [−1, +1]
+    </div>
+    <ul>
+      <li><span class="math-inline">ρ = ±1</span> : lien affine parfait (connaître l'une donne l'autre exactement) ;</li>
+      <li><span class="math-inline">ρ = 0</span> : <em>décorrélées</em> — aucun lien <em>linéaire</em> ;</li>
+      <li>indépendantes ⇒ décorrélées, mais la réciproque est <strong>fausse en général</strong> (un lien
+        non linéaire peut donner ρ = 0)… <em>sauf</em> pour des gaussiennes jointes, où décorrélé =
+        indépendant — l'une des simplifications qui rendent le monde gaussien si confortable.</li>
+    </ul>
+
+    <h2>4. La loi conditionnelle : observer, c'est apprendre</h2>
+    <p>
+      Voici l'opération qui fait tout le sel du chapitre — et du filtrage. On <em>observe</em> la valeur
+      d'une variable : <span class="math-inline">X = x</span>. Que devient notre connaissance de
+      <span class="math-inline">Y</span> ? Réponse : on découpe la jointe le long de la tranche
+      <span class="math-inline">X = x</span> et on renormalise. C'est la <strong>loi
+      conditionnelle</strong> :
+    </p>
+    <div class="math">
+      p(y | x) = p(x, y) / p(x)&nbsp;&nbsp;&nbsp;(« la loi de Y sachant que X vaut x »)
+    </div>
+
+    <figure class="fig">
+      <img src="figures/fig-jointe.svg" alt="Nuage de points violets représentant la loi jointe de deux erreurs corrélées positivement (erreur d'angle en abscisse, erreur de vitesse en ordonnée), allongé le long d'une diagonale. Une droite verticale ambre marque l'observation 'erreur d'angle = z'. Le long de cette tranche, une gaussienne verte étroite représente la loi conditionnelle de l'erreur de vitesse sachant l'observation : recentrée vers le haut et resserrée par rapport à la marginale.">
+      <figcaption><b>Figure 3.1.</b> Le conditionnement en image. Le nuage violet est la loi jointe des
+      erreurs (angle, vitesse) — <b>corrélées</b> : le nuage penche. Observer l'erreur d'angle (tranche
+      ambre) découpe la jointe : ce qui reste, renormalisé, est la loi <b>conditionnelle</b> de l'erreur de
+      vitesse (verte) — <b>recentrée</b> (on sait maintenant de quel côté elle penche) et
+      <b>resserrée</b> (on a réduit le doute). Apprendre sur une variable qu'on n'a pas mesurée, via une
+      variable corrélée qu'on a mesurée : c'est exactement ce que fait la correction du filtre de Kalman.</figcaption>
+    </figure>
+
+    <div class="callout astuce">
+      <p>
+        Le mécanisme n'opère <em>que</em> par la corrélation. Si le nuage était rond
+        (<span class="math-inline">ρ = 0</span>, cas gaussien), la tranche verticale aurait la même forme
+        partout : observer l'angle n'apprendrait <em>rien</em> sur la vitesse. Plus le nuage est incliné et
+        étiré, plus la tranche est décalée et fine — plus l'observation est informative. Voilà pourquoi le
+        filtre de Kalman ne peut estimer une vitesse jamais mesurée que si sa matrice
+        <span class="math-inline">P</span> porte des termes croisés angle–vitesse.
+      </p>
+    </div>
+
+    <p>
+      Deux remarques qui préparent la suite. D'abord, la règle de Bayes n'est que la conditionnelle écrite
+      dans les deux sens — <span class="math-inline">p(y|x)·p(x) = p(x,y) = p(x|y)·p(y)</span> — d'où :
+    </p>
+    <div class="math">
+      p(y | x) = p(x | y) · p(y) / p(x)&nbsp;&nbsp;&nbsp;(Bayes : renverser le conditionnement)
+    </div>
+    <p>
+      C'est elle qui permet de passer de « la loi de la <em>mesure</em> sachant l'état » (le modèle du
+      capteur, facile à écrire) à « la loi de l'<em>état</em> sachant la mesure » (ce qu'on veut !). Ensuite,
+      l'<strong>espérance conditionnelle</strong> <span class="math-inline">E[Y | X = x]</span> — le centre
+      de la tranche — sera au chapitre 9 <em>la</em> meilleure estimation possible de
+      <span class="math-inline">Y</span> après observation. Tout le filtre de Kalman est le calcul récursif
+      de cette espérance conditionnelle.
+    </p>
+
+    <h2>5. Le vecteur aléatoire et la matrice de covariance</h2>
+    <p>
+      À plus de deux variables, on empile tout en <strong>vecteur aléatoire</strong>
+      <span class="math-inline">X = [X₁, …, Xₙ]ᵀ</span>, de moyenne vectorielle
+      <span class="math-inline">μ</span> et de <strong>matrice de covariance</strong> :
+    </p>
+    <div class="math">
+      Σ = E[ (X − μ)(X − μ)ᵀ ]&nbsp;&nbsp;&nbsp;:&nbsp;&nbsp;Σᵢᵢ = Var[Xᵢ],&nbsp;&nbsp;Σᵢⱼ = Cov[Xᵢ, Xⱼ]
+    </div>
+    <p>
+      La diagonale porte les variances, le hors-diagonale les liens. Symétrique, semi-définie positive —
+      et transportée par le « sandwich » <span class="math-inline">A·Σ·Aᵀ</span> sous toute transformation
+      linéaire. Ces objets sont développés en détail aux chapitres 2 et 3 du
+      <a href="../cours-filtre-kalman/chapitre-02.html">cours Kalman</a> ; ici, l'essentiel est de voir
+      qu'ils ne sont que la covariance de ce chapitre, rangée en tableau.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Covariance à la main</h3>
+      <p>
+        Deux erreurs prennent, de façon équiprobable, les quatre couples de valeurs
+        <span class="math-inline">(−1, −2), (−1, 0), (+1, 0), (+1, +2)</span>. Calculez les moyennes, les
+        variances, la covariance et la corrélation.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <div class="math">
+          μ_X = 0&nbsp;&nbsp;μ_Y = 0<br>
+          Var[X] = (1+1+1+1)/4 = 1&nbsp;&nbsp;&nbsp;Var[Y] = (4+0+0+4)/4 = 2<br>
+          Cov = [(−1)(−2)+(−1)(0)+(1)(0)+(1)(2)]/4 = (2+0+0+2)/4 = 1<br>
+          ρ = 1 / (1·√2) ≈ 0,71
+        </div>
+        <p>
+          Corrélation forte et positive : les grands <span class="math-inline">Y</span> accompagnent les
+          grands <span class="math-inline">X</span>. Si l'on observe <span class="math-inline">X = +1</span>,
+          la loi conditionnelle de <span class="math-inline">Y</span> devient {0, +2} équiprobables :
+          moyenne <em>recentrée</em> à +1 (au lieu de 0) et variance <em>réduite</em> à 1 (au lieu de 2) —
+          la figure 3.1 en version calculable à la main.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Additivité, mais pas des écarts-types</h3>
+      <p>
+        Votre chaîne de mesure d'angle cumule trois bruits indépendants : capteur
+        (<span class="math-inline">σ = 0,30°</span>), CAN (<span class="math-inline">σ = 0,10°</span>),
+        perturbation EMI (<span class="math-inline">σ = 0,08°</span>). (a) Quel est le
+        <span class="math-inline">σ</span> total ? (b) On blinde le câble et l'EMI disparaît : gain réel ?
+        (c) Que vaudrait le « total » si l'on additionnait naïvement les σ ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> <span class="math-inline">σ = √(0,30² + 0,10² + 0,08²) = √(0,09+0,01+0,0064) ≈ 0,33°</span>.</li>
+          <li><strong>(b)</strong> Sans EMI : <span class="math-inline">√(0,09+0,01) ≈ 0,316°</span> — un gain de ~0,01° : quasi rien. La source dominante (0,30°) écrase les autres : c'est <em>elle</em> qu'il faut attaquer.</li>
+          <li><strong>(c)</strong> Naïvement 0,48° — 45 % trop pessimiste. L'addition quadratique n'est pas un détail de puriste : elle change les décisions (ici, « blinder le câble » ne valait pas l'effort).</li>
+        </ul>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Corrélé n'est pas causal, décorrélé n'est pas indépendant</h3>
+      <p>
+        (a) Les erreurs de vos deux inclinomètres montent ensemble quand l'armoire chauffe. Sont-elles
+        indépendantes ? Que faut-il en conclure pour la matrice <span class="math-inline">R</span> ?
+        (b) Soit <span class="math-inline">X</span> uniforme sur {−1, 0, +1} et
+        <span class="math-inline">Y = X²</span>. Calculez <span class="math-inline">Cov[X, Y]</span> et
+        concluez.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> Non : une cause commune (la température) les fait varier ensemble → covariance positive. La matrice <span class="math-inline">R</span> des deux capteurs doit porter un <em>terme croisé</em> ; la supposer diagonale rendrait le filtre trop confiant quand il « moyenne » les deux capteurs (il croirait moyenner deux avis indépendants alors qu'ils répètent la même erreur). C'est le cas « source commune » du chapitre 16 du cours Kalman.</li>
+          <li><strong>(b)</strong> <span class="math-inline">E[X] = 0</span>, <span class="math-inline">E[XY] = E[X³] = (−1+0+1)/3 = 0</span>, donc <span class="math-inline">Cov = 0</span> : décorrélées. Pourtant <span class="math-inline">Y</span> est <em>entièrement déterminée</em> par <span class="math-inline">X</span> — dépendance totale, mais non linéaire, invisible à la covariance. La covariance ne voit que les liens <em>linéaires</em> ; seul le monde gaussien autorise le raccourci décorrélé = indépendant.</li>
+        </ul>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Jointe</strong> <span class="math-inline">p(x,y)</span> : la carte des couples ; <strong>marginale</strong> : on intègre l'autre variable (on renonce à son information).</li>
+        <li><strong>Indépendance</strong> : <span class="math-inline">p(x,y) = p(x)p(y)</span> ⇒ <span class="math-inline">Var[X+Y] = Var[X]+Var[Y]</span> — l'additivité des variances, jamais des écarts-types (addition « en Pythagore »).</li>
+        <li><strong>Covariance</strong> <span class="math-inline">E[(X−μ_X)(Y−μ_Y)]</span> et <strong>corrélation</strong> <span class="math-inline">ρ ∈ [−1,1]</span> : le lien <em>linéaire</em>. Décorrélé ⇏ indépendant (sauf gaussiennes).</li>
+        <li><strong>Conditionnelle</strong> <span class="math-inline">p(y|x) = p(x,y)/p(x)</span> : découper la tranche, renormaliser — recentrée et resserrée si corrélation. <strong>Bayes</strong> la renverse : du modèle capteur <span class="math-inline">p(z|x)</span> vers ce qu'on veut <span class="math-inline">p(x|z)</span>.</li>
+        <li>À n variables : vecteur aléatoire, matrice <span class="math-inline">Σ</span> (diag = variances, hors-diag = liens), sandwich <span class="math-inline">AΣAᵀ</span> — les objets du cours Kalman.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>Décrire une variable</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>La gaussienne et le théorème central limite</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 08 — Estimer à partir de données : les estimateurs et leur précision</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 08</span><br>Estimer à partir de données : les estimateurs et leur précision</h1>
+
+    <div class="callout note">
+      Voici le passage des <em>probabilités</em> (la loi est connue, on prédit les données) à la
+      <em>statistique</em> (les données sont connues, on remonte à la loi). L'idée charnière — et le
+      retour triomphal du chapitre 1 : <strong>une quantité calculée à partir de mesures est elle-même une
+      variable aléatoire</strong>. Sa loi dit à quel point on peut lui faire confiance.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre qu'un <strong>estimateur</strong> est une VA — avec un biais et une variance.</li>
+        <li>Établir le résultat central : la moyenne de N mesures a un écart-type <span class="math-inline">σ/√N</span>.</li>
+        <li>Comprendre la <strong>correction de Bessel</strong> (le fameux N−1).</li>
+        <li>Chiffrer la confiance : combien d'échantillons pour un <span class="math-inline">R</span> à ±10 % ?</li>
+      </ul>
+    </div>
+
+    <h2>1. L'estimateur : une recette, donc une variable aléatoire</h2>
+    <p>
+      Un <strong>estimateur</strong> est une <em>recette de calcul</em> appliquée aux données pour approcher
+      un paramètre de la loi : « additionne les N mesures, divise par N » pour approcher
+      <span class="math-inline">μ</span>. Appliquée à <em>vos</em> mesures, la recette donne un nombre —
+      l'<em>estimation</em>, par exemple <span class="math-inline">μ̂ = 5,03°</span>.
+    </p>
+    <p>
+      Appliquez maintenant le test du chapitre 1 : « si je rejouais l'expérience, ce nombre
+      changerait-il ? » Oui — d'autres bruits, d'autres mesures, une autre moyenne. Donc
+      <strong>l'estimateur est une variable aléatoire</strong>, et votre 5,03° en est une réalisation. Dès
+      lors, tout l'appareil des chapitres 2–4 s'applique <em>à l'estimateur lui-même</em> :
+    </p>
+    <ul>
+      <li>son <strong>espérance</strong> : vise-t-elle la bonne cible ? L'écart
+        <span class="math-inline">E[μ̂] − μ</span> s'appelle le <strong>biais</strong> de l'estimateur ;</li>
+      <li>sa <strong>variance</strong> : à quel point le résultat fluctuerait-il d'un rejeu à l'autre ?
+        C'est la <em>précision</em> de l'estimation.</li>
+    </ul>
+    <p>
+      Un bon estimateur est <em>non biaisé</em> (il vise juste en moyenne) et de <em>faible variance</em>
+      (il vise groupé). Exactement les deux qualités d'un capteur — et ce n'est pas un hasard : un
+      estimateur <em>est</em> un capteur logiciel.
+    </p>
+
+    <h2>2. Le résultat central : σ/√N</h2>
+    <p>
+      Prenons la moyenne empirique <span class="math-inline">μ̂ = (1/N)Σzᵢ</span> de N mesures
+      indépendantes, chacune de loi <span class="math-inline">(μ, σ²)</span>. Sa loi à elle :
+    </p>
+    <div class="callout demo">
+      <div class="math">
+        E[μ̂] = (1/N)·Σ E[zᵢ] = (1/N)·N·μ = μ&nbsp;&nbsp;&nbsp;→ non biaisée ✓<br>
+        Var[μ̂] = (1/N²)·Σ Var[zᵢ] = (1/N²)·N·σ² = σ²/N&nbsp;&nbsp;&nbsp;→ écart-type <strong>σ/√N</strong>
+      </div>
+      <p>
+        Ligne 1 : linéarité de l'espérance (chapitre 2). Ligne 2 : additivité des variances pour des
+        mesures indépendantes (chapitre 3), puis le facteur <span class="math-inline">1/N²</span> du
+        <span class="math-inline">a²</span>. Le même duo qui a donné la marche aléatoire donne ici son
+        théorème jumeau — dans l'autre sens : sommer <em>étale</em> en √N, moyenner <em>resserre</em> en √N.
+      </p>
+    </div>
+
+    <figure class="fig">
+      <img src="figures/fig-estimateur.svg" alt="Trois densités gaussiennes centrées sur μ, représentant la loi de la moyenne empirique pour trois tailles d'échantillon. Pour N = 1, courbe grise très large (écart-type σ). Pour N = 10, courbe sarcelle plus étroite (σ/√10). Pour N = 100, courbe violette très fine et haute (σ/10). Une légende en haut à gauche identifie les trois cas.">
+      <figcaption><b>Figure 8.1.</b> La loi de l'estimateur « moyenne de N mesures ». Chaque courbe est
+      l'étalement <em>du résultat du calcul</em> si l'on rejouait l'acquisition : avec N = 1, on hérite du
+      bruit brut ; avec N = 100, l'estimation se concentre dans un couloir dix fois plus fin. La précision
+      s'achète en <span class="math-inline">√N</span> : chaque décimale supplémentaire coûte <b>cent</b>
+      fois plus de mesures.</figcaption>
+    </figure>
+
+    <div class="callout piege">
+      <p>
+        Le <span class="math-inline">√N</span> suppose des mesures <strong>indépendantes</strong> — donc un
+        bruit blanc à la cadence d'acquisition. Si le signal est corrélé (capteur filtré, chapitre 5 ;
+        dérive, chapitre 6), les N points contiennent moins de N informations fraîches
+        (<span class="math-inline">N_eff &lt; N</span>) et le couloir se resserre plus lentement — voire
+        plus du tout (moyenner une marche aléatoire ne converge vers rien). Toujours vérifier
+        l'autocorrélation <em>avant</em> d'invoquer le √N.
+      </p>
+    </div>
+
+    <h2>3. Estimer la variance : le N−1 de Bessel</h2>
+    <p>
+      Pour la variance — notre <span class="math-inline">R</span> ! — la recette naturelle serait
+      <span class="math-inline">(1/N)Σ(zᵢ − μ̂)²</span>. Elle est <strong>biaisée</strong> : elle
+      sous-estime systématiquement <span class="math-inline">σ²</span>. La raison est belle : on mesure les
+      écarts à <span class="math-inline">μ̂</span> — qui a été <em>calculée pour être au centre de ces
+      mêmes données</em>. La moyenne empirique colle aux données de trop près (elle a « absorbé » une part
+      de leur dispersion), et les écarts résiduels sont trop petits, dans un rapport exact de
+      <span class="math-inline">(N−1)/N</span>.
+    </p>
+    <div class="math">
+      s² = (1/(N−1))·Σ (zᵢ − μ̂)²&nbsp;&nbsp;&nbsp;⟹&nbsp;&nbsp;E[s²] = σ²&nbsp;&nbsp;(non biaisé)
+    </div>
+    <p>
+      Diviser par <span class="math-inline">N−1</span> — la <strong>correction de Bessel</strong> — répare
+      exactement ce vol. Interprétation en « degrés de liberté » : les N écarts à
+      <span class="math-inline">μ̂</span> ne sont pas libres (ils somment à zéro par construction) ; il n'en
+      reste que N−1 d'indépendants, et on divise par ce qu'on a vraiment. Si
+      <span class="math-inline">μ</span> était <em>connue</em> (pas estimée), diviser par N serait correct.
+    </p>
+
+    <h2>4. Chiffrer la confiance : combien de mesures ?</h2>
+    <p>
+      Puisque <span class="math-inline">s²</span> est une VA, elle a sa loi — et sa loi donne les barres
+      d'erreur de votre <span class="math-inline">R</span>. Pour un bruit gaussien, le résultat utile :
+    </p>
+    <div class="math">
+      écart-type relatif de s² ≈ √(2/(N−1))&nbsp;&nbsp;&nbsp;&nbsp;(et (N−1)s²/σ² suit une loi χ² à N−1 ddl)
+    </div>
+    <table>
+      <thead><tr><th>N échantillons</th><th>précision de s² (±1 é.-t.)</th><th>précision de σ (moitié)</th></tr></thead>
+      <tbody>
+        <tr><td>50</td><td>± 20 %</td><td>± 10 %</td></tr>
+        <tr><td>200</td><td>± 10 %</td><td>± 5 %</td></tr>
+        <tr><td>2 000</td><td>± 3 %</td><td>± 1,6 %</td></tr>
+        <tr><td>20 000</td><td>± 1 %</td><td>± 0,5 %</td></tr>
+      </tbody>
+    </table>
+    <p>
+      D'où la consigne du chapitre 16 du cours Kalman — « quelques milliers d'échantillons » : à 2 000
+      points, votre <span class="math-inline">R</span> est connu à ±3 %, largement assez (le réglage fin se
+      fait de toute façon par la NIS). Et la loi du χ² qui apparaît ici est la même qui borne la NIS : la
+      boucle est bouclée — <em>tester</em> un filtre, c'est comparer une statistique calculée (réalisation)
+      à la loi qu'elle devrait suivre (ensemble).
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Écrire une estimation, c'est écrire deux nombres.</strong> Pas «
+        <span class="math-inline">R = 0,158</span> » mais «
+        <span class="math-inline">R = 0,158 ± 5 %</span> (N = 200) ». La barre d'erreur dit ce que l'on
+        peut exiger : inutile de discuter la 3ᵉ décimale d'un <span class="math-inline">R</span> estimé sur
+        50 points, et inutile aussi d'accumuler 10⁶ points quand ±3 % suffit. La statistique, c'est
+        l'ingénierie du « combien de données pour quelle décision ».
+      </p>
+    </div>
+
+    <h2>5. La carte des estimateurs déjà rencontrés</h2>
+    <p>
+      Vous utilisez déjà, sans le mot, une petite famille d'estimateurs — les voici réunis :
+    </p>
+    <table>
+      <thead><tr><th>Estimateur</th><th>Cible</th><th>Propriété clé</th></tr></thead>
+      <tbody>
+        <tr><td>moyenne empirique <span class="math-inline">μ̂</span></td><td><span class="math-inline">μ</span> (biais capteur)</td><td>non biaisé ; précision <span class="math-inline">σ/√N</span></td></tr>
+        <tr><td>variance <span class="math-inline">s²</span> (Bessel)</td><td><span class="math-inline">σ² = R</span></td><td>non biaisé ; précision <span class="math-inline">√(2/(N−1))</span> ; suppose le bruit blanc</td></tr>
+        <tr><td>estimateur lag-1 <span class="math-inline">Σ(zᵢ₊₁−zᵢ)²/2(N−1)</span></td><td><span class="math-inline">σ²</span> (part blanche)</td><td>robuste à la dérive lente (il la différencie)</td></tr>
+        <tr><td>variance d'Allan</td><td>les <span class="math-inline">σ²</span> <em>par couleur</em> de bruit</td><td>sépare blanc / 1/f / marche aléatoire (chapitre 7)</td></tr>
+        <tr><td>le filtre de Kalman lui-même</td><td>l'état <span class="math-inline">x</span>, à chaque instant</td><td>l'estimateur récursif optimal — chapitre 9</td></tr>
+      </tbody>
+    </table>
+    <p>
+      La dernière ligne est le vrai punchline : <strong>le filtre de Kalman est un estimateur</strong> au
+      sens exact de ce chapitre — une recette appliquée aux mesures, dont la sortie
+      <span class="math-inline">x̂</span> est une VA dont on contrôle le biais (nul) et la variance… qui
+      s'appelle <span class="math-inline">P</span>.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Dimensionner une campagne de mesure</h3>
+      <p>
+        Vous voulez le biais et le <span class="math-inline">R</span> de votre inclinomètre
+        (<span class="math-inline">σ ≈ 0,05°</span> présumé), cadence 100 Hz. (a) Combien de temps
+        d'enregistrement pour connaître le <em>biais</em> à ±0,001° (±1 é.-t.) ? (b) Et pour
+        <span class="math-inline">R</span> à ±5 % ? (c) Laquelle des deux campagnes est la plus exigeante ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> Il faut <span class="math-inline">σ/√N ≤ 0,001</span> →
+            <span class="math-inline">√N ≥ 50</span> → <span class="math-inline">N ≥ 2500</span>, soit
+            25 s à 100 Hz.</li>
+          <li><strong>(b)</strong> <span class="math-inline">√(2/(N−1)) ≤ 0,05·2 = 0,10</span> pour s²
+            (±5 % sur σ ≈ ±10 % sur σ²) → <span class="math-inline">N ≥ 201</span>, soit ~2 s. Avec la
+            convention stricte ±5 % sur s² : <span class="math-inline">N ≥ 801</span>, ~8 s.</li>
+          <li><strong>(c)</strong> Le <em>biais</em> : viser une précision absolue fine sur μ coûte cher en
+            <span class="math-inline">1/√N</span>. La variance converge vite en relatif. (Et en pratique le
+            vrai facteur limitant du biais n'est même pas N : c'est la dérive lente — chapitres 5–7 — qui
+            plafonne la précision atteignable, cf. le plancher d'Allan.)</li>
+        </ul>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Le N−1 vu par l'expérience de pensée</h3>
+      <p>
+        Cas extrême : N = 1. Que donne la formule en 1/N ? Et celle de Bessel ? Laquelle dit la vérité ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Avec un seul point, <span class="math-inline">μ̂ = z₁</span> et l'écart à la moyenne est nul : la
+          formule en 1/N rend <span class="math-inline">s² = 0</span> — une certitude absolue affirmée à
+          partir d'<em>une</em> mesure, manifestement absurde. Bessel rend
+          <span class="math-inline">0/0</span> : <em>indéfini</em> — qui est la vérité : une seule mesure ne
+          contient <strong>aucune</strong> information sur la dispersion (il faut au moins deux points pour
+          voir un écart). Le N−1 n'est pas une coquetterie : il compte honnêtement l'information disponible.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Le filtre comme estimateur</h3>
+      <p>
+        Traduisez dans le vocabulaire de ce chapitre : (a) « le filtre est non biaisé » ; (b) « la NIS
+        moyenne vaut 2,4 au lieu de 1 » ; (c) « P est la variance de l'estimateur ». Pour chacun, dites ce
+        qui est réalisation et ce qui est ensemble.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ul>
+          <li><strong>(a)</strong> <span class="math-inline">E[x − x̂] = 0</span> : sur l'ensemble des
+            mondes possibles, l'erreur de l'estimateur-filtre est centrée. (Énoncé d'ensemble ; votre erreur
+            de <em>ce</em> cycle, elle, est une réalisation non nulle.)</li>
+          <li><strong>(b)</strong> La statistique calculée (réalisation de la VA « NIS moyenne ») tombe loin
+            de la valeur prévue par sa loi χ² (ensemble) : les hypothèses du modèle sont fausses —
+            l'estimateur promet une variance <span class="math-inline">S</span> qu'il ne tient pas.</li>
+          <li><strong>(c)</strong> <span class="math-inline">P = E[(x−x̂)(x−x̂)ᵀ]</span> : exactement la
+            « variance de l'estimateur » de ce chapitre, en version matricielle et récursive. La cohérence
+            (NEES/NIS) vérifie que cette variance <em>annoncée</em> égale la variance <em>réelle</em> — un
+            estimateur qui connaît et publie honnêtement sa propre barre d'erreur, voilà toute la promesse
+            du filtre de Kalman.</li>
+        </ul>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Un <strong>estimateur</strong> = une recette sur les données ⇒ une <strong>VA</strong> : biais (vise-t-il juste ?) et variance (vise-t-il groupé ?).</li>
+        <li><strong>Moyenne</strong> : non biaisée, écart-type <span class="math-inline">σ/√N</span> — moyenner resserre en √N (jumeau inverse de la marche aléatoire). Chaque décimale coûte ×100 mesures. Valide si mesures <em>indépendantes</em> (sinon N_eff &lt; N).</li>
+        <li><strong>Variance</strong> : diviser par <span class="math-inline">N−1</span> (Bessel) — la moyenne estimée a « absorbé » un degré de liberté. Précision relative <span class="math-inline">√(2/(N−1))</span> : ~2000 points pour ±3 %.</li>
+        <li>Une estimation s'écrit <strong>avec sa barre d'erreur</strong> ; le χ² de la variance est le même que celui de la NIS.</li>
+        <li><strong>Le filtre de Kalman est un estimateur</strong> : <span class="math-inline">x̂</span> sa sortie, <span class="math-inline">P</span> sa variance, la cohérence la vérification qu'il dit vrai sur lui-même.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-07.html"><span class="lbl">← Précédent</span>PSD et bande passante</a>
+    <a class="next" href="chapitre-09.html"><span class="lbl">Suivant →</span>L'estimation optimale : conditionnelle, MMSE, fusion</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

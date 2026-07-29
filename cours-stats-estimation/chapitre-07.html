@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — Le bruit en fréquence : PSD et bande passante</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>Le bruit en fréquence : PSD et bande passante</h1>
+
+    <div class="callout note">
+      Les datasheets ne donnent pas « la variance » : elles donnent des <span class="math-inline">µg/√Hz</span>,
+      des <span class="math-inline">°/s/√Hz</span> — des <strong>densités spectrales</strong>. Ce chapitre
+      explique ce que c'est, pourquoi cette unité étrange, et d'où sort la formule
+      <span class="math-inline">σ = d·√BW</span> utilisée au chapitre 16 du cours Kalman.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre la <strong>densité spectrale de puissance</strong> (PSD) : la variance, ventilée par fréquence.</li>
+        <li>Voir pourquoi le <strong>bruit blanc</strong> a une PSD plate — et pourquoi il s'appelle « blanc ».</li>
+        <li>Décoder l'unité <strong>/√Hz</strong> et retrouver <span class="math-inline">σ = d·√BW</span>.</li>
+        <li>Comprendre l'effet du <strong>filtrage</strong> : réduire la bande = réduire la variance = corréler.</li>
+      </ul>
+    </div>
+
+    <h2>1. La variance, ventilée par fréquence</h2>
+    <p>
+      Un signal aléatoire stationnaire a une variance <span class="math-inline">σ²</span> — un seul nombre.
+      La <strong>densité spectrale de puissance</strong> (PSD) <span class="math-inline">S(f)</span>
+      raffine ce nombre : elle dit <em>comment cette variance se répartit entre les fréquences</em>. Les
+      fluctuations lentes du signal contribuent aux basses fréquences, les fluctuations rapides aux hautes.
+      La règle de conservation est la définition même :
+    </p>
+    <div class="math">
+      σ² = ∫ S(f) df&nbsp;&nbsp;&nbsp;— la variance est l'<strong>aire sous la PSD</strong>
+    </div>
+    <p>
+      « Densité », encore une fois (comme au chapitre 2), signifie « quelque chose à intégrer » :
+      <span class="math-inline">S(f)</span> se mesure en <em>unité² par Hz</em>, et seules ses aires sont
+      des variances. Le lien profond avec le chapitre 5 : la PSD est la transformée de Fourier de
+      l'autocorrélation (théorème de Wiener-Khintchine). Mémoire longue ⇔ énergie concentrée en basses
+      fréquences ; aucune mémoire ⇔ énergie partout.
+    </p>
+
+    <h2>2. Le bruit blanc : plat en fréquence</h2>
+    <p>
+      Justement : le <strong>bruit blanc</strong> du chapitre 5 (autocorrélation nulle hors 0) a une PSD
+      <strong>constante</strong> — la même puissance à toutes les fréquences, comme la lumière blanche
+      contient toutes les couleurs. D'où son nom. Et d'où un paradoxe apparent : une PSD plate intégrée
+      jusqu'à l'infini donnerait une variance infinie ! Le bruit blanc <em>idéal</em> n'existe pas
+      physiquement — tout capteur réel coupe quelque part. Ce qui existe : un bruit <em>plat sur la bande
+      utile</em>, décrit par sa densité <span class="math-inline">d²</span> (unité²/Hz), et la variance
+      réelle dépend de la <strong>bande passante</strong> qu'on laisse passer.
+    </p>
+
+    <figure class="fig">
+      <img src="figures/fig-psd.svg" alt="Densité de puissance en fonction de la fréquence de 0 à 100 Hz. Une ligne horizontale sarcelle représente le bruit blanc : plat, d² constant. Une courbe violette représente le même bruit après un passe-bas de coupure fc = 20 Hz : elle part du même niveau puis décroît. L'aire sous la courbe violette est ombrée et annotée 'aire = VARIANCE σ²'. Une annotation donne σ² = ∫ d²(f) df ≈ d² × (π/2)·fc, d'où σ = d·√BW, la formule datasheet.">
+      <figcaption><b>Figure 7.1.</b> La variance est l'aire sous la PSD. Le bruit <b>blanc</b> (sarcelle)
+      est plat : sa densité <span class="math-inline">d²</span> est constante. Après un <b>passe-bas</b> de
+      coupure <span class="math-inline">f_c</span> (violet), seules les fréquences basses survivent :
+      l'aire — donc la variance — se réduit à
+      <span class="math-inline">σ² ≈ d² × (π/2)f_c</span>. En prenant la racine :
+      <span class="math-inline">σ = d·√BW</span> — la formule de conversion des datasheets, démontrée en
+      une image.</figcaption>
+    </figure>
+
+    <h2>3. Décoder le /√Hz</h2>
+    <p>
+      Tout s'éclaire : la datasheet spécifie la <em>racine</em> de la densité de puissance —
+      <span class="math-inline">d = √S(f)</span> — pour rester dans l'unité du signal. D'où le
+      <span class="math-inline">µg/√Hz</span> : élevé au carré, il redonne des
+      <span class="math-inline">µg²/Hz</span>, une densité de puissance à intégrer. La chaîne complète :
+    </p>
+    <div class="math">
+      d (unité/√Hz)&nbsp;&nbsp;→&nbsp;&nbsp;S = d² (unité²/Hz)&nbsp;&nbsp;→&nbsp;&nbsp;σ² = d²·BW (unité²)&nbsp;&nbsp;→&nbsp;&nbsp;σ = d·√BW (unité)
+    </div>
+    <p>
+      où <span class="math-inline">BW</span> est la <strong>bande passante de bruit équivalente</strong> :
+      la largeur du rectangle qui aurait la même aire que la vraie réponse du filtre. Pour un passe-bas du
+      1<sup>er</sup> ordre de coupure <span class="math-inline">f_c</span>,
+      <span class="math-inline">BW = (π/2)·f_c ≈ 1,57·f_c</span> — le facteur « mystérieux » du chapitre 16
+      du cours Kalman, qui n'est que l'intégrale exacte de
+      <span class="math-inline">1/(1+(f/f_c)²)</span>.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>Pourquoi la nature spécifie en densité.</strong> Le bruit de fond d'un capteur est
+        (quasi) blanc : sa densité <span class="math-inline">d</span> est une propriété <em>du composant</em>,
+        indépendante de l'électronique de filtrage qu'on mettra derrière. La variance, elle, dépend du
+        filtrage choisi par l'utilisateur. La datasheet donne donc l'invariant
+        (<span class="math-inline">d</span>) et vous laisse calculer votre
+        <span class="math-inline">σ</span> selon <em>votre</em> bande. Deux intégrateurs différents du même
+        capteur ont le même <span class="math-inline">d</span> et des <span class="math-inline">σ</span>
+        différents — et les deux datasheets sont justes.
+      </p>
+    </div>
+
+    <h2>4. Filtrer : moins de variance, plus de mémoire</h2>
+    <p>
+      La figure 7.1 montre le gain : filtrer élimine l'aire haute fréquence, la variance chute. Diviser la
+      bande par 4 divise la variance par 4, donc <span class="math-inline">σ</span> par 2. Mais le chapitre
+      5 a montré l'autre face : un bruit filtré est <strong>corrélé</strong> (il a de la mémoire — c'est le
+      même énoncé, dit en temps au lieu de fréquence). D'où trois conséquences opérationnelles :
+    </p>
+    <ul>
+      <li><strong>Latence</strong> : la mémoire du filtre est un retard (cours Kalman, ch. 11). Le compromis
+        bruit ↔ retard est irréductible — on choisit sa bande, on ne gagne pas sur les deux tableaux.</li>
+      <li><strong>Échantillons non indépendants</strong> : si la cadence d'échantillonnage dépasse la bande,
+        les échantillons successifs se répètent partiellement (<span class="math-inline">N_eff &lt; N</span>,
+        chapitre 5, exercice 2) — sur-échantillonner un signal filtré n'apporte pas d'information neuve.</li>
+      <li><strong>Le R du filtre de Kalman doit suivre</strong> : mesurez <span class="math-inline">σ</span>
+        <em>avec</em> le filtrage réellement en service. Un <span class="math-inline">R</span> pris sur la
+        datasheet « pleine bande » alors que le capteur filtre à 10 Hz est pessimiste — et
+        réciproquement.</li>
+    </ul>
+
+    <div class="callout piege">
+      <p>
+        <strong>Un bruit filtré n'est plus blanc</strong> — or le filtre de Kalman suppose un bruit de
+        mesure blanc <em>à sa cadence</em>. Tant que la bande du capteur reste large devant la cadence du
+        filtre, l'approximation est bonne. Si le capteur filtre fort (bande ≪ cadence d'échantillonnage),
+        les bruits de mesures successives sont corrélés : le filtre croit recevoir des informations fraîches
+        qui n'en sont pas, et devient trop confiant — le même mécanisme que le « tenir la valeur » du
+        chapitre 13 du cours Kalman, en version continue. Parades : abaisser la cadence de correction,
+        gonfler <span class="math-inline">R</span>, ou modéliser le filtre du capteur dans l'état (l'état
+        <span class="math-inline">θ_m</span> du chapitre 11).
+      </p>
+    </div>
+
+    <h2>5. Au-delà du blanc : les couleurs du bruit</h2>
+    <p>
+      La PSD donne un langage pour <em>tous</em> les bruits d'une datasheet IMU, chacun avec sa pente en
+      log-log — c'est exactement ce que sépare la variance d'Allan (cours Kalman, ch. 16) :
+    </p>
+    <table>
+      <thead><tr><th>Bruit</th><th>PSD</th><th>En temps</th><th>Signature Allan</th></tr></thead>
+      <tbody>
+        <tr><td>blanc</td><td>plate</td><td>sans mémoire, stationnaire</td><td>pente −½</td></tr>
+        <tr><td>rose (1/f, <em>flicker</em>)</td><td><span class="math-inline">∝ 1/f</span></td><td>lentes ondulations du biais</td><td>plancher (instabilité de biais)</td></tr>
+        <tr><td>brun / marche aléatoire</td><td><span class="math-inline">∝ 1/f²</span></td><td>dérive √t (chapitre 6), non stationnaire</td><td>pente +½</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Retenez la logique d'ensemble : <strong>plus l'énergie se concentre en basse fréquence, plus le bruit
+      « ressemble à un biais »</strong> — et moins il se moyenne. Le blanc se moyenne en
+      <span class="math-inline">1/√N</span> (chapitre 8) ; le 1/f ne se moyenne presque pas (le plancher
+      d'Allan) ; le 1/f² s'aggrave avec le temps. C'est pourquoi la frontière « bruit (dans R) vs biais
+      (dans l'état) » du cours Kalman est en réalité une frontière <em>spectrale</em> : au-dessus de la
+      bande du filtre → R ; en dessous → à modéliser.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — La chaîne complète datasheet → R</h3>
+      <p>
+        Un accéléromètre annonce <span class="math-inline">d = 120 µg/√Hz</span> ; votre chaîne filtre à
+        <span class="math-inline">f_c = 40 Hz</span> (1<sup>er</sup> ordre). Calculez
+        <span class="math-inline">σ</span> en m/s², puis <span class="math-inline">R</span>. Que devient
+        <span class="math-inline">R</span> si l'on resserre le filtre à 10 Hz, et que perd-on en échange ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <div class="math">
+          BW = 1,57 × 40 = 62,8 Hz&nbsp;&nbsp;→&nbsp;&nbsp;σ = 120·10⁻⁶ × √62,8 ≈ 9,5·10⁻⁴ g ≈ 9,3·10⁻³ m/s²<br>
+          R = σ² ≈ 8,7·10⁻⁵ (m/s²)²
+        </div>
+        <p>
+          À 10 Hz : bande divisée par 4 → <span class="math-inline">R</span> divisé par 4
+          (≈ 2,2·10⁻⁵), <span class="math-inline">σ</span> par 2. En échange : une constante de temps
+          <span class="math-inline">τ = 1/(2πf_c) ≈ 16 ms</span> de retard (contre 4 ms), et des
+          échantillons corrélés si l'on échantillonne au-delà de ~20 Hz. Le
+          <span class="math-inline">R</span> plus petit n'est un progrès que si la dynamique à suivre tient
+          dans la bande restante.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — L'unité en °/√h</h3>
+      <p>
+        Une datasheet IMU donne un <em>angle random walk</em> de <span class="math-inline">0,3 °/√h</span>.
+        En vous appuyant sur le chapitre 6, dites ce que vaut l'écart-type de dérive d'angle après 15 min,
+        1 h, 4 h — et pourquoi l'unité contient un « /√h ».
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          La dérive intégrée croît en <span class="math-inline">σ(t) = ARW·√t</span> (marche aléatoire,
+          chapitre 6). L'unité °/√h est faite pour ça : multipliée par <span class="math-inline">√t</span>
+          en <span class="math-inline">√h</span>, elle rend des degrés.
+        </p>
+        <div class="math">
+          15 min = 0,25 h : σ = 0,3·√0,25 = 0,15°&nbsp;&nbsp;&nbsp;1 h : 0,3°&nbsp;&nbsp;&nbsp;4 h : 0,6°
+        </div>
+        <p>
+          L'unité elle-même encode la loi en <span class="math-inline">√t</span> : les datasheets IMU sont
+          écrites dans le langage de ce cours — densité (<span class="math-inline">/√Hz</span>) pour le
+          blanc, <span class="math-inline">/√h</span> pour la marche aléatoire, plancher d'Allan pour le
+          1/f.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>PSD</strong> <span class="math-inline">S(f)</span> : la variance ventilée par fréquence ; <span class="math-inline">σ² = ∫S(f)df</span> = l'aire. Transformée de Fourier de l'autocorrélation : mémoire ⇔ basses fréquences.</li>
+        <li><strong>Bruit blanc</strong> : PSD plate (toutes les « couleurs ») ; le blanc idéal a une variance infinie — en pratique, plat sur la bande, et <span class="math-inline">σ</span> dépend de la bande.</li>
+        <li><strong>/√Hz</strong> : la datasheet donne <span class="math-inline">d = √S</span> (l'invariant du composant) ; <span class="math-inline">σ = d·√BW</span>, avec <span class="math-inline">BW ≈ 1,57·f_c</span> pour un 1ᵉʳ ordre.</li>
+        <li><strong>Filtrer</strong> : variance ↓ (aire coupée) mais mémoire ↑ (corrélation, latence, <span class="math-inline">N_eff &lt; N</span>). Mesurer <span class="math-inline">R</span> avec le filtrage en service ; un capteur trop filtré viole l'hypothèse « bruit blanc » de Kalman.</li>
+        <li><strong>Couleurs</strong> : blanc (plat, −½ en Allan) / rose 1/f (plancher) / brun 1/f² (dérive √t, +½). Plus c'est basse fréquence, plus « ça ressemble à un biais » et moins ça se moyenne — la frontière R vs état est spectrale.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Marche aléatoire et dérive</a>
+    <a class="next" href="chapitre-08.html"><span class="lbl">Suivant →</span>Estimer à partir de données : les estimateurs</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 09 — L'estimation optimale : conditionnelle, MMSE, fusion</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 09</span><br>L'estimation optimale : conditionnelle, MMSE, fusion</h1>
+
+    <div class="callout note">
+      Dernier chapitre : on assemble tout. Qu'est-ce que la <em>meilleure</em> estimation possible ? Réponse
+      en un mot : l'<strong>espérance conditionnelle</strong>. On la construit, on l'illustre sur la fusion
+      de deux capteurs, et on termine par la table de correspondance complète entre ce cours et le
+      <a href="../cours-filtre-kalman/index.html">cours Kalman</a> — qui n'est, on le verra, que ce chapitre
+      rendu récursif.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Poser le critère <strong>MMSE</strong> (minimiser l'erreur quadratique moyenne) et son vainqueur : <span class="math-inline">E[X | Z]</span>.</li>
+        <li>Dérouler le cas gaussien : la <strong>fusion de deux sources</strong>, pondérée par les variances.</li>
+        <li>Voir la forme « information » : les précisions s'additionnent.</li>
+        <li>Relier chaque concept du cours aux objets du filtre de Kalman — la table de passage.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le problème, et le critère</h2>
+    <p>
+      Situation générique : une grandeur inconnue <span class="math-inline">X</span> (l'état), une
+      observation <span class="math-inline">Z</span> liée à <span class="math-inline">X</span> (la mesure).
+      On veut une recette <span class="math-inline">x̂(z)</span> — un estimateur, chapitre 8 — la
+      « meilleure » possible. Meilleure au sens de quoi ? Le critère standard est le
+      <strong>MMSE</strong> (<em>minimum mean square error</em>) : minimiser l'erreur quadratique moyenne
+      <span class="math-inline">E[(X − x̂(Z))²]</span> — la moyenne, sur tous les mondes possibles, du
+      carré de l'erreur commise. Un critère de niveau <em>ensemble</em>, cohérent avec tout ce qui précède :
+      on ne peut pas garantir une erreur petite dans <em>ce</em> monde-ci (le hasard peut être méchant),
+      seulement en moyenne sur les mondes.
+    </p>
+
+    <h2>2. Le vainqueur : l'espérance conditionnelle</h2>
+    <p>
+      Le théorème central de l'estimation tient en une ligne :
+    </p>
+    <div class="math">
+      x̂_MMSE(z) = E[ X | Z = z ]&nbsp;&nbsp;&nbsp;— la moyenne de la loi conditionnelle
+    </div>
+    <p>
+      Autrement dit : observez <span class="math-inline">z</span>, découpez la tranche conditionnelle
+      (chapitre 3, figure 3.1), prenez son <em>centre de gravité</em>. Aucun estimateur, aussi sophistiqué
+      soit-il, ne fait mieux en moyenne quadratique. L'intuition : une fois la tranche découpée, tout ce
+      qu'on sait de <span class="math-inline">X</span> est dans cette loi conditionnelle ; et pour
+      minimiser un carré moyen autour d'un point, le point optimal est la moyenne (c'est la propriété de
+      centre de gravité du chapitre 2).
+    </p>
+    <p>
+      Et l'erreur résiduelle ? C'est la <em>variance</em> de la tranche — la variance conditionnelle. Le
+      couple « estimation optimale + incertitude résiduelle » est donc « moyenne + variance de la loi
+      conditionnelle ». Retenez ce binôme : c'est <em>exactement</em>
+      <span class="math-inline">(x̂, P)</span> dans le filtre de Kalman.
+    </p>
+
+    <h2>3. Le cas gaussien : la fusion, formule fermée</h2>
+    <p>
+      En général, calculer <span class="math-inline">E[X|Z]</span> est infaisable en formule fermée. Le cas
+      gaussien — justifié par le TCL, chapitre 4 — est l'exception magique : tout se calcule. Illustrons sur
+      le cas fondamental de la <strong>fusion de deux sources</strong> : deux mesures indépendantes de la
+      même grandeur, <span class="math-inline">z₁</span> (variance <span class="math-inline">σ₁²</span>) et
+      <span class="math-inline">z₂</span> (variance <span class="math-inline">σ₂²</span>). La meilleure
+      combinaison est la <strong>moyenne pondérée par l'inverse des variances</strong> :
+    </p>
+    <div class="math">
+      x̂ = ( z₁/σ₁² + z₂/σ₂² ) / ( 1/σ₁² + 1/σ₂² )&nbsp;&nbsp;&nbsp;&nbsp;1/σ̂² = 1/σ₁² + 1/σ₂²
+    </div>
+
+    <figure class="fig">
+      <img src="figures/fig-fusion-stats.svg" alt="Trois gaussiennes sur un même axe. En bleu, le capteur A, large (incertain), centré vers 3. En ambre, le capteur B, plus étroit (plus sûr), centré vers 5,5. En vert, la loi fusionnée : centrée entre les deux mais nettement plus proche du capteur B, et plus étroite que chacune des deux. Titre : la fusion penche vers le plus sûr et est plus étroite que les deux.">
+      <figcaption><b>Figure 9.1.</b> La fusion optimale de deux capteurs. Le résultat (vert)
+      <b>penche vers le plus sûr</b> (pondération en <span class="math-inline">1/σ²</span>) et il est
+      <b>plus étroit que les deux</b> : deux avis indépendants, même imparfaits, valent toujours mieux qu'un
+      seul. Les <em>précisions</em> (les <span class="math-inline">1/σ²</span>) s'additionnent — jamais on
+      ne perd de l'information en fusionnant correctement.</figcaption>
+    </figure>
+
+    <div class="callout demo">
+      <p>
+        <strong>D'où viennent les poids en 1/σ² ?</strong> Cherchons la meilleure combinaison linéaire non
+        biaisée <span class="math-inline">x̂ = w·z₁ + (1−w)·z₂</span>. Sa variance (additivité,
+        chapitre 3) :
+      </p>
+      <div class="math">
+        Var = w²σ₁² + (1−w)²σ₂²&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;dVar/dw = 2wσ₁² − 2(1−w)σ₂² = 0<br>
+        ⟹&nbsp;&nbsp;w = σ₂² / (σ₁² + σ₂²)&nbsp;&nbsp;&nbsp;(le poids de z₁ est grand quand σ₂ est mauvais)
+      </div>
+      <p>
+        En réinjectant, la variance optimale vérifie
+        <span class="math-inline">1/σ̂² = 1/σ₁² + 1/σ₂²</span>. Dans le cas gaussien, cette meilleure
+        combinaison <em>linéaire</em> est aussi la meilleure tout court —
+        <span class="math-inline">E[X|Z]</span> est linéaire en gaussien. Trois lignes de calcul, et c'est,
+        déjà, la mise à jour du filtre de Kalman.
+      </p>
+    </div>
+
+    <div class="callout astuce">
+      <p>
+        <strong>La forme « information ».</strong> Appelez <em>information</em> la précision
+        <span class="math-inline">1/σ²</span> : la fusion s'énonce alors « les informations
+        s'additionnent ». Formule d'une simplicité désarmante, aux conséquences immédiates : un capteur
+        très mauvais (info ≈ 0) ne coûte jamais rien — il n'apporte simplement presque rien ; deux capteurs
+        égaux divisent la variance par 2 (le √N du chapitre 8 retrouvé, N = 2) ; et fusionner deux sources
+        <em>corrélées</em> comme si elles étaient indépendantes additionne des informations qui n'existent
+        pas — la surconfiance des chapitres 3 et 13 (Kalman).
+      </p>
+    </div>
+
+    <h2>4. Et le temps ? L'estimation devient récursive</h2>
+    <p>
+      Il ne manque qu'un ingrédient pour obtenir le filtre de Kalman : le <strong>temps</strong>. L'état
+      bouge entre deux mesures (chapitres 5–6 : il diffuse, son incertitude gonfle en marche aléatoire), et
+      les mesures arrivent en flux. La solution : appliquer la fusion de ce chapitre <em>récursivement</em> —
+      à chaque cycle, fusionner « ce que je savais, vieilli d'un pas » (l'a priori, dont la variance a
+      gonflé de <span class="math-inline">Q</span>) avec « ce que je vois » (la mesure, de variance
+      <span class="math-inline">R</span>). La pondération en <span class="math-inline">1/σ²</span> devient
+      le gain de Kalman ; la variance fusionnée devient <span class="math-inline">P</span>. Rien de
+      nouveau : la même formule, en boucle.
+    </p>
+
+    <h2>5. La table de passage : ce cours ↔ le filtre de Kalman</h2>
+    <table>
+      <thead><tr><th>Concept de ce cours</th><th>Chap.</th><th>Objet Kalman correspondant</th></tr></thead>
+      <tbody>
+        <tr><td>VA vs réalisation — les deux niveaux</td><td>1</td><td><span class="math-inline">x̂</span> (nombres calculés) vs <span class="math-inline">P, Q, R</span> (lois) ; « 6.2 avance le pari, 6.3 avance le doute »</td></tr>
+        <tr><td>espérance, variance, unités au carré</td><td>2</td><td>les diagonales de <span class="math-inline">P, Q, R</span> ; les bandes <span class="math-inline">x̂ ± k√P</span></td></tr>
+        <tr><td>covariance, conditionnelle, Bayes</td><td>3</td><td>les termes croisés de <span class="math-inline">P</span> ; la correction = conditionnement ; estimer l'inobservé</td></tr>
+        <tr><td>TCL, stabilité gaussienne</td><td>4</td><td>pourquoi les bruits sont gaussiens ; pourquoi <span class="math-inline">(x̂, P)</span> suffisent ; linéaire = exact, sinon EKF</td></tr>
+        <tr><td>processus, stationnarité, ergodicité, bruit blanc</td><td>5</td><td>les hypothèses sur <span class="math-inline">w, v</span> ; la blancheur de l'innovation ; mesurer R sur un enregistrement</td></tr>
+        <tr><td>marche aléatoire, √N, dérive</td><td>6</td><td>le <span class="math-inline">+Q</span> de la prédiction ; la dent de scie entre mesures ; capteur intégrateur vs absolu</td></tr>
+        <tr><td>PSD, /√Hz, bande passante, couleurs</td><td>7</td><td>datasheet → R ; CWNA/q̃ ; frontière spectrale bruit (R) vs biais (état)</td></tr>
+        <tr><td>estimateur = VA, σ/√N, Bessel, χ²</td><td>8</td><td>mesurer R (ch. 16 Kalman) ; le filtre = estimateur, <span class="math-inline">P</span> = sa variance ; NIS/NEES = tests χ²</td></tr>
+        <tr><td>MMSE = espérance conditionnelle ; fusion 1/σ²</td><td>9</td><td>l'optimalité du filtre ; le gain <span class="math-inline">K</span> ; la forme information ; tout le cycle prédire/corriger</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout histoire">
+      <p>
+        <strong>Relire le cours Kalman, maintenant.</strong> Le conseil de sortie : reprenez les chapitres
+        4 à 7 du <a href="../cours-filtre-kalman/index.html">cours Kalman</a> avec ce bagage. Le filtrage
+        bayésien (ch. 4) est le conditionnement du chapitre 3 en boucle ; la prédiction (ch. 6) est la
+        marche aléatoire du chapitre 6 ; la correction (ch. 7) est la fusion de ce chapitre. Ce qui
+        semblait tomber du ciel devrait maintenant tomber sous le sens — c'était l'objectif.
+      </p>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Fusion chiffrée</h3>
+      <p>
+        Votre caméra donne la position d'une cible à <span class="math-inline">σ = 2 mm</span> ; le modèle
+        prédit (a priori) la même position à <span class="math-inline">σ = 5 mm</span>. La caméra dit
+        <span class="math-inline">z = 104,0 mm</span>, l'a priori disait
+        <span class="math-inline">x⁻ = 100,0 mm</span>. Calculez l'estimation fusionnée et son σ. Où
+        « penche »-t-elle, et de quelle fraction de l'écart ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <div class="math">
+          informations : 1/25 = 0,04&nbsp;&nbsp;;&nbsp;&nbsp;1/4 = 0,25&nbsp;&nbsp;→&nbsp;&nbsp;total 0,29 → σ̂² = 3,45 → σ̂ ≈ 1,86 mm<br>
+          x̂ = (100×0,04 + 104×0,25)/0,29 = (4 + 26)/0,29 ≈ 103,45 mm
+        </div>
+        <p>
+          L'estimation penche fortement vers la caméra (la plus sûre) : elle parcourt
+          <span class="math-inline">3,45/4 ≈ 86 %</span> de l'écart — ce ratio de 0,86 <em>est</em> un gain
+          de Kalman (<span class="math-inline">K = σ⁻²_cam / σ⁻²_total = 0,25/0,29</span>). Et
+          <span class="math-inline">σ̂ = 1,86 &lt; 2</span> : même le bon capteur est amélioré par le
+          mauvais a priori. La fusion ne perd jamais.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Pourquoi la moyenne, et pas autre chose ?</h3>
+      <p>
+        Le MMSE choisit la <em>moyenne</em> de la loi conditionnelle. Un collègue préfèrerait le
+        <em>mode</em> (la valeur la plus probable). Dans quel cas les deux coïncident-ils ? Donnez une
+        situation industrielle où ils diffèrent et où le choix compte.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Ils coïncident pour toute loi symétrique unimodale — donc en gaussien, le cas du filtre de
+          Kalman : la querelle est sans objet tant qu'on reste linéaire-gaussien (moyenne = mode = médiane).
+          Ils diffèrent dès que la loi conditionnelle est <em>asymétrique ou multimodale</em>. Exemple
+          concret : une caméra qui hésite entre deux cibles candidates → loi conditionnelle à deux bosses.
+          La moyenne tombe <em>entre les deux bosses</em> — dans une zone où la cible n'est certainement
+          pas ! — tandis que le mode choisit une bosse. C'est la limite du critère quadratique (et du
+          filtre de Kalman) en situation d'ambiguïté : là, il faut des outils multi-hypothèses (filtre
+          particulaire, association de données), hors du monde gaussien.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — La boucle complète, en mots</h3>
+      <p>
+        Sans formule : racontez un cycle du filtre de Kalman (prédire, puis corriger) en n'utilisant
+        <em>que</em> le vocabulaire de ce cours — niveaux, marche aléatoire, conditionnelle, fusion,
+        information.
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          « Entre deux mesures, l'état diffuse comme une <strong>marche aléatoire</strong> : mon pari
+          (niveau réalisation) avance selon le modèle, et mon doute (niveau ensemble) gonfle — l'information
+          que je détenais se dilue. Arrive une mesure : j'applique le <strong>conditionnement</strong> — je
+          découpe, dans la loi jointe de l'état et de la mesure, la tranche compatible avec ce que j'ai
+          observé. Comme tout est gaussien, cette tranche se calcule en formule fermée : c'est une
+          <strong>fusion</strong> pondérée par les <strong>informations</strong> — mon a priori vieilli
+          d'un côté, la mesure de l'autre, chacun comptant pour l'inverse de sa variance. J'en garde la
+          moyenne (mon nouveau pari — le <strong>MMSE</strong>) et la variance (mon nouveau doute, plus
+          petit qu'avant : les informations se sont additionnées). Et je recommence. » — Si ce paragraphe
+          vous semble aller de soi, les deux cours ont fait leur travail.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>MMSE</strong> : minimiser <span class="math-inline">E[(X−x̂)²]</span> — un critère d'ensemble. Vainqueur : <span class="math-inline">x̂ = E[X|Z]</span>, la <strong>moyenne de la conditionnelle</strong> ; l'incertitude résiduelle est sa variance. Le binôme = <span class="math-inline">(x̂, P)</span>.</li>
+        <li><strong>Fusion gaussienne</strong> : poids en <span class="math-inline">1/σ²</span> ; les <strong>informations s'additionnent</strong> (<span class="math-inline">1/σ̂² = Σ1/σᵢ²</span>) ; le résultat penche vers le plus sûr et est plus étroit que chaque source.</li>
+        <li>Le ratio de pondération <em>est</em> le gain de Kalman ; la fusion répétée dans le temps (état qui diffuse + mesures en flux) <em>est</em> le filtre de Kalman.</li>
+        <li>Limites du critère quadratique : lois multimodales (ambiguïté) — moyenne ≠ mode, sortir du monde gaussien.</li>
+        <li>La <strong>table de passage</strong> §5 relie chaque chapitre de ce cours aux objets du cours Kalman : relisez-le maintenant, il devrait « tomber sous le sens ».</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-08.html"><span class="lbl">← Précédent</span>Les estimateurs et leur précision</a>
+    <a class="next" href="index.html"><span class="lbl">↩ Sommaire</span>Tous les chapitres</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — Accumuler le hasard : marche aléatoire et dérive</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>Accumuler le hasard : marche aléatoire et dérive</h1>
+
+    <div class="callout note">
+      Que se passe-t-il quand on <em>intègre</em> du bruit — quand chaque cycle ajoute son petit hasard au
+      précédent ? Réponse : une <strong>marche aléatoire</strong>, l'objet qui explique la dérive d'un
+      gyromètre, la croissance de l'incertitude d'une prédiction… et la matrice
+      <span class="math-inline">Q</span> du filtre de Kalman. C'est aussi l'exemple parfait de processus
+      <em>non</em> stationnaire.
+    </div>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Construire la <strong>marche aléatoire</strong> : une somme de bruits blancs.</li>
+        <li>Démontrer la loi de croissance : <span class="math-inline">Var = N·σ²</span>, étalement en <strong>√N</strong>.</li>
+        <li>Relier ce résultat à la <strong>dérive</strong> des capteurs intégrateurs et au <span class="math-inline">Q</span> de Kalman.</li>
+        <li>Comprendre pourquoi seule une <em>mesure absolue</em> arrête une dérive.</li>
+      </ul>
+    </div>
+
+    <h2>1. La construction : sommer des tirages</h2>
+    <p>
+      Partons d'un bruit blanc <span class="math-inline">{Wₖ}</span> (chapitre 5) de variance
+      <span class="math-inline">σ²</span>, et <em>accumulons</em>-le :
+    </p>
+    <div class="math">
+      X₀ = 0&nbsp;&nbsp;&nbsp;&nbsp;Xₖ = Xₖ₋₁ + Wₖ&nbsp;&nbsp;&nbsp;&nbsp;⟹&nbsp;&nbsp;&nbsp;Xₙ = W₁ + W₂ + … + Wₙ
+    </div>
+    <p>
+      C'est la <strong>marche aléatoire</strong> : à chaque pas, on repart d'où l'on est et on ajoute un
+      hasard neuf. Physiquement, c'est le schéma de <em>toute intégration de bruit</em> : un gyromètre dont
+      on intègre la vitesse angulaire (et son bruit) pour obtenir un angle ; une prédiction de filtre qui
+      s'empile cycle après cycle sans mesure pour la recaler ; un biais thermique qui se promène.
+    </p>
+
+    <h2>2. La loi de croissance : Var = N·σ²</h2>
+    <div class="callout demo">
+      <p>Le calcul tient en trois lignes, avec les outils des chapitres 2 et 3 :</p>
+      <div class="math">
+        E[Xₙ] = E[W₁] + … + E[Wₙ] = 0&nbsp;&nbsp;&nbsp;(linéarité, bruits centrés)<br>
+        Var[Xₙ] = Var[W₁] + … + Var[Wₙ]&nbsp;&nbsp;&nbsp;(additivité : les Wₖ sont indépendants)<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= N·σ²&nbsp;&nbsp;&nbsp;⟹&nbsp;&nbsp;&nbsp;écart-type = σ·√N
+      </div>
+      <p>
+        Tout le théorème est dans la deuxième ligne : l'<strong>additivité des variances</strong> pour des
+        bruits indépendants. Aucun terme croisé ne vient s'y glisser, précisément parce que le bruit est
+        <em>blanc</em> (décorrélé d'un pas à l'autre).
+      </p>
+    </div>
+
+    <figure class="fig">
+      <img src="figures/fig-marche.svg" alt="Une trentaine de marches aléatoires partant toutes de zéro, en gris, s'éventaillent au fil des pas ; l'une est surlignée en vert. Deux paires de courbes violettes en racine carrée de N encadrent l'éventail : plus ou moins sigma racine de N (trait plein) et plus ou moins deux sigma racine de N (tirets). L'annotation indique que chaque pas ajoute un petit bruit, que les variances s'additionnent (Var = N sigma carré) et que l'étalement croît en racine de N — l'origine de la dérive et du Q du filtre de Kalman.">
+      <figcaption><b>Figure 6.1.</b> Trente réalisations de la même marche aléatoire. Aucune trajectoire ne
+      « revient » systématiquement vers zéro ; l'éventail s'élargit, exactement contenu dans l'enveloppe
+      <span class="math-inline">±σ√N</span> / <span class="math-inline">±2σ√N</span> (violet), calculée —
+      pas dessinée. Relisez les deux niveaux : <em>chaque</em> trajectoire est erratique (réalisation) ;
+      l'<em>enveloppe</em> est parfaitement régulière (ensemble). Le hasard est indescriptible trajectoire
+      par trajectoire, et limpide en loi.</figcaption>
+    </figure>
+
+    <p>
+      Le résultat mérite d'être médité : l'étalement croît, mais <em>seulement</em> en
+      <span class="math-inline">√N</span> — pas en <span class="math-inline">N</span>. Les hasards
+      successifs se compensent partiellement (il y a autant de pas positifs que négatifs en moyenne) ; ce
+      qui reste est la racine du nombre de pas. Doubler la durée ne double pas la dérive : il la multiplie
+      par <span class="math-inline">√2 ≈ 1,4</span>.
+    </p>
+
+    <div class="callout piege">
+      <p>
+        La marche aléatoire est <strong>non stationnaire</strong> : sa variance dépend du temps
+        (<span class="math-inline">N·σ²</span>). Aucun « σ du signal » unique ne la décrit — demander « quel
+        est l'écart-type de la dérive ? » n'a de sens qu'accompagné d'une durée. C'est le piège de la
+        variance naïve du chapitre 16 du cours Kalman : sur une fenêtre longue, elle « mesure » une variance
+        qui grossit avec la fenêtre, parce qu'elle mesure une marche aléatoire, pas un bruit stationnaire.
+      </p>
+    </div>
+
+    <h2>3. Applications directes à vos capteurs</h2>
+    <h3>3.1 La dérive du gyromètre</h3>
+    <p>
+      Un gyromètre mesure une vitesse angulaire avec un bruit blanc de densité
+      <span class="math-inline">σ_ω</span> par échantillon. L'angle obtenu en intégrant est une marche
+      aléatoire de pas <span class="math-inline">σ_ω·dt</span> : après <span class="math-inline">N</span>
+      cycles (durée <span class="math-inline">t = N·dt</span>), l'erreur d'angle a pour écart-type
+    </p>
+    <div class="math">
+      σ_angle(t) = σ_ω·dt·√N = σ_ω·√(dt·t)&nbsp;&nbsp;&nbsp;— croissance en √t
+    </div>
+    <p>
+      C'est le fameux <em>angle random walk</em> des datasheets IMU (donné en °/√h : l'unité elle-même
+      contient la racine du temps !). Un gyromètre seul dérive <em>inévitablement</em> ; aucune qualité
+      d'intégration numérique n'y changera rien — c'est une loi de probabilité, pas un défaut
+      d'implémentation.
+    </p>
+    <h3>3.2 Le Q du filtre de Kalman</h3>
+    <p>
+      La prédiction du filtre, entre deux mesures, est une intégration du modèle <em>plus son bruit</em> :
+      chaque cycle ajoute <span class="math-inline">Q</span> à la covariance — c'est exactement
+      « <span class="math-inline">Var[Xₙ] = N·σ²</span> », écrit en matrices
+      (<span class="math-inline">P ← P + Q</span> répété N fois pour une dynamique triviale). La dent de
+      scie de l'incertitude entre deux fixes caméra (cours Kalman, ch. 13 et 15) <em>est</em> une enveloppe
+      de marche aléatoire, et sa retombée à chaque mesure est la seule chose qui l'empêche de croître sans
+      fin.
+    </p>
+
+    <div class="callout astuce">
+      <p>
+        <strong>La règle d'or de la fusion de capteurs</strong> découle de ce chapitre : un capteur
+        <em>intégrateur</em> (gyromètre, odométrie, modèle prédictif) est précis à court terme mais dérive
+        en <span class="math-inline">√t</span> ; un capteur <em>absolu</em> (inclinomètre, caméra, GPS) est
+        bruité à court terme mais ne dérive jamais. Ni l'un ni l'autre ne suffit ; leur fusion donne le
+        meilleur des deux — précis à court terme <em>et</em> borné à long terme. Toute la Partie E du cours
+        Kalman est une déclinaison de cette phrase.
+      </p>
+    </div>
+
+    <h2>4. Vers le continu : le processus de Wiener</h2>
+    <p>
+      En laissant le pas de temps tendre vers zéro (avec la bonne normalisation), la marche aléatoire
+      devient le <strong>processus de Wiener</strong> (mouvement brownien) : la version temps-continu, de
+      variance <span class="math-inline">q̃·t</span> où <span class="math-inline">q̃</span> est une
+      <em>densité</em> de variance par seconde. C'est lui qui se cache derrière la dérivation « CWNA » de la
+      matrice <span class="math-inline">Q</span> (l'intégrale
+      <span class="math-inline">∫ Φ L q̃ Lᵀ Φᵀ dτ</span>) : intégrer un bruit blanc continu sur
+      <span class="math-inline">dt</span> donne une variance <span class="math-inline">q̃·dt</span> sur la
+      vitesse — la marche aléatoire de ce chapitre, écrite en continu. Le chapitre 7 donne l'autre moitié du
+      vocabulaire continu : la densité spectrale.
+    </p>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Chiffrer une dérive</h3>
+      <p>
+        Un gyromètre échantillonné à <span class="math-inline">dt = 10 ms</span> a un bruit blanc de
+        <span class="math-inline">σ_ω = 0,05 °/s</span> par échantillon. Quel est l'écart-type de l'erreur
+        d'angle intégrée après (a) 1 s, (b) 1 min, (c) 10 min ? À partir de quand dépasse-t-elle le bruit
+        d'un inclinomètre absolu de <span class="math-inline">σ = 0,4°</span> ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Pas de la marche : <span class="math-inline">σ_pas = σ_ω·dt = 5·10⁻⁴ °</span> ;
+          <span class="math-inline">N = t/dt = 100·t</span>. Donc
+          <span class="math-inline">σ_angle = 5·10⁻⁴·√(100·t) = 5·10⁻³·√t</span> (t en secondes) :
+        </p>
+        <div class="math">
+          (a) t = 1 s : 0,005°&nbsp;&nbsp;&nbsp;(b) t = 60 s : 0,039°&nbsp;&nbsp;&nbsp;(c) t = 600 s : 0,122°
+        </div>
+        <p>
+          Elle atteint 0,4° quand <span class="math-inline">√t = 0,4/0,005 = 80</span>, soit
+          <span class="math-inline">t = 6400 s ≈ 1 h 45</span>. Le gyromètre est donc largement meilleur que
+          l'inclinomètre pendant de longues minutes — puis inexorablement pire. D'où la fusion : gyromètre
+          pour la dynamique, inclinomètre pour recaler.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — L'enveloppe et les deux niveaux</h3>
+      <p>
+        Sur la figure 6.1, une trajectoire particulière sort brièvement de l'enveloppe
+        <span class="math-inline">±2σ√N</span> vers N ≈ 250 puis y revient. Un collègue y voit une
+        « force de rappel » qui ramène les marches vers zéro. Qu'en dites-vous ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          Il n'y a <strong>aucune force de rappel</strong> : chaque pas est un tirage neuf, centré, ignorant
+          tout de la position courante (le processus n'a pas de mémoire de niveau — seule la <em>position</em>
+          s'accumule). L'enveloppe est un objet d'<em>ensemble</em> : elle dit que ~95 % des trajectoires
+          sont dedans <em>à chaque N</em>, pas qu'une trajectoire donnée y est confinée ni rappelée. Une
+          trajectoire peut s'écarter, revenir, repartir — par pur hasard. Confondre l'enveloppe (loi) avec
+          un comportement individuel (réalisation) est exactement l'erreur de niveaux du chapitre 1 —
+          la même qui fait croire qu'après cinq « pile », « face » devient plus probable.
+        </p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Pourquoi Q borne le gain du filtre</h3>
+      <p>
+        Dans un filtre de Kalman en régime permanent, l'incertitude <span class="math-inline">P</span> se
+        stabilise au lieu de croître en <span class="math-inline">√N</span>. Qu'est-ce qui, dans le cycle du
+        filtre, « casse » la marche aléatoire ? Que se passerait-il si les mesures s'arrêtaient ?
+      </p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>
+          La <strong>correction</strong>. La prédiction seule <em>est</em> une marche aléatoire
+          d'incertitude (<span class="math-inline">P ← F P Fᵀ + Q</span> : ça ne fait que croître) ; chaque
+          mesure retranche de l'incertitude (<span class="math-inline">P ← (I−KH)P</span>). Le régime
+          permanent est l'équilibre entre l'accumulation (ce chapitre) et le recalage. Si les mesures
+          s'arrêtent, l'équilibre casse : <span class="math-inline">P</span> repart en croissance de marche
+          aléatoire — c'est exactement la dent de scie qui gonfle pendant le « dropout » du chapitre 13 du
+          cours Kalman, et la raison de surveiller <span class="math-inline">P</span> en exploitation.
+        </p>
+      </details>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><strong>Marche aléatoire</strong> = bruit blanc <em>accumulé</em> : <span class="math-inline">Xₙ = ΣWₖ</span>. Modèle de toute intégration de bruit (gyromètre → angle, prédiction sans mesure, biais qui se promène).</li>
+        <li><strong>Loi de croissance</strong> : <span class="math-inline">E = 0</span>, <span class="math-inline">Var = N·σ²</span>, étalement en <span class="math-inline">σ√N</span> (ou <span class="math-inline">√t</span> en continu — l'unité °/√h des datasheets). Preuve = additivité des variances, rien de plus.</li>
+        <li><strong>Non stationnaire</strong> : pas de « σ du signal » sans préciser la durée ; la variance naïve sur fenêtre longue mesure la fenêtre, pas le bruit.</li>
+        <li>Chaque trajectoire est erratique (réalisation) ; l'enveloppe <span class="math-inline">±kσ√N</span> est exacte (ensemble). <strong>Aucune force de rappel.</strong></li>
+        <li>Capteur intégrateur : précis court terme, dérive √t ; capteur absolu : bruité mais borné → la <strong>fusion</strong> prend le meilleur des deux. Le <span class="math-inline">+Q</span> de Kalman = cette marche, écrite en matrices ; la correction est ce qui l'arrête.</li>
+      </ul>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Processus aléatoires</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>Le bruit en fréquence : PSD et bande passante</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation 🎲
+  </footer>
+</body>
+</html>

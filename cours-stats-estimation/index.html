@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Statistiques pour l'estimation — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🎲 Statistiques <span>· pour l'estimation</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Statistiques pour l'estimation</h1>
+      <p class="sub">Reprendre les probabilités et la statistique <em>à la base</em>, mais toujours
+      appliquées aux capteurs, au bruit et au filtrage : variable aléatoire vs réalisation, processus,
+      bruit blanc, PSD, estimateurs, fusion optimale. 9 chapitres en français, illustrés par des figures
+      <strong>calculées exactement</strong>, avec exercices dédiés à solutions repliables. Le compagnon
+      théorique du <a href="../cours-filtre-kalman/index.html">cours Filtre de Kalman</a>.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Pourquoi ce cours ?</strong> Le cours Kalman utilise les probabilités ; celui-ci les
+      <em>construit</em>. Il est né d'une question précise — « comment passe-t-on d'une variable aléatoire
+      à une réalisation temporelle ? » — et cette question (les <em>deux niveaux</em> : ensemble vs
+      réalisation) en est le fil rouge, du chapitre 1 au chapitre 9. Chaque notion est illustrée sur les
+      problématiques du dépôt : inclinomètres, gyromètres, caméra, cible, PLC. Prérequis : quasi aucun —
+      de l'algèbre de lycée et l'envie de comprendre.
+    </div>
+
+    <div class="part-title">Partie A — Le hasard, posé proprement</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html"><span class="num">01</span><span><strong>Le hasard et ses deux visages</strong><span class="desc">expérience aléatoire, variable aléatoire vs réalisation ; les <em>deux niveaux</em> (ensemble / réalisation) ; classer chaque grandeur d'un problème capteur — le chapitre-clé du cours</span></span></a></li>
+      <li><a href="chapitre-02.html"><span class="num">02</span><span><strong>Décrire une variable : distribution, espérance, variance</strong><span class="desc">densité (à intégrer !), <span class="math-inline">E</span> linéaire, <span class="math-inline">σ²</span> et ses unités au carré, la règle 68/95/99,7 et le raisonnement en ±kσ</span></span></a></li>
+      <li><a href="chapitre-03.html"><span class="num">03</span><span><strong>Plusieurs variables : jointe, conditionnelle, covariance</strong><span class="desc">marginale, indépendance et additivité des variances (« en Pythagore »), corrélation, la loi conditionnelle — observer, c'est apprendre — et Bayes</span></span></a></li>
+      <li><a href="chapitre-04.html"><span class="num">04</span><span><strong>La gaussienne et le théorème central limite</strong><span class="desc">pourquoi la cloche est partout (TCL), quand elle ment (aberrants, saturation), stabilité par somme et transformation linéaire, deux nombres suffisent</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie B — Le hasard dans le temps</div>
+    <ul class="toc">
+      <li><a href="chapitre-05.html"><span class="num">05</span><span><strong>Processus aléatoires : le hasard dans le temps</strong><span class="desc">une VA <em>par instant</em>, trajectoire = un tirage par instant ; stationnarité, ergodicité (mesurer une loi sur un seul enregistrement), autocorrélation, bruit blanc</span></span></a></li>
+      <li><a href="chapitre-06.html"><span class="num">06</span><span><strong>Accumuler le hasard : marche aléatoire et dérive</strong><span class="desc">sommer du bruit blanc : <span class="math-inline">Var = N·σ²</span>, étalement en √N ; la dérive des capteurs intégrateurs, le °/√h des IMU, l'origine du <span class="math-inline">Q</span> de Kalman</span></span></a></li>
+      <li><a href="chapitre-07.html"><span class="num">07</span><span><strong>Le bruit en fréquence : PSD et bande passante</strong><span class="desc">la variance ventilée par fréquence (l'aire !), le /√Hz des datasheets, <span class="math-inline">σ = d·√BW</span> démontré, filtrer = décorréler moins mais retarder, les couleurs du bruit</span></span></a></li>
+    </ul>
+
+    <div class="part-title">Partie C — Estimer et conclure</div>
+    <ul class="toc">
+      <li><a href="chapitre-08.html"><span class="num">08</span><span><strong>Estimer à partir de données : les estimateurs</strong><span class="desc">un estimateur est une VA (biais, variance) ; le σ/√N de la moyenne, le N−1 de Bessel, combien d'échantillons pour un R à ±x %, le filtre de Kalman comme estimateur</span></span></a></li>
+      <li><a href="chapitre-09.html"><span class="num">09</span><span><strong>L'estimation optimale : conditionnelle, MMSE, fusion</strong><span class="desc">le MMSE et son vainqueur <span class="math-inline">E[X|Z]</span> ; la fusion pondérée en 1/σ² (les informations s'additionnent) ; la table de passage complète vers le cours Kalman</span></span></a></li>
+    </ul>
+
+    <div class="callout astuce">
+      <strong>Comment le lire ?</strong> Dans l'ordre — chaque chapitre s'appuie sur les précédents, et le
+      fil « deux niveaux » se tend du premier au dernier. Les exercices sont faits pour être cherchés avant
+      d'ouvrir la solution ; beaucoup se font de tête ou sur un coin de feuille. À la fin, reprenez les
+      chapitres 4-7 du cours Kalman : ils devraient se lire comme des évidences.
+    </div>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Statistiques pour l'estimation · à suivre dans l'ordre 🎲
+  </footer>
+</body>
+</html>
