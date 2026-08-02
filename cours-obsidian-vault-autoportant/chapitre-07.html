@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chapitre 07 — Le confort : Tasks, Kanban, Excalidraw… et Obsidian Git</title>
+  <title>Chapitre 07 — Le confort : Tasks, Kanban, schémas… et Obsidian Git</title>
   <link rel="stylesheet" href="style.css">
   <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
@@ -18,13 +18,13 @@
   </header>
 
   <main>
-    <h1><span class="chap-num">Chapitre 07</span><br>Le confort : Tasks, Kanban, Excalidraw… et Obsidian Git</h1>
+    <h1><span class="chap-num">Chapitre 07</span><br>Le confort : Tasks, Kanban, schémas… et Obsidian Git</h1>
 
     <div class="objectifs">
       <h2>Objectifs du chapitre</h2>
       <ul>
         <li>Suivre des tâches réparties dans tout le vault avec le plugin Tasks.</li>
-        <li>Situer Kanban, Excalidraw, Advanced Tables et Style Settings : ce qu'ils apportent, ce
+        <li>Situer Kanban, les outils de schéma, Advanced Tables et Style Settings : ce qu'ils apportent, ce
         qu'ils coûtent.</li>
         <li>Synchroniser un vault par git sans y penser, avec Obsidian Git.</li>
         <li>Connaître les deux limites d'Obsidian Git qui décident de l'architecture de la
@@ -75,16 +75,67 @@ sort by due
       un référentiel.</p>
     </div>
 
-    <h2>3. Excalidraw</h2>
+    <h2>3. Les schémas</h2>
 
-    <p>Dessin à main levée dans le vault : schémas d'architecture, croquis de cinématique,
-    annotations. Les dessins sont stockés dans des fichiers <code>.excalidraw.md</code> qui
-    contiennent à la fois une image et sa description.</p>
+    <p>Trois façons de mettre un dessin dans un vault, et le critère de choix n'est pas le confort
+    de tracé : c'est <strong>sous quelle forme le dessin est stocké</strong>. Un vault versionné
+    hérite de ce format à chaque modification.</p>
 
-    <p>C'est le plugin le plus lourd de la sélection. Dans le vault de référence, ses réglages à eux
-    seuls pèsent 26&nbsp;Ko de JSON — l'essentiel étant des valeurs par défaut qu'il réécrit à
-    chaque mise à jour. Retiens ce chiffre : il justifie une décision de conception au
-    chapitre&nbsp;9.</p>
+    <table>
+      <thead><tr><th>Outil</th><th>Stockage</th><th>Sous git</th><th>Dépendance</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Mermaid</strong></td><td>Bloc <code>```mermaid</code> dans la note</td>
+          <td>Le diff <em>est</em> le changement</td><td>Aucune, natif</td></tr>
+        <tr><td><strong>Canvas</strong></td><td>Fichier <code>.canvas</code>, JSON ouvert</td>
+          <td>Diffable, bruité par les coordonnées</td><td>Plugin cœur</td></tr>
+        <tr><td><strong>Excalidraw</strong></td><td><code>.excalidraw.md</code> : texte extrait +
+          JSON compressé en base64</td><td>Blob réécrit en entier</td><td>Plugin tiers</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Mermaid — le diagramme comme code</h3>
+
+    <p>Natif, sans rien installer. On décrit la structure, le moteur dessine :</p>
+
+    <pre><code class="language-markdown">```mermaid
+flowchart LR
+    PLC[S7-1500] --&gt;|PROFINET| IO[IO Device]
+    PLC --&gt;|OPC-UA| EDGE[Edge Debian]
+    EDGE --&gt;|TimescaleDB| SUP[Supervision]
+```</code></pre>
+
+    <p>Organigrammes, séquences, machines à états, Gantt, entité-association. Le fichier reste une
+    note ordinaire, indexée par la recherche, et une modification produit un diff qu'on lit. Sa
+    limite : la mise en page est décidée par le moteur, donc inadapté à un schéma dont la
+    disposition spatiale porte du sens — un synoptique d'installation, un plan d'armoire.</p>
+
+    <h3>Canvas — penser dans l'espace</h3>
+
+    <p>Plugin cœur. Un nœud de canvas peut être une carte de texte, une image, ou <strong>une note
+    du vault affichée en vrai</strong>. C'est ce qui le distingue d'un outil de dessin : un canvas
+    devient une carte de ton vault plutôt qu'une illustration à côté. Le format
+    <code>.canvas</code> suit une spécification JSON publiée, donc lisible par d'autres outils.</p>
+
+    <h3>Excalidraw — et pourquoi le vault de référence l'a retiré</h3>
+
+    <p>Dessin à main levée. Le fichier <code>.excalidraw.md</code> est hybride : le texte des
+    éléments est extrait en clair — donc cherchable — mais la géométrie est du JSON
+    <strong>compressé en base64 par défaut</strong>. Chaque retouche réécrit le blob entier :
+    <code>git diff</code> affiche une ligne illisible remplacée par une autre, et le dépôt stocke
+    une copie complète à chaque sauvegarde. Les images collées sont encodées dans le fichier, ce
+    qui fait grossir vite.</p>
+
+    <div class="callout vlt">
+      <p>Le vault de référence l'a installé, puis retiré au profit de Mermaid. Deux raisons&nbsp;:
+      ses réglages pesaient à eux seuls <strong>26&nbsp;Ko de JSON</strong> — presque uniquement des
+      valeurs par défaut réécrites à chaque mise à jour — et un vault dont une partie du contenu est
+      un blob opaque contredit le principe même de la partie&nbsp;II.</p>
+      <p>Retiens le chiffre : il justifie une décision de conception au chapitre&nbsp;8, et il reste
+      valable pour n'importe quel plugin bavard.</p>
+    </div>
+
+    <p>Si le croquis à main levée est indispensable, désactive la compression dans les réglages du
+    plugin : le JSON devient lisible et diffable, au prix d'un fichier plus gros.</p>
 
     <h2>4. Advanced Tables et Style Settings</h2>
 
@@ -184,7 +235,8 @@ sort by due
         <tr><td>Tasks</td><td>Les émojis redeviennent des émojis. Les cases restent des cases.</td></tr>
         <tr><td>Advanced Tables, Style Settings</td><td>Rien.</td></tr>
         <tr><td>Kanban</td><td>Le tableau redevient des listes markdown. Lisible, moins pratique.</td></tr>
-        <tr><td>Excalidraw</td><td>Les dessins ne s'ouvrent plus. <strong>Données captives.</strong></td></tr>
+        <tr><td>Mermaid, Canvas</td><td>Rien : le premier est natif, le second est un plugin cœur.</td></tr>
+        <tr><td>Excalidraw</td><td>Le texte des dessins reste lisible ; la géométrie demande de décompresser le JSON à la main. <strong>Récupérable, mais pas sans outil.</strong></td></tr>
       </tbody>
     </table>
 
@@ -201,7 +253,7 @@ sort by due
         <code>TASK</code> en Dataview suffit.</li>
         <li>Un kanban est un état passager, hors du modèle de notes : ne l'utilise pas comme
         référentiel.</li>
-        <li>Excalidraw est lourd en réglages et rend ses données captives.</li>
+        <li>Pour un schéma, le critère est le format de stockage : Mermaid (texte) d'abord, Canvas quand l'espace compte, Excalidraw seulement pour le croquis.</li>
         <li>Obsidian Git automatise la synchronisation, mais <strong>n'exécute pas les hooks
         git</strong> et <strong>commite tout ce qui traîne</strong> sur la branche courante.</li>
         <li>Le bon critère pour adopter un plugin : ce qui reste le jour où il disparaît.</li>

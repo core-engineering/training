@@ -158,9 +158,9 @@ plugins:
         - folder: 10-journal
           template: 90-meta/templates/daily.md
 
-  - id: obsidian-excalidraw-plugin
-    repo: zsviczian/obsidian-excalidraw-plugin
-    version: "2.25.3"
+  - id: obsidian-kanban
+    repo: mgmeyers/obsidian-kanban
+    version: "2.0.51"
     sha256: { ... }
     <span class="c"># pas de bloc settings : réglages non gérés</span>
 
@@ -197,22 +197,30 @@ hotkeys:
 
     <h2>5. Le compromis : ce qu'on gère et ce qu'on subit</h2>
 
-    <p>Regarde à nouveau l'entrée Excalidraw ci-dessus : pas de bloc <code>settings</code>. Ce n'est
+    <p>Regarde à nouveau la dernière entrée ci-dessus : pas de bloc <code>settings</code>. Ce n'est
     pas un oubli.</p>
 
-    <p>Les réglages d'Excalidraw pèsent 26&nbsp;Ko, presque entièrement des valeurs par défaut que
-    le plugin réécrit à chaque mise à jour. Les importer, c'est faire passer le manifeste de 361 à
-    1199 lignes — et perdre sa lisibilité, qui était la raison de le préférer à un
-    <code>.obsidian/</code> versionné.</p>
+    <p>Un plugin écrit son <code>data.json</code> tout seul, et le remplit de valeurs par défaut
+    qu'il réécrira à sa prochaine mise à jour. Le cas qui a tranché la question dans le vault de
+    référence était Excalidraw : <strong>26&nbsp;Ko de JSON</strong> à lui seul, faisant passer le
+    manifeste de 361 à 1199 lignes. C'est-à-dire lui faire perdre sa lisibilité, qui était la raison
+    de le préférer à un <code>.obsidian/</code> versionné.</p>
 
     <div class="callout note">
       <p>D'où la règle du vault de référence : <strong>un plugin déclaré sans bloc
       <code>settings</code> est installé mais ses réglages ne sont pas pilotés.</strong> La
       reconstruction n'écrit pas son <code>data.json</code>, la détection de dérive l'ignore, et
       l'export le signale sans le recopier.</p>
-      <p>Contrepartie assumée : sur une machine neuve, Excalidraw repart de ses valeurs par défaut.
-      C'est acceptable pour un plugin de dessin ; ça ne le serait pas pour QuickAdd, dont la capture
-      <em>est</em> la configuration — et qui, lui, a bien son bloc <code>settings</code>.</p>
+      <p>Contrepartie assumée : sur une machine neuve, Kanban repart de ses valeurs par défaut.
+      C'est acceptable pour un tableau de pilotage ; ça ne le serait pas pour QuickAdd, dont la
+      capture <em>est</em> la configuration — et qui, lui, a bien son bloc <code>settings</code>.</p>
+    </div>
+
+    <div class="callout vlt">
+      <p>Épilogue du cas Excalidraw : le vault l'a finalement retiré au profit de Mermaid, natif et
+      textuel (chapitre&nbsp;7). La règle, elle, reste — elle s'applique désormais à Kanban,
+      Advanced Tables, Style Settings et Tasks. Un plugin bavard n'est pas une exception, c'est le
+      cas courant.</p>
     </div>
 
     <p>Le critère de décision : <strong>ce réglage est-il une décision que j'ai prise, ou une valeur
@@ -291,7 +299,7 @@ hotkeys:
         réglages des plugins gérés (Dataview, Templater, Git, QuickAdd), les réglages de notes
         quotidiennes et de templates, et le raccourci de capture.</p>
         <p><strong>Perdu</strong> : la disposition des panneaux (<code>workspace.json</code> a
-        disparu avec le dossier), les réglages des plugins non gérés — Excalidraw et Advanced Tables
+        disparu avec le dossier), les réglages des plugins non gérés — Kanban et Advanced Tables
         repartent de leurs valeurs par défaut — et tout thème ou extrait CSS que tu aurais installé,
         puisqu'ils vivaient dans <code>.obsidian/themes/</code>.</p>
         <p>Nuance importante : <code>apply</code> <em>préserve</em> normalement
@@ -303,9 +311,9 @@ hotkeys:
 
     <div class="exercice">
       <h3>Exercice 3 — Critiquer le compromis</h3>
-      <p>Un collègue objecte : « Si Excalidraw n'est pas géré, ton vault n'est pas vraiment
-      autoportant. Autant tout importer, quitte à avoir un manifeste de 1200 lignes. » Que
-      réponds-tu ?</p>
+      <p>À l'époque où Excalidraw était encore installé, un collègue objecte : « S'il n'est pas
+      géré, ton vault n'est pas vraiment autoportant. Autant tout importer, quitte à avoir un
+      manifeste de 1200 lignes. » Que réponds-tu ?</p>
       <details>
         <summary>Voir la solution</summary>
         <p>L'objection est recevable sur le principe : la promesse est effectivement partielle.
