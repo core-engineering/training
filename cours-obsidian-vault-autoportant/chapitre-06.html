@@ -44,11 +44,11 @@
 
     <pre><code class="language-markdown">---
 type: daily
-titre: &lt;% tp.date.now("dddd D MMMM YYYY") %&gt;
-cree: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
-maj: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
-scope: pro
-projets: []
+title: &lt;% tp.date.now("dddd D MMMM YYYY") %&gt;
+created: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+updated: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+scope: work
+projects: []
 tags: []
 ---
 
@@ -88,7 +88,7 @@ tags: []
     <div class="callout astuce">
       <p>Un template est le meilleur endroit pour faire respecter le contrat de données. Si tous
       les projets naissent du même template, ils portent tous <code>type</code>,
-      <code>statut</code>, <code>cree</code> et <code>maj</code>, écrits pareil. Le validateur du
+      <code>status</code>, <code>created</code> et <code>updated</code>, écrits pareil. Le validateur du
       chapitre&nbsp;10 n'a alors plus grand-chose à signaler — il devient un filet, pas un
       correcteur permanent.</p>
     </div>
@@ -240,20 +240,20 @@ folder_templates:
 
     <div class="exercice">
       <h3>Exercice 1 — Écrire un template de fiche projet</h3>
-      <p>Écris un template Templater pour une note de type <code>projet</code> : le titre vient du
-      nom du fichier, les dates sont celles du jour, le statut démarre à <code>actif</code>, et le
+      <p>Écris un template Templater pour une note de type <code>project</code> : le titre vient du
+      nom du fichier, les dates sont celles du jour, le statut démarre à <code>active</code>, et le
       curseur se place sous le titre « Contexte ».</p>
       <details>
         <summary>Voir la solution</summary>
         <pre><code class="language-markdown">---
-type: projet
-titre: &lt;% tp.file.title %&gt;
-cree: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
-maj: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
-scope: pro
-statut: actif
-depot:
-jalons: []
+type: project
+title: &lt;% tp.file.title %&gt;
+created: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+updated: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+scope: work
+status: active
+repo:
+milestones: []
 tags: []
 ---
 
@@ -264,9 +264,9 @@ tags: []
 ## Jalons
 
 ## Décisions</code></pre>
-        <p>Deux points. <code>depot:</code> est laissé vide plutôt qu'omis : le champ est optionnel,
+        <p>Deux points. <code>repo:</code> est laissé vide plutôt qu'omis : le champ est optionnel,
         mais le voir vide rappelle qu'il existe — un champ absent est un champ oublié.</p>
-        <p>Et <code>statut: actif</code> en dur plutôt qu'un <code>tp.system.suggester</code> :
+        <p>Et <code>status: active</code> en dur plutôt qu'un <code>tp.system.suggester</code> :
         une fiche projet qu'on crée est active par définition. Demander à la création coûte un
         geste pour une réponse connue d'avance.</p>
       </details>
@@ -275,7 +275,7 @@ tags: []
     <div class="exercice">
       <h3>Exercice 2 — Diagnostiquer un template inerte</h3>
       <p>Une note créée dans <code>10-journal/</code> contient littéralement
-      <code>cree: &lt;% tp.date.now("YYYY-MM-DD") %&gt;</code>. Liste les causes possibles, de la
+      <code>created: &lt;% tp.date.now("YYYY-MM-DD") %&gt;</code>. Liste les causes possibles, de la
       plus probable à la moins probable.</p>
       <details>
         <summary>Voir la solution</summary>

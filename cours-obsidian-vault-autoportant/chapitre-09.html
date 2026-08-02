@@ -77,12 +77,12 @@
     """Télécharge et vérifie tous les plugins épinglés, puis écrit."""
     contenus = {}
     for spec in epingles:                      # phase 1 : rien n'est écrit
-        for actif in _actifs_a_installer(spec):
-            donnees = telecharger(url_actif(spec, actif))
+        for active in _actifs_a_installer(spec):
+            donnees = telecharger(url_actif(spec, active))
             reelle = empreinte(donnees)
-            if reelle != spec.sha256[actif]:
+            if reelle != spec.sha256[active]:
                 raise ChecksumError(...)       # sortie ici : destination intacte
-            contenus[spec.id][actif] = donnees
+            contenus[spec.id][active] = donnees
 
     for identifiant, actifs in contenus.items():   # phase 2 : que des écritures
         ...</code></pre>

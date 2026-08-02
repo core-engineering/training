@@ -39,10 +39,10 @@
 
     <pre><code class="language-markdown">---
 type: concept
-titre: Rétraction de bras
-cree: 2026-08-02
-maj: 2026-08-02
-scope: pro
+title: Rétraction de bras
+created: 2026-08-02
+updated: 2026-08-02
+scope: work
 tags: [safety, siemens]
 ---
 
@@ -82,8 +82,8 @@ Le corps de la note commence ici.</code></pre>
       </tbody>
     </table>
 
-    <p>Tout le reste — <code>type</code>, <code>statut</code>, <code>depot</code>,
-    <code>projets</code> — n'existe que pour toi et pour tes requêtes.</p>
+    <p>Tout le reste — <code>type</code>, <code>status</code>, <code>repo</code>,
+    <code>projects</code> — n'existe que pour toi et pour tes requêtes.</p>
 
     <h2>3. Le typage des propriétés</h2>
 
@@ -98,15 +98,15 @@ Le corps de la note commence ici.</code></pre>
     "aliases": "aliases",
     "cssclasses": "multitext",
     "tags": "tags",
-    "cree": "date",
-    "statut": "text"
+    "created": "date",
+    "status": "text"
   }
 }</code></pre>
 
     <div class="callout piege">
       <p>Le typage est déduit de la première valeur rencontrée, puis figé. Si ta toute première
-      note écrit <code>jalons: 3</code>, la propriété devient un nombre pour tout le vault, et
-      <code>jalons: [étude, FAT]</code> ailleurs deviendra incohérent.</p>
+      note écrit <code>milestones: 3</code>, la propriété devient un nombre pour tout le vault, et
+      <code>milestones: [étude, FAT]</code> ailleurs deviendra incohérent.</p>
       <p>Le remède est le même que pour le reste du chapitre : décide du schéma d'abord, et
       applique-le par template plutôt qu'à la main.</p>
     </div>
@@ -118,13 +118,13 @@ Le corps de la note commence ici.</code></pre>
     <p>C'est le piège le plus coûteux, parce qu'il est silencieux. En YAML, un crochet ouvrant
     démarre une liste. Donc&nbsp;:</p>
 
-    <pre><code class="language-yaml">projets: [[supervision]]      <span class="c"># ← PAS un lien</span></code></pre>
+    <pre><code class="language-yaml">projects: [[supervision]]      <span class="c"># ← PAS un lien</span></code></pre>
 
     <p>YAML lit une liste contenant une liste contenant la chaîne <code>supervision</code>. Ni
     Obsidian ni Dataview n'y verront un lien. Il faut quoter&nbsp;:</p>
 
-    <pre><code class="language-yaml">projets: ["[[supervision]]"]  <span class="c"># ← un lien, dans une liste</span>
-projets:
+    <pre><code class="language-yaml">projects: ["[[supervision]]"]  <span class="c"># ← un lien, dans une liste</span>
+projects:
   - "[[supervision]]"         <span class="c"># ← même chose, forme longue</span></code></pre>
 
     <p>L'éditeur de propriétés d'Obsidian quote tout seul. Le piège ne se déclenche que si tu
@@ -132,8 +132,8 @@ projets:
 
     <h3>Les deux-points coupent la valeur</h3>
 
-    <pre><code class="language-yaml">titre: Rétraction : le cas du bras 3   <span class="c"># ← YAML invalide</span>
-titre: "Rétraction : le cas du bras 3" <span class="c"># ← correct</span></code></pre>
+    <pre><code class="language-yaml">title: Rétraction : le cas du bras 3   <span class="c"># ← YAML invalide</span>
+title: "Rétraction : le cas du bras 3" <span class="c"># ← correct</span></code></pre>
 
     <p>Un deux-points suivi d'une espace sépare une clé de sa valeur. Dans une valeur non quotée,
     il rend le document invalide — et un front-matter invalide n'est pas partiellement lu, il est
@@ -141,8 +141,8 @@ titre: "Rétraction : le cas du bras 3" <span class="c"># ← correct</span></co
 
     <h3>Les dates ne sont pas des chaînes</h3>
 
-    <pre><code class="language-yaml">cree: 2026-08-02       <span class="c"># ← une date pour YAML</span>
-cree: "2026-08-02"     <span class="c"># ← une chaîne qui ressemble à une date</span></code></pre>
+    <pre><code class="language-yaml">created: 2026-08-02       <span class="c"># ← une date pour YAML</span>
+created: "2026-08-02"     <span class="c"># ← une chaîne qui ressemble à une date</span></code></pre>
 
     <p>Les deux s'affichent pareil et se trient pareil tant que le format est ISO. La différence
     apparaît en requête : Dataview sait faire de l'arithmétique sur une date, pas sur une chaîne.
@@ -158,45 +158,46 @@ cree: "2026-08-02"     <span class="c"># ← une chaîne qui ressemble à une da
 
     <ol>
       <li><strong>Des champs obligatoires.</strong> Toute note en porte le même noyau — dans le
-      vault de la partie&nbsp;II : <code>type</code>, <code>titre</code>, <code>cree</code>,
-      <code>maj</code>, <code>scope</code>.</li>
+      vault de la partie&nbsp;II : <code>type</code>, <code>title</code>, <code>created</code>,
+      <code>updated</code>, <code>scope</code>.</li>
       <li><strong>Des énumérations fermées.</strong> <code>type</code> vaut <code>daily</code>,
-      <code>projet</code> ou <code>concept</code>, et rien d'autre. Trois valeurs, pas quarante.</li>
-      <li><strong>Des noms stables.</strong> Un seul nom par idée : jamais <code>projet</code> ici
-      et <code>projets</code> là.</li>
+      <code>project</code> ou <code>concept</code>, et rien d'autre. Trois valeurs, pas quarante.</li>
+      <li><strong>Des noms stables.</strong> Un seul nom par idée : jamais <code>project</code> ici
+      et <code>projects</code> là.</li>
       <li><strong>Quelque chose qui vérifie.</strong> Une convention que rien ne contrôle dérive en
       quelques semaines.</li>
     </ol>
 
     <div class="callout vlt">
-      <p>Voici le schéma du vault de la partie&nbsp;II, qui sert d'exemple fil rouge. Noms en
-      français sans accent — cohérent avec la langue de travail, et les requêtes Dataview sur clés
-      accentuées sont pénibles à écrire.</p>
+      <p>Voici le schéma du vault de la partie&nbsp;II, qui sert d'exemple fil rouge. Noms de
+      champs et valeurs d'énumération en anglais, prose des notes en français : les clés accentuées
+      sont pénibles à écrire dans les requêtes Dataview, et un contrat à moitié traduit obligerait
+      à se rappeler de quel côté est chaque terme.</p>
       <pre><code class="language-yaml">---
-type: daily | projet | concept   # énumération fermée
-titre: Rétraction de bras
-cree: 2026-08-02                 # ISO, jamais modifié après création
-maj: 2026-08-02                  # mis à jour à chaque édition
-scope: pro | perso
+type: daily | project | concept  # énumération fermée
+title: Rétraction de bras
+created: 2026-08-02              # ISO, jamais modifié après création
+updated: 2026-08-02              # mis à jour à chaque édition
+scope: work | personal
 tags: [safety]
 ---</code></pre>
       <p>Puis, selon le <code>type</code> :</p>
-      <pre><code class="language-yaml"># type: projet
-statut: actif | dormant | clos
-depot: 100-industrial-supervision   # nom de dossier local, jamais une URL
-jalons: []
+      <pre><code class="language-yaml"># type: project
+status: active | dormant | closed
+repo: 100-industrial-supervision  # nom de dossier local, jamais une URL
+milestones: []
 
 # type: concept
 sources: []
-voir_aussi: []
+see_also: []
 
 # type: daily
-projets: ["[[supervision]]"]        # noter les guillemets</code></pre>
+projects: ["[[supervision]]"]     # noter les guillemets</code></pre>
     </div>
 
-    <h3>Pourquoi <code>cree</code> et <code>maj</code> séparés</h3>
+    <h3>Pourquoi <code>created</code> et <code>updated</code> séparés</h3>
 
-    <p><code>cree</code> ne change jamais après la création ; <code>maj</code> bouge à chaque
+    <p><code>created</code> ne change jamais après la création ; <code>updated</code> bouge à chaque
     édition. Cette séparation permet deux tris différents — « les fiches les plus récentes » et
     « ce que j'ai touché cette semaine » — et garde le tri chronologique stable quand on retouche
     une vieille note.</p>
@@ -212,7 +213,7 @@ projets: ["[[supervision]]"]        # noter les guillemets</code></pre>
 
     <div class="callout astuce">
       <p>Un champ mérite d'exister s'il répond à une question que tu te poses vraiment. « Quels
-      projets sont actifs ? » justifie <code>statut</code>. « Quelle est l'humeur de cette
+      projets sont actifs ? » justifie <code>status</code>. « Quelle est l'humeur de cette
       note ? » ne justifie rien : personne ne posera jamais la question, et le champ ne sera pas
       rempli au bout de trois semaines.</p>
     </div>
@@ -222,13 +223,13 @@ projets: ["[[supervision]]"]        # noter les guillemets</code></pre>
     <p>Un contrat sans contrôle est un vœu. Le vault de la partie&nbsp;II embarque un validateur,
     <code>vault.py doctor</code>, qui parcourt les notes et vérifie&nbsp;: front-matter présent,
     champs obligatoires renseignés, <code>type</code> et <code>scope</code> dans leur énumération,
-    <code>statut</code> présent et valide sur les projets, et aucun lien de projet pointant vers
+    <code>status</code> présent et valide sur les projets, et aucun lien de projet pointant vers
     une note inexistante.</p>
 
     <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/vault.py doctor
 20-notes/temps-de-cycle.md : champ obligatoire manquant : scope
-30-projets/supervision.md : statut invalide : en cours
-10-journal/2026/2026-08-01.md : projet inconnu : superivsion
+30-projets/supervision.md : status invalide : en cours
+10-journal/2026/2026-08-01.md : project inconnu : superivsion
 3 probleme(s)</code></pre>
 
     <p>Trois secondes d'exécution, et la dérive est nommée avant d'avoir contaminé cent notes. Le
@@ -257,31 +258,31 @@ projets: ["[[supervision]]"]        # noter les guillemets</code></pre>
       <pre><code class="language-yaml">
 ---
 type: Projet
-titre: Supervision : refonte du poste opérateur
-statut: en cours
-projets: [[ruwais]]
+title: Supervision : refonte du poste opérateur
+status: en cours
+projects: [[ruwais]]
 ---</code></pre>
       <details>
         <summary>Voir la solution</summary>
-        <p><strong>1. Le deux-points dans <code>titre</code>.</strong> Non quoté, il rend le YAML
+        <p><strong>1. Le deux-points dans <code>title</code>.</strong> Non quoté, il rend le YAML
         invalide, et un front-matter invalide est ignoré en entier — c'est la cause première du
-        « rien ne remonte ». À écrire <code>titre: "Supervision : refonte du poste
+        « rien ne remonte ». À écrire <code>title: "Supervision : refonte du poste
         opérateur"</code>.</p>
         <p><strong>2. <code>type: Projet</code> avec une majuscule</strong>, et
-        <code>statut: en cours</code> hors énumération. Une requête filtrant sur
-        <code>type = "projet"</code> et <code>statut = "actif"</code> ne verra jamais cette note.
+        <code>status: en cours</code> hors énumération. Une requête filtrant sur
+        <code>type = "project"</code> et <code>status = "active"</code> ne verra jamais cette note.
         Le validateur les signale tous les deux.</p>
-        <p><strong>3. <code>projets: [[ruwais]]</code> non quoté.</strong> YAML y lit une liste de
-        liste de chaînes, pas un lien. À écrire <code>projets: ["[[ruwais]]"]</code>.</p>
-        <p>À noter aussi : <code>cree</code>, <code>maj</code> et <code>scope</code> manquent, mais
+        <p><strong>3. <code>projects: [[ruwais]]</code> non quoté.</strong> YAML y lit une liste de
+        liste de chaînes, pas un lien. À écrire <code>projects: ["[[ruwais]]"]</code>.</p>
+        <p>À noter aussi : <code>created</code>, <code>updated</code> et <code>scope</code> manquent, mais
         c'est une omission, pas une erreur de syntaxe.</p>
       </details>
     </div>
 
     <div class="exercice">
       <h3>Exercice 2 — Concevoir un champ</h3>
-      <p>Tu veux suivre l'avancement de tes projets plus finement que <code>actif / dormant /
-      clos</code>. Un collègue propose <code>avancement: 65</code> (pourcentage). Argumente pour ou
+      <p>Tu veux suivre l'avancement de tes projets plus finement que <code>active / dormant /
+      closed</code>. Un collègue propose <code>avancement: 65</code> (pourcentage). Argumente pour ou
       contre.</p>
       <details>
         <summary>Voir la solution</summary>
@@ -304,7 +305,7 @@ projets: [[ruwais]]
     <div class="exercice">
       <h3>Exercice 3 — Migrer sans tout casser</h3>
       <p>Ton vault contient 200 notes avec <code>date:</code>, et tu veux passer à
-      <code>cree:</code>. Comment procèdes-tu, et dans quel ordre ?</p>
+      <code>created:</code>. Comment procèdes-tu, et dans quel ordre ?</p>
       <details>
         <summary>Voir la solution</summary>
         <p>L'ordre importe, parce que les vues et les templates dépendent du nom.</p>
@@ -314,7 +315,7 @@ projets: [[ruwais]]
           <li><strong>Renommer dans les fichiers</strong>, avec Obsidian fermé pour qu'il ne
           réécrive rien pendant l'opération&nbsp;:
           <pre class="term"><code><span class="prompt">$</span> grep -rl '^date:' 20-notes 30-projets \
-    | xargs sed -i 's/^date:/cree:/'</code></pre>
+    | xargs sed -i 's/^date:/created:/'</code></pre>
           L'ancrage <code>^</code> évite de toucher un <code>date:</code> qui apparaîtrait au milieu
           d'une phrase.</li>
           <li><strong>Mettre à jour templates et vues</strong> dans le même commit, sinon une note

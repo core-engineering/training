@@ -46,10 +46,10 @@
     se reconstruit à la demande, sous autant d'angles que tu veux.</p>
 
     <pre><code class="language-markdown">```dataview
-TABLE statut, depot, maj
+TABLE status, repo, updated
 FROM "30-projets"
-WHERE type = "projet" AND statut = "actif"
-SORT maj DESC
+WHERE type = "project" AND status = "active"
+SORT updated DESC
 ```</code></pre>
 
     <div class="callout astuce">
@@ -78,7 +78,7 @@ FROM "20-notes"
 WHERE type = "concept"
 SORT file.name ASC
 
-TABLE WITHOUT ID file.link AS Note, maj AS "Dernière touche"
+TABLE WITHOUT ID file.link AS Note, updated AS "Dernière touche"
 FROM "20-notes"
 LIMIT 10
 
@@ -132,7 +132,7 @@ FROM "20-notes" AND -#à-trier</code></pre>
       <p><code>file.ctime</code> et <code>file.mtime</code> viennent du <em>système de
       fichiers</em>, pas de toi. Un <code>git clone</code>, une copie, une synchronisation les
       réécrivent toutes à la date de l'opération. C'est exactement pourquoi le schéma du
-      chapitre&nbsp;3 porte ses propres <code>cree</code> et <code>maj</code> : eux voyagent avec
+      chapitre&nbsp;3 porte ses propres <code>created</code> et <code>updated</code> : eux voyagent avec
       le contenu.</p>
     </div>
 
@@ -148,13 +148,13 @@ FROM "20-notes" AND -#à-trier</code></pre>
 
     <h2>5. Filtrer, trier, limiter</h2>
 
-    <pre><code class="language-sql">WHERE type = "projet" AND statut != "clos"
+    <pre><code class="language-sql">WHERE type = "project" AND status != "closed"
 WHERE contains(tags, "safety")
-WHERE cree >= date(2026-01-01)
+WHERE created >= date(2026-01-01)
 WHERE length(file.inlinks) = 0
-WHERE contains(projets, this.file.link)
+WHERE contains(projects, this.file.link)
 
-SORT maj DESC, file.name ASC
+SORT updated DESC, file.name ASC
 LIMIT 20</code></pre>
 
     <p><code>this</code> désigne la note qui contient la requête. C'est ce qui permet d'écrire une
@@ -171,10 +171,10 @@ LIMIT 20</code></pre>
     <p><code>GROUP BY</code> regroupe les résultats par la valeur d'une expression. Et il change ce
     qui est visible à partir de là, ce que la documentation ne crie pas assez fort.</p>
 
-    <pre><code class="language-sql">TABLE depot, maj
+    <pre><code class="language-sql">TABLE repo, updated
 FROM "30-projets"
-WHERE type = "projet"
-GROUP BY statut</code></pre>
+WHERE type = "project"
+GROUP BY status</code></pre>
 
     <p>Cette requête <strong>s'affiche sans erreur</strong>, avec les bons groupes… et deux colonnes
     intégralement vides.</p>
@@ -182,13 +182,13 @@ GROUP BY statut</code></pre>
     <div class="callout piege">
       <p>Après <code>GROUP BY</code>, une ligne de résultat n'est plus une note : c'est un groupe.
       Deux choses seulement existent à ce niveau — la clé du groupe (<code>key</code>) et
-      <code>rows</code>, le tableau des notes qui le composent. <code>depot</code> et
-      <code>maj</code> n'y sont pas définis, donc s'affichent vides.</p>
+      <code>rows</code>, le tableau des notes qui le composent. <code>repo</code> et
+      <code>updated</code> n'y sont pas définis, donc s'affichent vides.</p>
       <p>Il faut passer par <code>rows</code> :</p>
-      <pre><code class="language-sql">TABLE rows.file.link AS Projet, rows.depot, rows.maj
+      <pre><code class="language-sql">TABLE rows.file.link AS Projet, rows.repo, rows.updated
 FROM "30-projets"
-WHERE type = "projet"
-GROUP BY statut</code></pre>
+WHERE type = "project"
+GROUP BY status</code></pre>
       <p>Ce défaut est passé au travers d'une revue dans le vault de la partie&nbsp;II : la requête
       s'affichait, les groupes étaient corrects, et personne ne remarquait les colonnes vides. Aucun
       test ne peut l'attraper — seule la lecture du résultat le révèle.</p>
@@ -199,8 +199,8 @@ GROUP BY statut</code></pre>
 
     <pre><code class="language-sql">TABLE file.link
 FROM "10-journal"
-FLATTEN projets AS projet
-WHERE projet = this.file.link</code></pre>
+FLATTEN projects AS project
+WHERE project = this.file.link</code></pre>
 
     <h2>7. Les trois vues du vault de référence</h2>
 
@@ -212,10 +212,10 @@ WHERE projet = this.file.link</code></pre>
 
     <h3>Tableau de bord</h3>
 
-    <pre><code class="language-sql">TABLE statut, depot, maj
+    <pre><code class="language-sql">TABLE status, repo, updated
 FROM "30-projets"
-WHERE type = "projet" AND statut = "actif"
-SORT maj DESC</code></pre>
+WHERE type = "project" AND status = "active"
+SORT updated DESC</code></pre>
 
     <p>Complété par la liste de l'inbox à trier et, via le plugin Tasks, les tâches en retard.</p>
 
@@ -225,7 +225,7 @@ SORT maj DESC</code></pre>
 FROM "20-notes"
 WHERE type = "concept"
   AND length(file.inlinks) = 0
-  AND (!voir_aussi OR length(voir_aussi) = 0)
+  AND (!see_also OR length(see_also) = 0)
 SORT file.name ASC</code></pre>
 
     <p>C'est le détecteur de base de connaissance qui pourrit : une fiche que rien ne cite et qui ne
@@ -275,10 +275,10 @@ SORT file.name ASC</code></pre>
       <details>
         <summary>Voir la solution</summary>
         <pre><code class="language-sql">TABLE WITHOUT ID file.link AS Fiche,
-      maj AS "Mise à jour",
+      updated AS "Mise à jour",
       length(file.inlinks) AS Citations
 FROM "20-notes"
-WHERE type = "concept" AND maj >= date(2026-07-01)
+WHERE type = "concept" AND updated >= date(2026-07-01)
 SORT length(file.inlinks) DESC</code></pre>
         <p>Points d'attention : <code>date(2026-07-01)</code> sans guillemets — c'est un littéral de
         date, pas une chaîne ; <code>length(file.inlinks)</code> se répète dans la colonne et dans
@@ -291,16 +291,16 @@ SORT length(file.inlinks) DESC</code></pre>
       <h3>Exercice 2 — Réparer la requête</h3>
       <p>Cette requête affiche les bons groupes mais des colonnes vides. Corrige-la, et explique en
       une phrase pourquoi elle ne produisait aucune erreur.</p>
-      <pre><code class="language-sql">TABLE titre, cree
+      <pre><code class="language-sql">TABLE title, created
 FROM "20-notes"
 GROUP BY type</code></pre>
       <details>
         <summary>Voir la solution</summary>
-        <pre><code class="language-sql">TABLE rows.file.link AS Note, rows.titre, rows.cree
+        <pre><code class="language-sql">TABLE rows.file.link AS Note, rows.title, rows.created
 FROM "20-notes"
 GROUP BY type</code></pre>
-        <p><strong>Pourquoi pas d'erreur</strong> : après <code>GROUP BY</code>, <code>titre</code>
-        et <code>cree</code> ne sont pas des noms invalides, ce sont des champs simplement absents
+        <p><strong>Pourquoi pas d'erreur</strong> : après <code>GROUP BY</code>, <code>title</code>
+        et <code>created</code> ne sont pas des noms invalides, ce sont des champs simplement absents
         du contexte de groupe. Dataview traite un champ absent comme vide — comportement voulu, qui
         évite qu'une note sans le champ fasse planter toute la vue. Le coût, c'est qu'une faute de
         frappe ou une erreur de portée passe inaperçue.</p>
@@ -312,21 +312,21 @@ GROUP BY type</code></pre>
     <div class="exercice">
       <h3>Exercice 3 — Concevoir la vue manquante</h3>
       <p>Tu veux repérer les notes quotidiennes qui mentionnent un projet dont le
-      <code>statut</code> est <code>clos</code> — signe que tu travailles encore sur quelque chose
+      <code>status</code> est <code>closed</code> — signe que tu travailles encore sur quelque chose
       que tu crois terminé. Comment t'y prends-tu ?</p>
       <details>
         <summary>Voir la solution</summary>
         <p>La difficulté est que la condition porte sur une propriété de la note <em>liée</em>, pas
         de la note courante. Il faut déplier les liens puis suivre le lien&nbsp;:</p>
-        <pre><code class="language-sql">TABLE WITHOUT ID file.link AS Jour, projet AS Projet
+        <pre><code class="language-sql">TABLE WITHOUT ID file.link AS Jour, project AS Projet
 FROM "10-journal"
-FLATTEN projets AS projet
-WHERE projet AND projet.statut = "clos"
+FLATTEN projects AS project
+WHERE project AND project.status = "closed"
 SORT file.name DESC</code></pre>
-        <p><code>FLATTEN</code> produit une ligne par projet cité, puis <code>projet.statut</code>
+        <p><code>FLATTEN</code> produit une ligne par projet cité, puis <code>project.status</code>
         déréférence le lien pour lire le front-matter de la cible.</p>
-        <p>Le <code>WHERE projet AND …</code> n'est pas décoratif : une note quotidienne sans
-        <code>projets</code> produit un <code>projet</code> nul, et déréférencer nul remonterait une
+        <p>Le <code>WHERE project AND …</code> n'est pas décoratif : une note quotidienne sans
+        <code>projects</code> produit un <code>project</code> nul, et déréférencer nul remonterait une
         erreur.</p>
         <p>Autre approche, plus simple à lire mais moins directe : partir des projets clos et lister
         leurs liens entrants avec <code>FROM [[…]]</code>. Il faudrait alors une requête par projet

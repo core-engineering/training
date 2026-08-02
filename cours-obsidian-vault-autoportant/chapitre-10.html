@@ -37,7 +37,7 @@
 ├── 00-inbox/          <span class="c"># capture brute, sans front-matter</span>
 ├── 10-journal/2026/   <span class="c"># notes quotidiennes, un sous-dossier par année</span>
 ├── 20-notes/          <span class="c"># fiches de connaissance, à plat</span>
-├── 30-projets/        <span class="c"># une note par projet, à plat</span>
+├── 30-projets/        <span class="c"># une note par project, à plat</span>
 ├── 80-assets/         <span class="c"># images, PDF</span>
 ├── 90-meta/           <span class="c"># manifeste, conventions, templates, vues, outillage</span>
 └── 99-archive/</code></pre>
@@ -75,7 +75,7 @@
         <tr><td><code>20-notes/</code></td><td>Fiches durables, une idée par note</td>
           <td><code>type: concept</code></td></tr>
         <tr><td><code>30-projets/</code></td><td>Une note par projet, cible des liens
-          <code>projets</code></td><td><code>type: projet</code></td></tr>
+          <code>projects</code></td><td><code>type: project</code></td></tr>
         <tr><td><code>90-meta/</code></td><td>Conventions, vues, templates, manifeste,
           outillage</td><td>selon le fichier</td></tr>
         <tr><td><code>99-archive/</code></td><td>Ce qu'on ne veut plus voir sans vouloir le
@@ -88,15 +88,15 @@
     <p>Le chapitre&nbsp;3 l'a introduit ; le voici comme règle exécutable. Cinq champs obligatoires
     partout :</p>
 
-    <pre><code class="language-yaml">type: daily | projet | concept
-titre: …
-cree: 2026-08-02        # ISO, jamais modifié
-maj: 2026-08-02         # touché à chaque édition
-scope: pro | perso</code></pre>
+    <pre><code class="language-yaml">type: daily | project | concept
+title: …
+created: 2026-08-02       # ISO, jamais modifié
+updated: 2026-08-02       # touché à chaque édition
+scope: work | personal</code></pre>
 
-    <p>Plus, selon le type : <code>statut</code> obligatoire sur un projet (<code>actif</code>,
-    <code>dormant</code>, <code>clos</code>), <code>depot</code> et <code>jalons</code> optionnels ;
-    <code>sources</code> et <code>voir_aussi</code> sur un concept ; <code>projets</code> sur une
+    <p>Plus, selon le type : <code>status</code> obligatoire sur un projet (<code>active</code>,
+    <code>dormant</code>, <code>closed</code>), <code>repo</code> et <code>milestones</code> optionnels ;
+    <code>sources</code> et <code>see_also</code> sur un concept ; <code>projects</code> sur une
     note quotidienne.</p>
 
     <p>Ce contrat est documenté dans <code>90-meta/conventions.md</code> — une note ordinaire,
@@ -109,8 +109,8 @@ scope: pro | perso</code></pre>
 
     <p>Il parcourt les notes du périmètre et vérifie cinq choses : le front-matter est présent et
     lisible, les champs obligatoires sont là, <code>type</code> et <code>scope</code> sont dans
-    leur énumération, un projet a un <code>statut</code> valide, et chaque lien de
-    <code>projets</code> vise une note qui existe dans <code>30-projets/</code>.</p>
+    leur énumération, un projet a un <code>status</code> valide, et chaque lien de
+    <code>projects</code> vise une note qui existe dans <code>30-projets/</code>.</p>
 
     <h3>La précédence des problèmes</h3>
 
@@ -216,7 +216,7 @@ DOSSIERS_EXCLUS = ("90-meta/templates", "90-meta/tooling")</code></pre>
       <ul>
         <li>Cinq dossiers, aucune sous-hiérarchie sauf l'année du journal : la question devient
         « qu'est-ce que c'est » et non « où ça va ».</li>
-        <li>Cinq champs obligatoires, trois types fermés, un <code>statut</code> sur les
+        <li>Cinq champs obligatoires, trois types fermés, un <code>status</code> sur les
         projets.</li>
         <li>Le validateur s'arrête au premier problème d'une note — précédence délibérée, fixée par
         des tests.</li>
@@ -247,7 +247,7 @@ DOSSIERS_EXCLUS = ("90-meta/templates", "90-meta/tooling")</code></pre>
         décision de rangement. C'est tout l'intérêt : décider coûte, et à ce moment-là tu es en
         réunion.</p>
         <p><strong>(d)</strong> Il <em>reste</em> dans <code>30-projets/</code> avec
-        <code>statut: clos</code>. Le déplacer vers <code>99-archive/</code> le sortirait du
+        <code>status: closed</code>. Le déplacer vers <code>99-archive/</code> le sortirait du
         périmètre de validation et casserait les liens des notes quotidiennes qui le citent —
         enfin, pas les liens eux-mêmes, mais le contrôle qui vérifie qu'ils pointent quelque part.
         L'archive est pour ce qu'on ne veut plus voir <em>du tout</em>.</p>

@@ -242,15 +242,15 @@ Ordre du jour :</code></pre>
       <h3>Exercice 1 — Écrire la recherche</h3>
       <p>Formule une recherche unique qui trouve : les notes du dossier <code>30-projets</code>,
       contenant « FAT » et « retard » dans le même paragraphe, et qui ne portent pas l'étiquette
-      <code>#clos</code>.</p>
+      <code>#closed</code>.</p>
       <details>
         <summary>Voir la solution</summary>
-        <pre><code class="language-text">path:30-projets section:(FAT retard) -tag:#clos</code></pre>
+        <pre><code class="language-text">path:30-projets section:(FAT retard) -tag:#closed</code></pre>
         <p><code>section:</code> plutôt que <code>line:</code> parce que l'énoncé dit « même
         paragraphe » : <code>line:</code> exigerait les deux mots sur la même ligne, ce qui est plus
         strict. À noter que <code>section:</code> raisonne en fait par titre — c'est
         l'approximation la plus proche d'un paragraphe qu'offre la recherche.</p>
-        <p>Piège possible : écrire <code>-#clos</code> au lieu de <code>-tag:#clos</code>. Le
+        <p>Piège possible : écrire <code>-#closed</code> au lieu de <code>-tag:#closed</code>. Le
         premier exclut le <em>texte</em> « #clos », ce qui marche par accident dans la plupart des
         cas mais raterait une étiquette déclarée en front-matter.</p>
       </details>
