@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 02 — Écrire et relier : liens, backlinks, graphe</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 02</span><br>Écrire et relier : liens, backlinks, graphe</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Écrire des liens internes sous toutes leurs formes : simple, avec alias, vers un titre,
+        vers un bloc, et en incorporation.</li>
+        <li>Utiliser les liens retour et les mentions non liées — le vrai bénéfice du modèle.</li>
+        <li>Savoir ce que le graphe apporte réellement, et ce qu'il ne faut pas en attendre.</li>
+        <li>Trancher entre dossiers, étiquettes et liens : qui porte quelle information.</li>
+        <li>Nommer ses notes de façon à ce que les liens restent écrivables de mémoire.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le markdown utile</h2>
+
+    <p>Obsidian lit du markdown standard : <code>#</code> à <code>######</code> pour les titres,
+    <code>**gras**</code>, <code>*italique*</code>, <code>- </code> pour les listes,
+    <code>&gt; </code> pour les citations, trois accents graves pour un bloc de code. Rien de
+    spécifique à apprendre.</p>
+
+    <p>Deux ajouts propres à Obsidian méritent d'être connus tout de suite :</p>
+
+    <pre><code class="language-markdown">- [ ] une tâche à faire
+- [x] une tâche faite
+
+> [!warning] Un encart natif
+> Le contenu de l'encart, sur plusieurs lignes si besoin.</code></pre>
+
+    <p>Les cases à cocher sont exploitables par requête (chapitre&nbsp;5) et par le plugin Tasks
+    (chapitre&nbsp;7). Les encarts <code>&gt; [!type]</code> acceptent <code>note</code>,
+    <code>warning</code>, <code>tip</code>, <code>danger</code>, <code>quote</code> et quelques
+    autres.</p>
+
+    <h2>2. Les liens internes</h2>
+
+    <p>Le lien est la brique centrale. Il s'écrit entre doubles crochets et vise un
+    <strong>nom de note</strong>, jamais un chemin :</p>
+
+    <pre><code class="language-markdown">[[Rétraction de bras]]              <span class="c">← lien simple</span>
+[[Rétraction de bras|la rétraction]] <span class="c">← alias : le texte affiché diffère</span>
+[[Rétraction de bras#Séquence]]      <span class="c">← vers un titre précis de la note</span>
+[[Rétraction de bras^a1b2c3]]        <span class="c">← vers un bloc précis</span>
+![[Rétraction de bras]]              <span class="c">← incorporation : le contenu s'affiche ici</span>
+![[schema-bras.png]]                 <span class="c">← incorporation d'une image</span></code></pre>
+
+    <p>Tape <code>[[</code> et Obsidian propose l'autocomplétion sur les notes existantes. Valider
+    un nom qui n'existe pas crée un <em>lien non résolu</em> : le lien s'affiche en pointillé, et
+    cliquer dessus crée la note.</p>
+
+    <div class="callout astuce">
+      <p>Le lien non résolu n'est pas une erreur, c'est un outil. Écrire <code>[[cinématique
+      inverse]]</code> au fil d'une note, c'est poser un jalon : « il faudra une fiche là-dessus ».
+      Le chapitre&nbsp;5 montre comment lister tous ces jalons pour les traiter plus tard.</p>
+    </div>
+
+    <h3>L'alias, et l'alias durable</h3>
+
+    <p>La syntaxe <code>|</code> ne vaut que pour un lien. Si une note doit être connue sous
+    plusieurs noms partout, déclare-les dans son front-matter (chapitre&nbsp;3) :</p>
+
+    <pre><code class="language-yaml">---
+titre: Rétraction de bras
+aliases: [rétraction, retract]
+---</code></pre>
+
+    <p>Dès lors, <code>[[rétraction]]</code> résout vers la même note, et l'autocomplétion propose
+    les trois formes.</p>
+
+    <h2>3. Liens retour et mentions non liées</h2>
+
+    <p>C'est ici que le modèle prend son sens. Ouvre une note, et le panneau
+    <strong>Liens retour</strong> (backlinks) liste toutes les notes qui la citent — avec le
+    paragraphe qui l'entoure.</p>
+
+    <p>Tu n'as jamais rangé la note nulle part, et pourtant elle a un contexte : celui que lui
+    donnent les notes qui en parlent. Une fiche <code>[[rétraction de bras]]</code> citée par
+    quinze notes quotidiennes te raconte, sans effort de classement, quand le sujet est revenu et
+    dans quelles circonstances.</p>
+
+    <div class="callout obs">
+      <p>Sous les liens retour, le panneau affiche les <strong>mentions non liées</strong> : les
+      notes qui contiennent le texte « rétraction de bras » sans en faire un lien. Un bouton
+      permet de convertir la mention en lien. C'est le meilleur moment pour tisser : quand la
+      relation existe déjà dans le texte.</p>
+    </div>
+
+    <h2>4. Le graphe, et ce qu'il ne fait pas</h2>
+
+    <p>Le graphe global affiche toutes les notes comme des nœuds reliés par les liens. C'est la
+    capture d'écran qui vend Obsidian, et c'est l'outil le moins utile du logiciel.</p>
+
+    <p>Sur cinquante notes il est joli. Sur cinq cents il devient une pelote illisible où l'œil ne
+    distingue plus rien. Il ne répond à aucune question précise : « quels projets sont actifs ? »,
+    « qu'ai-je écrit sur PROFINET le mois dernier ? » ne se lisent pas sur un graphe.</p>
+
+    <p>Le <strong>graphe local</strong>, en revanche, mérite un coin d'écran. Affiché à côté d'une
+    note, avec une profondeur de 1 ou 2, il montre le voisinage immédiat et rend visibles des
+    rapprochements qu'on avait oubliés.</p>
+
+    <div class="callout piege">
+      <p>Ne construis pas ton système autour du graphe. Les questions utiles se posent en requêtes
+      (chapitre&nbsp;5), pas en contemplation d'un nuage de points. Un vault dont on ne sait rien
+      tirer sans regarder le graphe est un vault mal structuré.</p>
+    </div>
+
+    <h2>5. Dossiers, étiquettes, liens : qui porte quoi</h2>
+
+    <p>Trois mécanismes de classement coexistent, et la tentation est de les utiliser tous les
+    trois pour la même chose. C'est la meilleure façon de se retrouver avec une note qu'on ne
+    retrouve plus.</p>
+
+    <table>
+      <thead>
+        <tr><th>Mécanisme</th><th>Nature</th><th>Bon usage</th><th>Mauvais usage</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Dossier</strong></td>
+          <td>Exclusif : une note est à un seul endroit</td>
+          <td>Séparer de grandes natures de contenu : journal, fiches, projets</td>
+          <td>Reproduire une taxonomie fine ; une note appartient rarement à une seule catégorie</td>
+        </tr>
+        <tr>
+          <td><strong>Étiquette</strong> <code>#tag</code></td>
+          <td>Multiple, plate, sans contenu propre</td>
+          <td>Marquer un état ou une facette transverse : <code>#à-trier</code>, <code>#safety</code></td>
+          <td>Remplacer un lien : <code>#profinet</code> ne porte aucune connaissance, contrairement
+          à <code>[[profinet]]</code></td>
+        </tr>
+        <tr>
+          <td><strong>Lien</strong> <code>[[…]]</code></td>
+          <td>Multiple, orienté, et la cible est elle-même une note</td>
+          <td>Tout rapport de sens entre deux idées</td>
+          <td>Lier tout à tout : un lien qui ne dit rien encombre les liens retour</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout astuce">
+      <p>La règle qui tranche presque tous les cas : <strong>si la catégorie mérite qu'on écrive
+      dessus, c'est une note ; sinon, c'est une étiquette.</strong></p>
+      <p>« PROFINET » mérite une fiche : définition, normes, pièges. Donc <code>[[profinet]]</code>,
+      et la fiche accumule ses liens retour. « À trier » ne mérite rien, c'est un état passager :
+      donc <code>#à-trier</code>.</p>
+    </div>
+
+    <p>Le vault de la partie&nbsp;II pousse cette logique à son terme : cinq dossiers seulement,
+    aucune sous-hiérarchie, et le classement réel porté par le front-matter et les liens. Une note
+    change alors de contexte sans jamais déménager.</p>
+
+    <h2>6. Nommer ses notes</h2>
+
+    <p>Puisqu'un lien s'écrit avec le nom de la note, le nom doit être <em>écrivable de
+    mémoire</em>. Trois conséquences pratiques :</p>
+
+    <ul>
+      <li><strong>Des noms courts et prévisibles.</strong> <code>rétraction de bras</code> plutôt
+      que <code>Note sur la rétraction de bras CPMS (2026)</code>. Tu écriras le premier sans
+      réfléchir, tu chercheras le second.</li>
+      <li><strong>Pas de date ni de code dans le nom</strong>, sauf pour les notes qui <em>sont</em>
+      une date — les notes quotidiennes. La date appartient au front-matter, où elle est
+      interrogeable.</li>
+      <li><strong>Le singulier plutôt que le pluriel</strong>, par convention, pour ne pas hésiter
+      entre <code>[[capteur]]</code> et <code>[[capteurs]]</code>.</li>
+    </ul>
+
+    <div class="callout piege">
+      <p>Les caractères <code>#</code>, <code>^</code>, <code>|</code> et <code>[]</code> ont une
+      signification dans la syntaxe de lien. Un nom de note qui en contient produit des liens
+      qu'Obsidian coupe au mauvais endroit. Les deux-points posent en plus problème sur Windows,
+      qui les interdit dans les noms de fichiers.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Un lien vise un nom de note. Alias avec <code>|</code>, titre avec <code>#</code>,
+        bloc avec <code>^</code>, incorporation avec <code>!</code>.</li>
+        <li>Les liens retour donnent un contexte à une note sans qu'on l'ait rangée : c'est le
+        bénéfice central du modèle.</li>
+        <li>Les mentions non liées transforment une coïncidence de vocabulaire en lien explicite.</li>
+        <li>Le graphe global est décoratif ; le graphe local, lui, sert.</li>
+        <li>Si la catégorie mérite qu'on écrive dessus, c'est une note ; sinon, une étiquette.</li>
+        <li>Nomme court : tu dois pouvoir écrire le lien de mémoire.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Choisir le bon mécanisme</h3>
+      <p>Pour chacun, dis si tu utiliserais un dossier, une étiquette ou un lien, et pourquoi :
+      (a) marquer les notes issues d'une réunion dont les actions ne sont pas encore réparties ;
+      (b) rattacher une fiche technique au protocole PROFINET ; (c) séparer les notes quotidiennes
+      du reste ; (d) signaler qu'une fiche est incomplète.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>(a) Étiquette</strong> <code>#actions-à-répartir</code>. C'est un état
+        temporaire qui disparaîtra ; il ne mérite pas de fiche, et il concerne des notes de
+        dossiers différents.</p>
+        <p><strong>(b) Lien</strong> <code>[[profinet]]</code>. Le protocole mérite une fiche —
+        définition, normes, pièges — et cette fiche gagne à accumuler ses liens retour. Une
+        étiquette <code>#profinet</code> ne porterait aucune connaissance.</p>
+        <p><strong>(c) Dossier</strong> <code>10-journal/</code>. C'est une nature de contenu
+        franchement distincte, exclusive, et volumineuse : exactement ce que les dossiers font
+        bien.</p>
+        <p><strong>(d) Étiquette</strong> <code>#à-compléter</code>. Même raisonnement qu'en (a).
+        À noter qu'un champ de front-matter <code>statut</code> ferait aussi l'affaire, et se
+        prêterait mieux à une requête — c'est le chapitre suivant.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Un lien qui ne marche pas</h3>
+      <p>Tu écris <code>[[Ruwais#Séquence de rétraction]]</code> et le lien reste en pointillé,
+      alors que la note <code>Ruwais</code> existe bien et contient ce titre. Deux causes
+      possibles ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Cause 1 — le titre ne correspond pas exactement.</strong> La résolution après
+        <code>#</code> est sensible au texte exact du titre, accents et majuscules compris. Si la
+        note contient « Séquence de rétraction&nbsp;» avec une espace insécable, ou « Séquence de
+        Rétraction », le lien ne résout pas. Le remède est l'autocomplétion : tape <code>#</code>
+        après le nom de note et laisse Obsidian proposer les titres réels.</p>
+        <p><strong>Cause 2 — il y a deux notes nommées <code>Ruwais</code></strong> dans des
+        dossiers différents, et Obsidian résout vers celle qui ne contient pas ce titre. Le
+        symptôme est visible dans l'autocomplétion, qui affiche alors deux entrées de même nom
+        avec leur chemin.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Refactoriser une note fourre-tout</h3>
+      <p>Tu as une note <code>notes réseau.md</code> de 400 lignes qui parle de PROFINET, de MRP,
+      de diagnostic OPC-UA et de trois incidents datés. Comment la découpes-tu, et que reste-t-il à
+      la place ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Trois natures de contenu sont mélangées, et chacune va ailleurs&nbsp;:</p>
+        <ul>
+          <li>les connaissances durables deviennent des fiches : <code>[[profinet]]</code>,
+          <code>[[anneau MRP]]</code>, <code>[[opc-ua]]</code>. Une idée par note, nommée court ;</li>
+          <li>les trois incidents datés rejoignent les notes quotidiennes correspondantes, ou des
+          notes de projet — ils sont événementiels, pas conceptuels ;</li>
+          <li>ce qui restait de liant devient une <em>note de carte</em> : une page courte qui ne
+          contient presque que des liens, servant de point d'entrée sur le domaine réseau.</li>
+        </ul>
+        <p>Le test de découpe : si une section pouvait être citée seule depuis une autre note, elle
+        mérite d'être une note. Tant qu'elle est enfouie dans un fourre-tout, personne ne peut y
+        faire de lien — et sans lien, elle ne remontera jamais dans des liens retour.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-01.html"><span class="lbl">← Précédent</span>Le vault : un dossier de fichiers</a>
+    <a class="next" href="chapitre-03.html"><span class="lbl">Suivant →</span>Le front-matter</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

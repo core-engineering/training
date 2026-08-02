@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 07 — Le confort : Tasks, Kanban, Excalidraw… et Obsidian Git</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 07</span><br>Le confort : Tasks, Kanban, Excalidraw… et Obsidian Git</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Suivre des tâches réparties dans tout le vault avec le plugin Tasks.</li>
+        <li>Situer Kanban, Excalidraw, Advanced Tables et Style Settings : ce qu'ils apportent, ce
+        qu'ils coûtent.</li>
+        <li>Synchroniser un vault par git sans y penser, avec Obsidian Git.</li>
+        <li>Connaître les deux limites d'Obsidian Git qui décident de l'architecture de la
+        partie&nbsp;II.</li>
+      </ul>
+    </div>
+
+    <h2>1. Tasks</h2>
+
+    <p>Les cases à cocher markdown sont partout dans le vault : dans les notes quotidiennes, dans
+    les fiches projet. Le problème n'est pas de les écrire, c'est de les retrouver. Tasks ajoute
+    une syntaxe de métadonnées et un langage de requête dédié.</p>
+
+    <pre><code class="language-markdown">- [ ] Vérifier la rétraction du bras 3 📅 2026-08-15 ⏫
+- [ ] Relancer l'intégrateur 🔁 every week
+- [x] Envoyer le rapport FAT ✅ 2026-08-01</code></pre>
+
+    <p>Les émojis sont la syntaxe du plugin : 📅 échéance, ⏫ priorité haute, 🔁 récurrence,
+    ✅ date de complétion, 🛫 date de début. Ils se saisissent par une commande dédiée plutôt qu'à
+    la main.</p>
+
+    <pre><code class="language-markdown">```tasks
+not done
+due before in 7 days
+sort by due
+```</code></pre>
+
+    <div class="callout astuce">
+      <p>Tasks et Dataview se recouvrent partiellement. La règle simple&nbsp;: <code>TASK</code> en
+      Dataview suffit pour « lister les cases non cochées d'un dossier ». Tasks devient utile dès
+      qu'il y a des <strong>échéances, des récurrences et des priorités</strong> — il sait les lire,
+      les trier, et cocher une tâche récurrente en régénère l'occurrence suivante.</p>
+      <p>Si tes tâches n'ont pas de date, tu n'as pas besoin de Tasks.</p>
+    </div>
+
+    <h2>2. Kanban</h2>
+
+    <p>Un tableau à colonnes, glisser-déposer, stocké dans un fichier markdown ordinaire — une
+    liste par colonne. C'est sa qualité : le tableau reste lisible et versionnable même sans le
+    plugin.</p>
+
+    <div class="callout piege">
+      <p>Un kanban est un <em>état</em>, pas une connaissance. Les cartes y sont du texte court, hors
+      du modèle de notes : pas de front-matter, donc invisibles aux requêtes du chapitre&nbsp;5.
+      Un vault où l'information importante vit dans des cartes de kanban a deux systèmes qui ne se
+      parlent pas.</p>
+      <p>Usage raisonnable : un tableau temporaire pour piloter une phase, qu'on jette ensuite. Pas
+      un référentiel.</p>
+    </div>
+
+    <h2>3. Excalidraw</h2>
+
+    <p>Dessin à main levée dans le vault : schémas d'architecture, croquis de cinématique,
+    annotations. Les dessins sont stockés dans des fichiers <code>.excalidraw.md</code> qui
+    contiennent à la fois une image et sa description.</p>
+
+    <p>C'est le plugin le plus lourd de la sélection. Dans le vault de référence, ses réglages à eux
+    seuls pèsent 26&nbsp;Ko de JSON — l'essentiel étant des valeurs par défaut qu'il réécrit à
+    chaque mise à jour. Retiens ce chiffre : il justifie une décision de conception au
+    chapitre&nbsp;9.</p>
+
+    <h2>4. Advanced Tables et Style Settings</h2>
+
+    <p><strong>Advanced Tables</strong> rend les tableaux markdown éditables : la tabulation passe
+    de cellule en cellule, les colonnes se réalignent toutes seules. Sans lui, un tableau de plus
+    de trois colonnes se maintient à la main, et personne ne le fait.</p>
+
+    <p><strong>Style Settings</strong> expose sous forme de réglages les variables CSS que les
+    thèmes déclarent : largeur de ligne, taille de police, couleurs d'accent. Utile si ton thème le
+    supporte, inerte sinon.</p>
+
+    <p>Ces deux-là ne stockent rien : les retirer ne perd aucune donnée. C'est le meilleur profil
+    de risque pour un plugin tiers.</p>
+
+    <h2>5. Obsidian Git</h2>
+
+    <p>Le vault est un dossier de fichiers texte : git est le mécanisme de synchronisation naturel.
+    Historique complet, sauvegarde, et rien à payer. Le plugin Obsidian Git l'automatise depuis
+    l'application.</p>
+
+    <pre><code class="language-json">{
+  "autoSaveInterval": 10,
+  "autoPullOnBoot": true,
+  "commitMessage": "vault: {{date}}"
+}</code></pre>
+
+    <p>Traduction : tirer les modifications distantes à l'ouverture, puis commiter et pousser
+    automatiquement toutes les dix minutes. En usage courant, tu n'y penses jamais — tu écris, ça
+    se sauvegarde.</p>
+
+    <div class="callout obs">
+      <p>Deux commandes valent d'être connues dans la palette : <em>Commit-and-sync</em> pour
+      forcer une synchronisation immédiate avant de fermer le portable, et <em>Open source control
+      view</em> pour voir les fichiers modifiés et commiter sélectivement.</p>
+    </div>
+
+    <h3>Limite 1 — pas de hooks git</h3>
+
+    <div class="callout piege">
+      <p>Obsidian Git n'utilise pas le binaire <code>git</code> de ton système : il embarque une
+      implémentation JavaScript. Conséquence directe, <strong>les hooks git ne s'exécutent
+      pas</strong>. Un <code>pre-commit</code> qui vérifierait le contenu avant chaque commit est
+      contourné par tous les commits venant d'Obsidian.</p>
+      <p>Cette limite est structurante. Si tu veux un contrôle <em>bloquant</em> — refuser un
+      commit qui contient une information à ne pas publier, par exemple — il faut désactiver
+      l'auto-commit et faire passer les commits par un script. C'est un arbitrage entre confort et
+      garantie, et il n'a pas de solution qui donne les deux.</p>
+    </div>
+
+    <h3>Limite 2 — l'auto-commit ne distingue pas ton travail</h3>
+
+    <p>L'auto-commit prend <em>tout</em> ce qui a changé dans le dépôt, sur la branche courante.
+    Tant que tu écris des notes, c'est ce que tu veux. Si tu modifies en parallèle du code dans le
+    vault — l'outillage de la partie&nbsp;II vit dedans — l'auto-commit balaie ton travail en cours
+    au milieu d'une modification.</p>
+
+    <p>C'est arrivé pendant la construction du vault de référence : un commit
+    <code>vault backup: 2026-08-02 16:20:22</code> a emporté sept fichiers de code à moitié testés.
+    Sans dégât — il a suffi de vérifier le contenu et d'amender le commit — mais la leçon est
+    simple.</p>
+
+    <div class="callout astuce">
+      <p><strong>Ferme Obsidian avant de travailler sur le code du vault.</strong> Sur un vault avec
+      auto-commit, un arbre de travail non commité appartient aux dix prochaines minutes.</p>
+    </div>
+
+    <h3>Conflits</h3>
+
+    <p>Deux machines qui modifient la même note sans se synchroniser produisent un conflit git
+    ordinaire, avec ses marqueurs <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> insérés dans la note.
+    Le plugin ne sait pas les résoudre : il faut ouvrir la note et trancher.</p>
+
+    <p>La prévention tient en une habitude : laisser <code>autoPullOnBoot</code> actif, et
+    synchroniser avant de fermer plutôt qu'après avoir rouvert ailleurs.</p>
+
+    <h2>6. Le coût d'un plugin</h2>
+
+    <p>Chaque plugin tiers ajoute quatre dettes :</p>
+
+    <ol>
+      <li><strong>Du code tiers</strong> qui s'exécute dans ton application, avec accès à tous tes
+      fichiers.</li>
+      <li><strong>Une dépendance de version</strong> : il peut casser à une mise à jour d'Obsidian,
+      et personne ne garantit la réparation.</li>
+      <li><strong>Un format</strong> : s'il stocke dans une structure qui lui est propre, le retirer
+      emporte les données.</li>
+      <li><strong>Une reconstruction</strong> : sur une machine neuve, il faut le réinstaller à la
+      bonne version, avec ses réglages. C'est tout l'objet de la partie&nbsp;II.</li>
+    </ol>
+
+    <table>
+      <thead><tr><th>Plugin</th><th>Si tu le retires demain</th></tr></thead>
+      <tbody>
+        <tr><td>Dataview</td><td>Les vues affichent leur code source. Aucune donnée perdue.</td></tr>
+        <tr><td>Templater</td><td>Plus d'évaluation à la création. Les notes existantes intactes.</td></tr>
+        <tr><td>QuickAdd</td><td>Plus de capture rapide. L'inbox reste lisible.</td></tr>
+        <tr><td>Tasks</td><td>Les émojis redeviennent des émojis. Les cases restent des cases.</td></tr>
+        <tr><td>Advanced Tables, Style Settings</td><td>Rien.</td></tr>
+        <tr><td>Kanban</td><td>Le tableau redevient des listes markdown. Lisible, moins pratique.</td></tr>
+        <tr><td>Excalidraw</td><td>Les dessins ne s'ouvrent plus. <strong>Données captives.</strong></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <p>Un seul plugin de la liste emporte des données en partant. C'est un critère de choix plus
+      utile que le nombre d'étoiles sur le dépôt : <strong>demande-toi toujours ce qui reste si le
+      plugin disparaît.</strong></p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Tasks n'est justifié que si tes tâches ont des échéances ou des récurrences ; sinon
+        <code>TASK</code> en Dataview suffit.</li>
+        <li>Un kanban est un état passager, hors du modèle de notes : ne l'utilise pas comme
+        référentiel.</li>
+        <li>Excalidraw est lourd en réglages et rend ses données captives.</li>
+        <li>Obsidian Git automatise la synchronisation, mais <strong>n'exécute pas les hooks
+        git</strong> et <strong>commite tout ce qui traîne</strong> sur la branche courante.</li>
+        <li>Le bon critère pour adopter un plugin : ce qui reste le jour où il disparaît.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Tasks ou Dataview ?</h3>
+      <p>Pour chacun, dis quel outil tu emploies : (a) lister les cases non cochées des fiches
+      projet ; (b) voir ce qui est en retard cette semaine ; (c) une revue mensuelle qui se
+      régénère.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>(a) Dataview</strong>, <code>TASK FROM "30-projets" WHERE !completed</code>.
+        Aucune notion de date : le plugin cœur du problème est la sélection, pas l'échéance.</p>
+        <p><strong>(b) Tasks</strong>, <code>not done</code> + <code>due before today</code>. Il
+        faut comprendre 📅 et savoir comparer à aujourd'hui, ce que Dataview ne fait pas sans
+        travail.</p>
+        <p><strong>(c) Tasks</strong>, avec 🔁 <code>every month</code>. Cocher l'occurrence en
+        recrée une le mois suivant — c'est le comportement propre au plugin, impossible à obtenir
+        par requête.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Le commit surprise</h3>
+      <p>Tu modifies un script dans <code>90-meta/tooling/</code>, tu lances les tests qui échouent,
+      tu pars déjeuner. En revenant, ton travail est commité et poussé sous le message
+      <code>vault: 2026-08-02</code>. Que s'est-il passé, et comment reprends-tu proprement ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Ce qui s'est passé</strong> : Obsidian est resté ouvert, et l'auto-commit à dix
+        minutes a pris tout ce qui avait changé — sans distinguer une note d'un script à moitié
+        écrit. Il a poussé dans la foulée.</p>
+        <p><strong>Reprise</strong>, selon que c'est poussé ou non&nbsp;:</p>
+        <ul>
+          <li><em>Pas encore poussé</em> — le plus simple est d'amender une fois le travail
+          terminé : <code>git commit --amend</code> avec un vrai message. C'est ce qui a été fait
+          dans le cas réel.</li>
+          <li><em>Déjà poussé</em>, et tu es seul sur le dépôt : même chose, suivie d'un
+          <code>git push --force-with-lease</code>. Sur un dépôt partagé, ne réécris pas : fais un
+          commit de correction par-dessus.</li>
+        </ul>
+        <p><strong>Prévention</strong> : ferme Obsidian avant de toucher au code. Le réflexe
+        inverse — désactiver l'auto-commit — coûte plus qu'il ne rapporte pour l'usage courant, qui
+        est d'écrire des notes.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Un contrôle bloquant</h3>
+      <p>Tu veux qu'aucun commit ne parte si une note contient une chaîne interdite — un nom de
+      client, par exemple. Tu écris un hook <code>pre-commit</code>. Marchera-t-il ? Sinon, quelles
+      options te restent ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Il ne marchera pas</strong> pour les commits venant d'Obsidian : le plugin
+        utilise une implémentation JavaScript de git, qui n'exécute pas les hooks. Le hook ne
+        couvrira que tes commits en ligne de commande — c'est-à-dire précisément ceux que tu
+        contrôles déjà.</p>
+        <p>Trois options, aucune parfaite&nbsp;:</p>
+        <ol>
+          <li><strong>Désactiver l'auto-commit</strong> et faire passer tous les commits par un
+          script qui vérifie puis commite. Garantie réelle, au prix d'un geste manuel quotidien.</li>
+          <li><strong>Contrôle après coup</strong> : un contrôle côté serveur ou une vérification
+          périodique. Détecte, mais ne prévient pas — et sur un dépôt distant, la donnée est déjà
+          partie.</li>
+          <li><strong>Accepter le risque</strong> et le documenter, en s'appuyant sur un dépôt privé
+          et une discipline de rédaction.</li>
+        </ol>
+        <p>Le vault de référence a d'abord conçu l'option&nbsp;1, puis l'a écartée au profit de
+        la&nbsp;3 : le confort de l'auto-commit l'a emporté sur la garantie. Ce qui compte n'est pas
+        le choix, c'est qu'il soit explicite — et que la limite soit écrite quelque part plutôt que
+        supposée résolue.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-06.html"><span class="lbl">← Précédent</span>Templater et QuickAdd</a>
+    <a class="next" href="chapitre-08.html"><span class="lbl">Suivant →</span>Le problème de la configuration</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

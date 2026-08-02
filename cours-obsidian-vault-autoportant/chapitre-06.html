@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 06 — Templater et QuickAdd : générer et capturer</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 06</span><br>Templater et QuickAdd : générer et capturer</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Écrire un template Templater qui produit un front-matter valide et daté.</li>
+        <li>Configurer le déclenchement automatique — et comprendre pourquoi l'interrupteur seul ne
+        suffit pas.</li>
+        <li>Mettre en place une capture en une touche avec QuickAdd.</li>
+        <li>Savoir que l'identifiant de commande d'une action QuickAdd n'est pas devinable, et ce
+        que ça implique pour un raccourci.</li>
+      </ul>
+    </div>
+
+    <h2>1. Pourquoi Templater</h2>
+
+    <p>Le plugin cœur Templates insère du texte avec trois variables. Templater exécute du code au
+    moment de l'insertion : dates calculées, titre du fichier, saisie demandée à l'utilisateur,
+    position du curseur.</p>
+
+    <p>La différence se voit sur le cas le plus banal, un front-matter daté. Avec Templates,
+    <code>{{date}}</code> donne la date du jour au format fixé dans les réglages. Avec Templater,
+    tu choisis le format à l'endroit où tu écris, et tu peux calculer.</p>
+
+    <pre><code class="language-markdown">---
+type: daily
+titre: &lt;% tp.date.now("dddd D MMMM YYYY") %&gt;
+cree: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+maj: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+scope: pro
+projets: []
+tags: []
+---
+
+## Fait
+
+## Bloqué
+
+## Prochaines actions</code></pre>
+
+    <p>C'est le template de note quotidienne du vault de référence. Les deux dates ISO alimentent le
+    contrat du chapitre&nbsp;3 ; le titre en toutes lettres est pour l'œil.</p>
+
+    <h2>2. Les expressions utiles</h2>
+
+    <table>
+      <thead><tr><th>Expression</th><th>Produit</th></tr></thead>
+      <tbody>
+        <tr><td><code>tp.date.now("YYYY-MM-DD")</code></td><td>La date du jour, au format
+          demandé</td></tr>
+        <tr><td><code>tp.date.now("YYYY-MM-DD", -1)</code></td><td>Hier — le second argument est un
+          décalage en jours</td></tr>
+        <tr><td><code>tp.file.title</code></td><td>Le nom du fichier, sans extension</td></tr>
+        <tr><td><code>tp.file.cursor()</code></td><td>Où placer le curseur après
+          insertion</td></tr>
+        <tr><td><code>tp.system.prompt("Client ?")</code></td><td>Demande une saisie et insère la
+          réponse</td></tr>
+        <tr><td><code>tp.system.suggester(["a","b"], ["a","b"])</code></td><td>Propose une liste de
+          choix</td></tr>
+        <tr><td><code>tp.file.include("[[autre]]")</code></td><td>Insère une autre note</td></tr>
+      </tbody>
+    </table>
+
+    <p>Deux syntaxes de balise : <code>&lt;% … %&gt;</code> insère le résultat,
+    <code>&lt;%* … *%&gt;</code> exécute du JavaScript sans rien insérer — pour une logique
+    conditionnelle.</p>
+
+    <div class="callout astuce">
+      <p>Un template est le meilleur endroit pour faire respecter le contrat de données. Si tous
+      les projets naissent du même template, ils portent tous <code>type</code>,
+      <code>statut</code>, <code>cree</code> et <code>maj</code>, écrits pareil. Le validateur du
+      chapitre&nbsp;10 n'a alors plus grand-chose à signaler — il devient un filet, pas un
+      correcteur permanent.</p>
+    </div>
+
+    <h2>3. Le déclenchement automatique, et son piège</h2>
+
+    <p>Insérer un template à la main, c'est une commande de plus à lancer. On veut que la création
+    d'une note dans <code>10-journal/</code> applique le template toute seule.</p>
+
+    <p>Templater a un réglage pour ça, « Trigger Templater on new file creation ». On l'active, on
+    crée une note quotidienne… et le front-matter contient toujours
+    <code>&lt;% tp.date.now("YYYY-MM-DD") %&gt;</code> en toutes lettres.</p>
+
+    <div class="callout piege">
+      <p>L'interrupteur ne suffit pas. Le code du plugin ne réagit que si un <em>mode</em> est
+      choisi&nbsp;:</p>
+      <pre><code class="language-javascript">settings.trigger_on_file_creation &amp;&amp; settings.trigger_on_file_creation_mode === "folder"
+settings.trigger_on_file_creation &amp;&amp; settings.trigger_on_file_creation_mode === "regex"</code></pre>
+      <p>Les trois valeurs possibles sont <code>none</code>, <code>folder</code> et
+      <code>regex</code>. Le défaut est <code>none</code>, et dans l'interface le menu du mode
+      <strong>n'apparaît que si l'interrupteur est déjà activé</strong>. On active donc
+      l'interrupteur, on ne voit pas le menu qui vient d'apparaître plus bas, et rien ne se
+      déclenche — sans le moindre message.</p>
+    </div>
+
+    <p>La configuration qui marche, en mode dossier :</p>
+
+    <pre><code class="language-yaml">trigger_on_file_creation: true
+trigger_on_file_creation_mode: folder
+folder_templates:
+  - folder: 10-journal
+    template: 90-meta/templates/daily.md</code></pre>
+
+    <p>Toute note créée sous <code>10-journal/</code> reçoit désormais le template, évalué. Le mode
+    <code>regex</code> fait la même chose sur une expression régulière de chemin, quand la règle ne
+    se réduit pas à un dossier.</p>
+
+    <div class="callout obs">
+      <p>Le template de Daily Notes (chapitre&nbsp;4) et le template de dossier Templater peuvent
+      coexister : Daily Notes insère le contenu brut, Templater le remplace par la version évaluée.
+      Garder les deux est un filet utile — si Templater ne se déclenche pas, tu obtiens le template
+      brut plutôt qu'une note vide, et le symptôme est visible immédiatement.</p>
+    </div>
+
+    <h2>4. QuickAdd : capturer sans quitter</h2>
+
+    <p>Une idée arrive pendant que tu fais autre chose. Si la noter coûte « créer une note, choisir
+    un dossier, remplir cinq champs », tu ne la notes pas. QuickAdd ramène ce coût à une touche.</p>
+
+    <p>Le plugin propose quatre types d'action. Une seule est indispensable :</p>
+
+    <table>
+      <thead><tr><th>Type</th><th>Effet</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Capture</strong></td><td>Ajoute une ligne à un fichier existant, sans
+          l'ouvrir</td></tr>
+        <tr><td><strong>Template</strong></td><td>Crée une note à partir d'un template, avec un nom
+          calculé</td></tr>
+        <tr><td><strong>Macro</strong></td><td>Enchaîne plusieurs actions</td></tr>
+        <tr><td><strong>Multi</strong></td><td>Un menu qui regroupe plusieurs actions</td></tr>
+      </tbody>
+    </table>
+
+    <h3>La capture d'inbox</h3>
+
+    <p>Configuration de l'action <em>Capture</em> du vault de référence :</p>
+
+    <table>
+      <thead><tr><th>Réglage</th><th>Valeur</th></tr></thead>
+      <tbody>
+        <tr><td><em>Capture To</em></td><td><code>00-inbox/{{DATE:YYYY-MM}}.md</code></td></tr>
+        <tr><td><em>Create file if it doesn't exist</em></td><td>activé</td></tr>
+        <tr><td><em>Write to bottom of file</em></td><td>activé</td></tr>
+        <tr><td><em>Capture format</em></td><td>activé, <code>- {{DATE:HH:mm}} : {{VALUE}}</code></td></tr>
+        <tr><td><em>Open</em></td><td>désactivé</td></tr>
+      </tbody>
+    </table>
+
+    <p>Résultat : <code>Ctrl+Maj+I</code>, tu tapes, c'est rangé.</p>
+
+    <pre><code class="language-markdown"># 00-inbox/2026-08.md
+- 09:12 : vérifier la rétraction bras 3 avant le FAT
+- 14:47 : demander les captures PROFINET à l'intégrateur</code></pre>
+
+    <p><em>Open</em> désactivé est le réglage qui compte : l'intérêt de la capture est de ne pas
+    quitter ce que tu fais. Une capture qui ouvre un fichier est une interruption.</p>
+
+    <div class="callout vlt">
+      <p>Le dossier <code>00-inbox/</code> est délibérément <strong>hors du périmètre de
+      validation</strong> du vault de référence : la capture n'a pas de front-matter, et c'est
+      voulu. Le contrat de données s'applique au tri, pas à la capture — sinon la capture coûte de
+      nouveau quelque chose, et l'outil ne sert plus à rien.</p>
+    </div>
+
+    <h3>L'identifiant de commande</h3>
+
+    <p>Pour qu'une action QuickAdd reçoive un raccourci, il faut d'abord l'exposer comme commande —
+    l'icône éclair dans la liste des actions. Le raccourci s'assigne ensuite dans
+    <em>Settings → Hotkeys</em>.</p>
+
+    <div class="callout piege">
+      <p>QuickAdd enregistre ses commandes sous un identifiant construit avec l'<strong>uuid de
+      l'action</strong>, pas avec son nom&nbsp;:</p>
+      <pre><code class="language-json">"quickadd:choice:61a731e5-7663-49b9-8676-ae7024578ed0": [
+  { "modifiers": ["Mod", "Shift"], "key": "I" }
+]</code></pre>
+      <p>Écrire <code>quickadd:capture</code> dans un fichier de configuration, en supposant que
+      l'identifiant suit le nom, produit une entrée qui ne correspond à aucune commande. Obsidian
+      la conserve sans broncher et le raccourci ne fonctionne pas. C'est arrivé au vault de
+      référence, et il a fallu lire <code>hotkeys.json</code> pour s'en apercevoir.</p>
+      <p>Bonne nouvelle : l'uuid est stable tant que l'action existe, et il vit dans les réglages du
+      plugin. Si ces réglages sont eux-mêmes décrits (partie&nbsp;II), l'identifiant reste valide
+      sur une machine reconstruite.</p>
+    </div>
+
+    <h2>5. Ce que ces deux plugins décident vraiment</h2>
+
+    <p>Templater et QuickAdd n'ajoutent aucune fonction visible au vault. Ils déplacent un curseur :
+    <strong>le coût d'écrire</strong>.</p>
+
+    <p>Un vault où créer une fiche demande huit gestes se remplit de notes bâclées et de champs
+    manquants. Le même vault avec un template et une capture se remplit de notes conformes, parce
+    que la voie conforme est devenue la plus rapide.</p>
+
+    <div class="callout astuce">
+      <p>C'est le principe à retenir de tout le cours : <strong>on ne fait pas respecter une
+      convention par de la discipline, on la fait respecter en la rendant moins chère que
+      l'alternative.</strong> Le validateur attrape ce qui passe au travers ; le template évite que
+      ça passe.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Templater exécute du code à l'insertion : <code>tp.date.now()</code>,
+        <code>tp.file.title</code>, <code>tp.system.prompt()</code>.</li>
+        <li>Le déclenchement automatique exige l'interrupteur <em>et</em> un mode
+        (<code>folder</code> ou <code>regex</code>) — l'interrupteur seul ne fait rien.</li>
+        <li>QuickAdd Capture ajoute une ligne à un fichier sans l'ouvrir : c'est la capture à coût
+        zéro.</li>
+        <li>L'inbox n'a pas de front-matter, par conception.</li>
+        <li>L'identifiant de commande d'une action QuickAdd contient un uuid : il ne se devine
+        pas.</li>
+        <li>Un template bien fait remplace la discipline par de la facilité.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Écrire un template de fiche projet</h3>
+      <p>Écris un template Templater pour une note de type <code>projet</code> : le titre vient du
+      nom du fichier, les dates sont celles du jour, le statut démarre à <code>actif</code>, et le
+      curseur se place sous le titre « Contexte ».</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-markdown">---
+type: projet
+titre: &lt;% tp.file.title %&gt;
+cree: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+maj: &lt;% tp.date.now("YYYY-MM-DD") %&gt;
+scope: pro
+statut: actif
+depot:
+jalons: []
+tags: []
+---
+
+## Contexte
+
+&lt;% tp.file.cursor() %&gt;
+
+## Jalons
+
+## Décisions</code></pre>
+        <p>Deux points. <code>depot:</code> est laissé vide plutôt qu'omis : le champ est optionnel,
+        mais le voir vide rappelle qu'il existe — un champ absent est un champ oublié.</p>
+        <p>Et <code>statut: actif</code> en dur plutôt qu'un <code>tp.system.suggester</code> :
+        une fiche projet qu'on crée est active par définition. Demander à la création coûte un
+        geste pour une réponse connue d'avance.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Diagnostiquer un template inerte</h3>
+      <p>Une note créée dans <code>10-journal/</code> contient littéralement
+      <code>cree: &lt;% tp.date.now("YYYY-MM-DD") %&gt;</code>. Liste les causes possibles, de la
+      plus probable à la moins probable.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <ol>
+          <li><strong>Le mode de déclenchement est resté à <code>none</code>.</strong> Cause
+          numéro un, parce que le menu du mode n'apparaît qu'après activation de l'interrupteur et
+          qu'on ne le voit pas. Vérifier
+          <code>.obsidian/plugins/templater-obsidian/data.json</code> plutôt que l'interface&nbsp;:
+          <pre class="term"><code><span class="prompt">$</span> grep trigger .obsidian/plugins/templater-obsidian/data.json
+"trigger_on_file_creation_mode": "none"</code></pre></li>
+          <li><strong>Aucune règle de dossier ne couvre <code>10-journal</code>.</strong> Le mode
+          est bien <code>folder</code>, mais <code>folder_templates</code> est vide ou vise un autre
+          chemin.</li>
+          <li><strong>C'est Daily Notes qui a inséré le template</strong>, et Templater n'est pas
+          intervenu du tout. Symptôme identique, cause différente : le contenu vient bien du bon
+          fichier, mais personne ne l'a évalué.</li>
+          <li><strong>Le template a été inséré avant l'activation</strong> et la note date d'avant.
+          Vérifier la date de la note avant de chercher plus loin.</li>
+        </ol>
+        <p>Méthode générale : lire le <code>data.json</code> du plugin plutôt que son interface. Le
+        fichier dit ce qui est enregistré ; l'interface dit ce qu'on croit avoir réglé.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Décider du bon outil</h3>
+      <p>Tu veux qu'à chaque compte-rendu de réunion, une note soit créée dans
+      <code>30-projets/</code>, nommée <code>reunion-AAAA-MM-JJ-&lt;client&gt;</code>, le client
+      étant demandé à la saisie. Templater, QuickAdd, ou les deux ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Les deux, chacun à sa place.</strong></p>
+        <p>Templater sait demander une saisie et calculer une date, mais il ne <em>crée</em> pas la
+        note ni ne décide de son nom quand on part de zéro : il s'applique à une note existante ou
+        au moment de sa création.</p>
+        <p>QuickAdd, action de type <em>Template</em>, fait exactement ça : nom de fichier calculé,
+        dossier cible, template appliqué. On lui donne&nbsp;:</p>
+        <ul>
+          <li><em>Template Path</em> : <code>90-meta/templates/reunion.md</code></li>
+          <li><em>File Name Format</em> : <code>reunion-{{DATE:YYYY-MM-DD}}-{{VALUE}}</code></li>
+          <li><em>Folder</em> : <code>30-projets</code></li>
+        </ul>
+        <p><code>{{VALUE}}</code> déclenche la demande de saisie de QuickAdd — le client. Le
+        template, lui, reste un template Templater ordinaire et peut réutiliser la valeur.</p>
+        <p>Le partage des rôles : <strong>QuickAdd décide où et sous quel nom, Templater décide de
+        quoi la note est faite.</strong></p>
+        <p>Réserve, avant de construire tout ça : est-ce que ce compte-rendu mérite un type de note
+        à lui ? Le vault de référence a délibérément trois types seulement, et traite les réunions
+        comme des sections de notes quotidiennes. Un mécanisme de création qu'on utilise deux fois
+        par an coûte plus cher à maintenir qu'il ne rapporte.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-05.html"><span class="lbl">← Précédent</span>Dataview</a>
+    <a class="next" href="chapitre-07.html"><span class="lbl">Suivant →</span>Le confort, et Obsidian Git</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

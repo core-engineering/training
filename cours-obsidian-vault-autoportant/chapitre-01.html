@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 01 — Le vault : un dossier de fichiers, rien de plus</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 01</span><br>Le vault : un dossier de fichiers, rien de plus</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre ce qu'Obsidian <em>est</em> : un éditeur posé sur un dossier, sans base de
+        données ni format propriétaire — et ce que cette transparence autorise.</li>
+        <li>Reconnaître l'anatomie d'un vault : notes, pièces jointes, et le dossier
+        <code>.obsidian/</code> qui contient toute la configuration.</li>
+        <li>Savoir lire chacun des fichiers de <code>.obsidian/</code> et dire lequel est de la
+        configuration, lequel est de l'état.</li>
+        <li>Voir tout de suite la faille que la partie II viendra combler.</li>
+      </ul>
+    </div>
+
+    <h2>1. Un éditeur, pas une application</h2>
+
+    <p>La plupart des outils de prise de notes stockent tes notes chez eux : une base de données
+    interne, un format binaire, un serveur. Tu écris <em>dans</em> l'application, et récupérer tes
+    données demande une fonction d'export.</p>
+
+    <p>Obsidian fait l'inverse. Tu lui désignes un dossier de ton disque, et il édite les fichiers
+    qui s'y trouvent. Une note est un fichier <code>.md</code>. Un dossier de notes est un dossier.
+    Il n'y a pas de couche cachée entre les deux.</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ls -A ~/vault
+.gitattributes  10-journal/  30-projets/  90-meta/   README.md
+.gitignore      20-notes/    80-assets/   99-archive/
+.obsidian/      00-inbox/</code></pre>
+
+    <p>Rien dans cette liste n'appartient à Obsidian, sauf <code>.obsidian/</code>. Le reste, ce
+    sont tes fichiers, lisibles par n'importe quoi.</p>
+
+    <div class="callout astuce">
+      <p>Le test qui résume tout : <strong>désinstalle Obsidian, et demande-toi ce que tu as
+      perdu</strong>. Avec un vault, la réponse est « un éditeur confortable ». Tes notes sont
+      toujours là, en texte, lisibles dans n'importe quel éditeur, indexables par
+      <code>grep</code>, versionnables par git.</p>
+    </div>
+
+    <p>Cette propriété n'est pas un détail de confort, c'est le socle de tout le cours. Parce que
+    les notes sont des fichiers, on peut les mettre sous git. Parce qu'elles sont en texte, on peut
+    les valider par un script. Et parce que la configuration d'Obsidian est <em>aussi</em> faite de
+    fichiers, on pourra la décrire, la vérifier et la reconstruire — c'est l'objet de la partie II.</p>
+
+    <h2>2. Ouvrir un dossier comme vault</h2>
+
+    <p>Au premier lancement, Obsidian propose de créer un vault ou d'en ouvrir un. « Ouvrir un
+    dossier comme vault » prend n'importe quel dossier existant : s'il contient déjà des
+    <code>.md</code>, ils apparaissent immédiatement dans l'explorateur de fichiers de la barre
+    latérale.</p>
+
+    <p>Tu peux avoir plusieurs vaults et passer de l'un à l'autre. Chacun est indépendant : ses
+    plugins, ses réglages, son thème. C'est le principal levier de cloisonnement d'Obsidian — un
+    vault professionnel et un vault personnel ne partagent rien, pas même la liste des plugins
+    installés.</p>
+
+    <div class="callout piege">
+      <p><strong>Un vault dans un dossier synchronisé par un service tiers</strong> (OneDrive,
+      Dropbox, Google Drive) est une source classique de corruption. Ces services synchronisent
+      fichier par fichier, sans transaction : ils peuvent capturer un <code>.obsidian/</code> à
+      moitié écrit, ou faire diverger deux machines sur le même fichier. Si en plus tu versionnes
+      le vault avec git, le service touchera à <code>.git/</code> en arrière-plan — et là, la
+      corruption n'est plus hypothétique.</p>
+      <p>Choisis un mécanisme de synchronisation et un seul. Le chapitre&nbsp;7 traite du choix
+      git.</p>
+    </div>
+
+    <h2>3. Anatomie d'un vault</h2>
+
+    <p>Trois familles de contenu cohabitent dans le dossier.</p>
+
+    <h3>Les notes</h3>
+
+    <p>Des fichiers <code>.md</code>, en markdown, avec parfois un bloc de métadonnées en tête
+    (le <em>front-matter</em>, chapitre&nbsp;3). Le nom du fichier sert de titre et d'identifiant
+    de lien.</p>
+
+    <h3>Les pièces jointes</h3>
+
+    <p>Images, PDF, tout ce que tu glisses dans une note. Obsidian les copie dans le vault et
+    insère un lien. Le dossier de destination se règle une fois pour toutes — dans le vault de
+    référence de ce cours, c'est <code>80-assets/</code>. Sans ce réglage, les pièces jointes
+    atterrissent à côté de la note qui les référence et l'arborescence se salit vite.</p>
+
+    <h3>La configuration</h3>
+
+    <p>Tout est dans <code>.obsidian/</code>, à la racine du vault. C'est un dossier caché, mais
+    c'est du JSON parfaitement lisible :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> ls -1 ~/vault/.obsidian
+app.json
+appearance.json
+community-plugins.json
+core-plugins.json
+daily-notes.json
+hotkeys.json
+plugins/
+templates.json
+types.json
+workspace.json</code></pre>
+
+    <p>Chacun a un rôle précis. Les connaître te servira dès le chapitre&nbsp;4, et deviendra
+    indispensable en partie&nbsp;II.</p>
+
+    <table>
+      <thead>
+        <tr><th>Fichier</th><th>Contenu</th><th>Nature</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>core-plugins.json</code></td><td>Quels plugins intégrés sont actifs
+          (<code>{"daily-notes": true, "publish": false, …}</code>)</td><td>configuration</td></tr>
+        <tr><td><code>community-plugins.json</code></td><td>La liste des plugins tiers activés, un
+          tableau d'identifiants</td><td>configuration</td></tr>
+        <tr><td><code>appearance.json</code></td><td>Thème, taille de police, thème CSS
+          éventuel</td><td>configuration</td></tr>
+        <tr><td><code>hotkeys.json</code></td><td>Les raccourcis que tu as personnalisés — pas les
+          raccourcis par défaut</td><td>configuration</td></tr>
+        <tr><td><code>app.json</code>, <code>types.json</code></td><td>Préférences de l'éditeur,
+          types des propriétés de front-matter</td><td>configuration</td></tr>
+        <tr><td><code>daily-notes.json</code>, <code>templates.json</code></td><td>Les réglages des
+          plugins intégrés du même nom</td><td>configuration</td></tr>
+        <tr><td><code>plugins/&lt;id&gt;/</code></td><td>Un dossier par plugin tiers :
+          <code>main.js</code>, <code>manifest.json</code>, parfois <code>styles.css</code>, et
+          <code>data.json</code> pour ses réglages</td><td>code + configuration</td></tr>
+        <tr><td><code>themes/</code>, <code>snippets/</code></td><td>Thèmes communautaires et
+          feuilles CSS que tu ajoutes toi-même</td><td>tes fichiers</td></tr>
+        <tr><td><code>workspace.json</code></td><td>Quels panneaux sont ouverts, à quelle taille,
+          quel onglet est actif</td><td><strong>état</strong></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <p>Retiens la distinction de la dernière colonne, elle structure toute la partie&nbsp;II.
+      La <strong>configuration</strong> décrit des décisions : tu veux ce plugin, ce thème, ce
+      raccourci. L'<strong>état</strong> décrit une situation passagère : quels panneaux étaient
+      ouverts hier soir.</p>
+      <p>La configuration mérite d'être décrite, versionnée et rejouée. L'état, non — le
+      versionner ne produit que du bruit et des conflits.</p>
+    </div>
+
+    <h2>4. Le fichier n'est pas tout à fait la note</h2>
+
+    <p>Une nuance qui surprend au début : Obsidian raisonne en <em>notes</em>, pas en chemins. Un
+    lien s'écrit <code>[[Rétraction de bras]]</code>, sans dossier ni extension. Obsidian résout ce
+    nom dans tout le vault.</p>
+
+    <p>Conséquences directes :</p>
+
+    <ul>
+      <li><strong>Déplacer une note ne casse rien.</strong> Le lien pointe sur un nom, pas sur un
+      chemin. C'est ce qui rend viable l'arborescence plate du chapitre&nbsp;10.</li>
+      <li><strong>Renommer une note met à jour les liens</strong> qui la citent — Obsidian réécrit
+      les fichiers concernés. Un renommage n'est donc pas une opération anodine côté git : il
+      touche potentiellement des dizaines de fichiers.</li>
+      <li><strong>Deux notes de même nom dans deux dossiers</strong> créent une ambiguïté.
+      Obsidian s'en sort en préfixant le chemin dans le lien, mais c'est le signe qu'un des deux
+      noms est mauvais.</li>
+    </ul>
+
+    <div class="callout obs">
+      <p><strong>Explorateur de fichiers</strong> dans la barre latérale gauche pour voir
+      l'arborescence réelle, <strong>recherche rapide</strong> avec <code>Ctrl+O</code> pour
+      ouvrir une note par son nom sans savoir où elle est. Le second est le vrai mode de
+      navigation ; le premier sert surtout à ranger.</p>
+    </div>
+
+    <h2>5. Ce que ça permet immédiatement</h2>
+
+    <p>Parce que tout est fichier, les outils que tu connais déjà s'appliquent sans adaptateur :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> grep -rl "PROFINET" ~/vault/20-notes | head -3
+/home/moi/vault/20-notes/profinet-rt.md
+/home/moi/vault/20-notes/topologie-anneau-mrp.md
+/home/moi/vault/20-notes/temps-de-cycle.md
+
+<span class="prompt">$</span> cd ~/vault &amp;&amp; git log --oneline -3
+158993d fix: active le declenchement Templater sur creation
+8d2d676 feat: reglages de plugins geres a la carte
+adbf23c fix: signale les liaisons multiples</code></pre>
+
+    <p>Sauvegarde, historique, recherche, scripts de validation, génération de documents : tout est
+    accessible sans qu'Obsidian soit lancé, et sans API.</p>
+
+    <h2>6. La faille</h2>
+
+    <p>Reprends le tableau de la section&nbsp;3 et pose-toi la question du versionnement.</p>
+
+    <p>Tes notes sous git : évident, c'est du texte. Mais <code>.obsidian/</code> ? Il contient à la
+    fois de la configuration qui mérite d'être conservée, de l'état qui produirait des conflits à
+    chaque fermeture, et des <em>binaires de plugins</em> — plusieurs mégaoctets de JavaScript
+    compilé qu'un plugin réécrit à chaque mise à jour.</p>
+
+    <p>Le versionner en entier pollue l'historique et fait diverger deux machines sur
+    <code>workspace.json</code>. Ne pas le versionner du tout, c'est perdre la configuration au
+    premier changement de machine. Et le documenter dans un README, c'est une documentation qui
+    ment dès la première modification faite à la souris.</p>
+
+    <div class="callout vlt">
+      <p>C'est exactement le problème que résout la partie&nbsp;II : un fichier
+      <strong>manifeste</strong> lisible qui décrit la configuration voulue, un
+      <code>.obsidian/</code> traité comme <strong>jetable</strong> et régénéré à la demande, et un
+      outil qui vérifie que les deux concordent. Garde la distinction configuration/état en tête,
+      tout en découle.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Obsidian édite un dossier de fichiers markdown. Pas de base, pas de format
+        propriétaire, pas de verrou.</li>
+        <li><code>.obsidian/</code> contient toute la configuration, en JSON lisible, plus le code
+        des plugins tiers.</li>
+        <li>Distingue configuration (des décisions, à conserver) et état (passager, à jeter) :
+        <code>workspace.json</code> est le seul fichier franchement du second type.</li>
+        <li>Les liens visent des noms de note, pas des chemins — déplacer ne casse rien.</li>
+        <li>Un vault dans un dossier synchronisé par un service tiers est une mauvaise idée,
+        surtout combiné à git.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Classer les fichiers de configuration</h3>
+      <p>Sans regarder le tableau : parmi <code>workspace.json</code>,
+      <code>community-plugins.json</code>, <code>hotkeys.json</code> et
+      <code>plugins/dataview/main.js</code>, lesquels mettrais-tu sous git, et pourquoi ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><code>community-plugins.json</code> et <code>hotkeys.json</code> : oui sur le principe,
+        ce sont des décisions. Petits, en texte, ils décrivent ce que tu veux.</p>
+        <p><code>workspace.json</code> : non. C'est de l'état d'interface, réécrit à chaque
+        fermeture de panneau. Le versionner produit un commit à chaque session et un conflit dès
+        qu'on travaille sur deux machines.</p>
+        <p><code>plugins/dataview/main.js</code> : non. C'est du JavaScript compilé de plusieurs
+        centaines de kilooctets, réécrit intégralement à chaque mise à jour du plugin. Le
+        versionner gonfle le dépôt pour un contenu qu'on peut retélécharger — à condition de savoir
+        quelle version. C'est précisément ce que le manifeste de la partie&nbsp;II enregistre.</p>
+        <p>Réponse plus fine, celle que le cours défend : <strong>aucun des quatre</strong>. On ne
+        versionne pas <code>.obsidian/</code>, on versionne une <em>description</em> de ce qu'il
+        doit contenir.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Prédire l'effet d'un déplacement</h3>
+      <p>Tu as <code>30-projets/supervision.md</code>, cité par trois notes quotidiennes avec
+      <code>[[supervision]]</code>. Tu déplaces le fichier dans <code>99-archive/</code> depuis
+      l'explorateur d'Obsidian. Que deviennent les trois liens ? Et si tu déplaces le fichier avec
+      <code>mv</code> depuis un terminal, Obsidian étant fermé ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Depuis Obsidian</strong> : rien à faire, les trois liens continuent de
+        fonctionner. Ils visent le nom <code>supervision</code>, qu'Obsidian résout où qu'il soit
+        dans le vault. Aucun fichier n'est réécrit.</p>
+        <p><strong>Avec <code>mv</code>, Obsidian fermé</strong> : exactement pareil. C'est
+        contre-intuitif quand on vient d'un outil à chemins, mais la résolution se fait au nom, à
+        l'ouverture. Obsidian relira l'arborescence au démarrage et retrouvera la note.</p>
+        <p>La différence apparaît au <em>renommage</em>, pas au déplacement : renommer depuis
+        Obsidian réécrit les liens des notes citantes ; renommer avec <code>mv</code> les casse,
+        puisque personne n'a mis à jour le texte des trois notes.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Trouver la trace d'une décision</h3>
+      <p>Tu as changé le thème d'Obsidian en clair il y a deux semaines, puis tu es revenu au
+      sombre. Aucun de ces deux changements n'est dans ton historique git, alors que ton vault est
+      versionné. Pourquoi, et qu'est-ce que ça révèle ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Le thème est dans <code>.obsidian/appearance.json</code>, et <code>.obsidian/</code> est
+        dans le <code>.gitignore</code> — la pratique standard, justement pour éviter le bruit de
+        <code>workspace.json</code> et les binaires de plugins.</p>
+        <p>Ce que ça révèle : en excluant le dossier en bloc, on jette la configuration avec
+        l'état. Il n'existe aucune trace de tes décisions de configuration, ni moyen de les
+        rejouer sur une autre machine. C'est le problème que le manifeste résout — non pas en
+        versionnant <code>.obsidian/</code>, mais en versionnant sa <em>description</em>.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="index.html"><span class="lbl">← Sommaire</span>Obsidian &amp; le vault autoportant</a>
+    <a class="next" href="chapitre-02.html"><span class="lbl">Suivant →</span>Écrire et relier</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

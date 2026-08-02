@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 08 — Le problème : une configuration illisible et non rejouable</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 08</span><br>Le problème : une configuration illisible et non rejouable</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Nommer précisément ce qui ne va pas avec <code>.obsidian/</code>, et pourquoi les trois
+        réponses évidentes échouent.</li>
+        <li>Comprendre le renversement du manifeste : la configuration devient du texte qui fait
+        autorité, et <code>.obsidian/</code> devient jetable.</li>
+        <li>Lire un manifeste réel et savoir ce que chaque bloc produit.</li>
+        <li>Accepter la contrepartie : ce qui n'est pas déclaré n'est pas reconstruit.</li>
+      </ul>
+    </div>
+
+    <h2>1. Le constat</h2>
+
+    <p>Tu as passé sept chapitres à configurer un vault : neuf plugins, leurs réglages, un dossier
+    de notes quotidiennes, un template de dossier, une capture, un raccourci. Cette configuration a
+    de la valeur — elle représente des dizaines de décisions.</p>
+
+    <p>Où vit-elle ? Dans <code>.obsidian/</code>, mélangée à trois choses de natures très
+    différentes :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> du -sh ~/vault/.obsidian/* | sort -rh | head -6
+12M     /home/moi/vault/.obsidian/plugins
+6,1K    /home/moi/vault/.obsidian/workspace.json
+909     /home/moi/vault/.obsidian/types.json
+697     /home/moi/vault/.obsidian/core-plugins.json
+276     /home/moi/vault/.obsidian/hotkeys.json
+208     /home/moi/vault/.obsidian/community-plugins.json</code></pre>
+
+    <ul>
+      <li><strong>12&nbsp;Mo de code tiers</strong> — du JavaScript compilé, réécrit intégralement à
+      chaque mise à jour de plugin ;</li>
+      <li><strong>de l'état d'interface</strong> — <code>workspace.json</code>, réécrit à chaque
+      fermeture de panneau ;</li>
+      <li><strong>quelques kilooctets de décisions</strong>, noyés dans le reste.</li>
+    </ul>
+
+    <h2>2. Les trois réponses qui ne marchent pas</h2>
+
+    <h3>Tout versionner</h3>
+
+    <p>On met <code>.obsidian/</code> sous git et on n'en parle plus. En pratique&nbsp;: un commit à
+    chaque fermeture d'Obsidian à cause de <code>workspace.json</code>, un conflit systématique dès
+    qu'on travaille sur deux machines, et une mise à jour de plugin qui produit un diff de
+    plusieurs milliers de lignes de JavaScript minifié. L'historique devient inexploitable, ce qui
+    revient à ne pas en avoir.</p>
+
+    <h3>Ne rien versionner</h3>
+
+    <p>On met <code>.obsidian/</code> dans le <code>.gitignore</code> — c'est la pratique la plus
+    répandue, et c'est ce que fait la plupart des tutoriels. L'historique reste propre, et
+    <strong>la configuration n'existe nulle part</strong>. Machine neuve : tout à refaire de
+    mémoire. Aucune trace des décisions.</p>
+
+    <h3>La documenter</h3>
+
+    <p>On écrit un README qui liste les plugins et les réglages importants. Il est juste le jour où
+    on l'écrit. Trois semaines plus tard, quelqu'un — toi — change un réglage à la souris et ne met
+    pas le document à jour. Rien ne le signale.</p>
+
+    <div class="callout note">
+      <p>Les trois échecs ont la même racine : <strong>on traite <code>.obsidian/</code> comme une
+      chose unique</strong>, alors qu'il mélange du code, de l'état et des décisions. Chacun appelle
+      un traitement différent.</p>
+    </div>
+
+    <h2>3. Le renversement</h2>
+
+    <p>L'idée tient en deux phrases :</p>
+
+    <blockquote>
+      <p>Un fichier <strong>manifeste</strong>, lisible et versionné, décrit la configuration
+      voulue. <code>.obsidian/</code> n'est plus qu'un <strong>produit</strong> de ce manifeste, et
+      peut être supprimé et reconstruit à tout moment.</p>
+    </blockquote>
+
+    <p>C'est le même renversement qu'entre une machine configurée à la main et une machine décrite
+    par un fichier d'infrastructure. Ce qui fait foi n'est plus l'état, c'est la description.</p>
+
+    <p>Trois conséquences immédiates :</p>
+
+    <ol>
+      <li><code>.obsidian/</code> est <strong>entièrement gitignoré</strong>. Sans exception — c'est
+      ce qui rend la promesse vérifiable.</li>
+      <li><strong>Un réglage qui n'est pas dans le manifeste n'existe pas.</strong> Il sera écrasé à
+      la prochaine reconstruction. Contrainte forte, et volontaire.</li>
+      <li>L'écart entre le manifeste et la réalité devient une notion de premier plan : la
+      <strong>dérive</strong>. Il faut savoir la détecter, et savoir la promouvoir en décision.</li>
+    </ol>
+
+    <h2>4. À quoi ressemble un manifeste</h2>
+
+    <div class="callout vlt">
+      <p>Extrait du manifeste réel du vault de référence, <code>90-meta/manifest.yaml</code>. Il
+      fait 361 lignes en tout ; voici sa structure.</p>
+    </div>
+
+    <pre><code class="language-yaml">obsidian_min: "1.9"
+
+core_plugins:
+  enabled: [daily-notes, backlink, graph, global-search, templates,
+            file-explorer, command-palette, properties, bookmarks, ...]
+  disabled: [publish, sync, slides, footnotes, ...]
+  settings:
+    daily-notes:
+      folder: 10-journal
+      format: YYYY/YYYY-MM-DD
+      template: 90-meta/templates/daily
+    templates:
+      folder: 90-meta/templates
+
+appearance:
+  theme: obsidian
+  base_font_size: 16
+
+plugins:
+  - id: dataview
+    repo: blacksmithgu/obsidian-dataview
+    version: "0.5.70"
+    sha256:
+      main.js: "3f2a…"
+      manifest.json: "9c11…"
+      styles.css: "aa47…"
+    settings:
+      enableDataviewJs: true
+
+  - id: templater-obsidian
+    repo: SilentVoid13/Templater
+    version: "2.24.3"
+    sha256: { ... }
+    settings:
+      templates_folder: 90-meta/templates
+      trigger_on_file_creation: true
+      trigger_on_file_creation_mode: folder
+      folder_templates:
+        - folder: 10-journal
+          template: 90-meta/templates/daily.md
+
+  - id: obsidian-excalidraw-plugin
+    repo: zsviczian/obsidian-excalidraw-plugin
+    version: "2.25.3"
+    sha256: { ... }
+    <span class="c"># pas de bloc settings : réglages non gérés</span>
+
+hotkeys:
+  quickadd:choice:61a731e5-7663-49b9-8676-ae7024578ed0: "Ctrl+Shift+I"</code></pre>
+
+    <p>Chaque bloc a une destination précise dans <code>.obsidian/</code> :</p>
+
+    <table>
+      <thead><tr><th>Bloc du manifeste</th><th>Produit</th></tr></thead>
+      <tbody>
+        <tr><td><code>core_plugins.enabled/disabled</code></td><td><code>core-plugins.json</code></td></tr>
+        <tr><td><code>core_plugins.settings.&lt;nom&gt;</code></td><td><code>&lt;nom&gt;.json</code>
+          — un fichier par plugin cœur configuré</td></tr>
+        <tr><td><code>appearance</code></td><td><code>appearance.json</code>, avec traduction des
+          noms de champs</td></tr>
+        <tr><td><code>plugins[].id</code></td><td>la liste de <code>community-plugins.json</code></td></tr>
+        <tr><td><code>plugins[].repo</code> + <code>version</code> + <code>sha256</code></td>
+          <td>le téléchargement vérifié de <code>plugins/&lt;id&gt;/</code></td></tr>
+        <tr><td><code>plugins[].settings</code></td><td><code>plugins/&lt;id&gt;/data.json</code></td></tr>
+        <tr><td><code>hotkeys</code></td><td><code>hotkeys.json</code>, converti en structure
+          Obsidian</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Les empreintes</h3>
+
+    <p>Chaque plugin porte sa version <em>et</em> l'empreinte SHA-256 de chacun de ses fichiers. Ce
+    n'est pas de la paranoïa : une release GitHub peut être retirée, re-taguée, ou remplacée. Sans
+    empreinte, « version 0.5.70 » est une promesse ; avec, c'est une vérification.</p>
+
+    <p>Corollaire : une empreinte ne s'écrit pas à la main. Le chapitre&nbsp;9 présente la commande
+    qui les calcule, et qui est le seul chemin autorisé pour changer une version.</p>
+
+    <h2>5. Le compromis : ce qu'on gère et ce qu'on subit</h2>
+
+    <p>Regarde à nouveau l'entrée Excalidraw ci-dessus : pas de bloc <code>settings</code>. Ce n'est
+    pas un oubli.</p>
+
+    <p>Les réglages d'Excalidraw pèsent 26&nbsp;Ko, presque entièrement des valeurs par défaut que
+    le plugin réécrit à chaque mise à jour. Les importer, c'est faire passer le manifeste de 361 à
+    1199 lignes — et perdre sa lisibilité, qui était la raison de le préférer à un
+    <code>.obsidian/</code> versionné.</p>
+
+    <div class="callout note">
+      <p>D'où la règle du vault de référence : <strong>un plugin déclaré sans bloc
+      <code>settings</code> est installé mais ses réglages ne sont pas pilotés.</strong> La
+      reconstruction n'écrit pas son <code>data.json</code>, la détection de dérive l'ignore, et
+      l'export le signale sans le recopier.</p>
+      <p>Contrepartie assumée : sur une machine neuve, Excalidraw repart de ses valeurs par défaut.
+      C'est acceptable pour un plugin de dessin ; ça ne le serait pas pour QuickAdd, dont la capture
+      <em>est</em> la configuration — et qui, lui, a bien son bloc <code>settings</code>.</p>
+    </div>
+
+    <p>Le critère de décision : <strong>ce réglage est-il une décision que j'ai prise, ou une valeur
+    que le plugin s'est donnée ?</strong> Les premières vont au manifeste, les secondes restent où
+    elles sont.</p>
+
+    <h2>6. Ce que ça donne comme outillage</h2>
+
+    <p>Le manifeste ne sert à rien sans les commandes qui l'exploitent. Le chapitre&nbsp;9 les
+    détaille ; voici la carte.</p>
+
+    <table>
+      <thead><tr><th>Commande</th><th>Sens</th><th>Question à laquelle elle répond</th></tr></thead>
+      <tbody>
+        <tr><td><code>apply</code></td><td>manifeste → <code>.obsidian/</code></td>
+          <td>« Fabrique-moi la configuration décrite. »</td></tr>
+        <tr><td><code>pin</code></td><td>releases → manifeste</td>
+          <td>« Quelle version et quelles empreintes pour ces plugins ? »</td></tr>
+        <tr><td><code>doctor</code></td><td>comparaison</td>
+          <td>« Le réel correspond-il encore à la description ? »</td></tr>
+        <tr><td><code>export</code></td><td><code>.obsidian/</code> → manifeste</td>
+          <td>« J'ai réglé quelque chose à la souris, comment le rends-je officiel ? »</td></tr>
+      </tbody>
+    </table>
+
+    <p><code>doctor</code> et <code>export</code> forment le couple qui rend le système vivable. Sans
+    eux, la première fois que tu bouges un curseur dans les réglages d'Obsidian, ta modification est
+    condamnée à disparaître au prochain <code>apply</code>, sans prévenir.</p>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><code>.obsidian/</code> mélange 12&nbsp;Mo de code tiers, de l'état d'interface et
+        quelques kilooctets de décisions. Les trois appellent des traitements différents.</li>
+        <li>Tout versionner pollue l'historique ; ne rien versionner perd la configuration ; la
+        documenter produit un document qui ment.</li>
+        <li>Le manifeste fait autorité, <code>.obsidian/</code> devient un produit jetable et
+        entièrement gitignoré.</li>
+        <li>Un réglage absent du manifeste n'existe pas : il sera écrasé.</li>
+        <li>Les empreintes SHA-256 transforment « la version 0.5.70 » d'une promesse en une
+        vérification.</li>
+        <li>Un plugin sans bloc <code>settings</code> est installé sans être piloté — compromis
+        assumé entre fidélité et lisibilité.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Trier les réglages</h3>
+      <p>Pour chacun, dis s'il va au manifeste ou non : (a) le dossier des notes quotidiennes ;
+      (b) la largeur du panneau latéral ; (c) la version de Dataview ; (d) le dernier fichier
+      ouvert ; (e) la clé d'API d'un plugin d'intelligence artificielle.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>(a) Oui</strong> — décision structurante, et le template en dépend.</p>
+        <p><strong>(b) Non</strong> — état d'interface, dans <code>workspace.json</code>, hors
+        périmètre par construction.</p>
+        <p><strong>(c) Oui</strong> — c'est même le cœur du dispositif, avec ses empreintes.</p>
+        <p><strong>(d) Non</strong> — état, même remarque qu'en (b).</p>
+        <p><strong>(e) Non, surtout pas.</strong> Le manifeste est versionné et poussé sur un dépôt
+        distant : un secret qui y entre est un secret publié, définitivement, même si on l'efface
+        ensuite. Un plugin qui stocke un secret dans son <code>data.json</code> est une bonne raison
+        de le laisser <em>non géré</em> — l'exception qui justifie la règle du chapitre.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Prédire une reconstruction</h3>
+      <p>Tu supprimes entièrement <code>.obsidian/</code> puis tu lances <code>apply</code>. Qu'est-ce
+      qui revient à l'identique, et qu'est-ce qui est perdu ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Revient à l'identique</strong> : les neuf plugins à leur version épinglée et
+        vérifiée, l'état activé/désactivé des plugins cœur, le thème et la taille de police, les
+        réglages des plugins gérés (Dataview, Templater, Git, QuickAdd), les réglages de notes
+        quotidiennes et de templates, et le raccourci de capture.</p>
+        <p><strong>Perdu</strong> : la disposition des panneaux (<code>workspace.json</code> a
+        disparu avec le dossier), les réglages des plugins non gérés — Excalidraw et Advanced Tables
+        repartent de leurs valeurs par défaut — et tout thème ou extrait CSS que tu aurais installé,
+        puisqu'ils vivaient dans <code>.obsidian/themes/</code>.</p>
+        <p>Nuance importante : <code>apply</code> <em>préserve</em> normalement
+        <code>workspace.json</code>, <code>themes/</code> et <code>snippets/</code> lors d'une
+        reconstruction. Ici, c'est toi qui les as supprimés avant. C'est la différence entre
+        « reconstruire » et « repartir de zéro ».</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Critiquer le compromis</h3>
+      <p>Un collègue objecte : « Si Excalidraw n'est pas géré, ton vault n'est pas vraiment
+      autoportant. Autant tout importer, quitte à avoir un manifeste de 1200 lignes. » Que
+      réponds-tu ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>L'objection est recevable sur le principe : la promesse est effectivement partielle.
+        Trois arguments pour le compromis&nbsp;:</p>
+        <ol>
+          <li><strong>Un manifeste illisible ne remplit plus sa fonction.</strong> Sa raison d'être
+          était d'être relisible par un humain, contre un <code>.obsidian/</code> qui ne l'est pas.
+          À 1200 lignes dominées par des défauts d'un plugin de dessin, on a reconstruit le problème
+          qu'on voulait résoudre.</li>
+          <li><strong>Ces valeurs ne sont pas des décisions.</strong> Personne n'a choisi les
+          26&nbsp;Ko d'Excalidraw : le plugin les a écrits seul et les réécrira à sa prochaine
+          version. Les figer dans le manifeste, c'est promettre de les maintenir à la main à chaque
+          mise à jour.</li>
+          <li><strong>Le coût du non-géré est mesuré</strong> : sur une machine neuve, un plugin de
+          dessin repart de ses défauts. Le coût du tout-géré est un écart à repromouvoir à chaque
+          mise à jour de chaque plugin, pour toujours.</li>
+        </ol>
+        <p>Ce qu'il faut concéder : le choix doit être <strong>explicite et visible</strong>. C'est
+        pourquoi <code>export</code> signale les plugins non gérés au lieu de les taire —
+        chapitre&nbsp;9. Un compromis assumé et affiché n'est pas la même chose qu'un trou.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-07.html"><span class="lbl">← Précédent</span>Le confort, et Obsidian Git</a>
+    <a class="next" href="chapitre-09.html"><span class="lbl">Suivant →</span>L'outillage</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

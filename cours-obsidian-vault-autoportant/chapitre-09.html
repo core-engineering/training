@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 09 — L'outillage : apply, pin, doctor, export</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 09</span><br>L'outillage : apply, pin, doctor, export</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Comprendre la propriété centrale d'<code>apply</code> : une reconstruction qui échoue ne
+        laisse jamais un vault à moitié configuré.</li>
+        <li>Savoir pourquoi les empreintes se calculent et ne s'écrivent pas.</li>
+        <li>Utiliser le couple <code>doctor</code>/<code>export</code> comme cycle de vie de la
+        configuration.</li>
+        <li>Reconnaître les décisions de conception qui font qu'un outil de ce genre est fiable, ou
+        pas.</li>
+      </ul>
+    </div>
+
+    <h2>1. La structure</h2>
+
+    <p>L'outillage vit <em>dans</em> le vault, sous <code>90-meta/tooling/</code>. Deux points
+    d'entrée, un paquet Python découpé par responsabilité :</p>
+
+    <pre class="term"><code>90-meta/
+├── manifest.yaml           <span class="c"># la source de vérité</span>
+├── conventions.md          <span class="c"># le contrat de front-matter, lisible dans Obsidian</span>
+├── templates/  vues/
+└── tooling/
+    ├── bootstrap.py        <span class="c"># apply | pin | doctor | export</span>
+    ├── vault.py            <span class="c"># doctor (contenu des notes)</span>
+    ├── vaulttool/
+    │   ├── manifest.py     <span class="c"># charger et valider</span>
+    │   ├── render.py       <span class="c"># manifeste → contenus de fichiers</span>
+    │   ├── plugins.py      <span class="c"># télécharger, vérifier, installer</span>
+    │   ├── apply.py        <span class="c"># écrire, avec bascule atomique</span>
+    │   ├── pin.py          <span class="c"># calculer versions et empreintes</span>
+    │   ├── drift.py        <span class="c"># comparer, et proposer l'inverse</span>
+    │   └── notes.py        <span class="c"># valider le front-matter</span>
+    └── tests/</code></pre>
+
+    <p>Un détail qui n'en est pas un : <code>render.py</code> est une fonction pure. Elle prend un
+    manifeste et rend un dictionnaire « chemin → contenu », sans toucher au disque. C'est ce qui
+    permet de la tester sans système de fichiers, et de réutiliser sa sortie pour comparer plutôt
+    que pour écrire.</p>
+
+    <h2>2. <code>apply</code> — et l'atomicité</h2>
+
+    <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py apply
+40 fichiers ecrits dans .obsidian/</code></pre>
+
+    <p>Derrière cette ligne, la propriété qui fait tout l'intérêt de la commande : <strong>si quoi
+    que ce soit échoue, le <code>.obsidian/</code> précédent est intact.</strong> Un vault à moitié
+    configuré est pire qu'un vault périmé — il ne marche plus et on ne sait pas pourquoi.</p>
+
+    <p>Deux mécanismes superposés l'assurent.</p>
+
+    <h3>Vérifier tout avant d'écrire quoi que ce soit</h3>
+
+    <pre><code class="language-python">def preparer(specs, destination, telecharger=telechargeur_http):
+    """Télécharge et vérifie tous les plugins épinglés, puis écrit."""
+    contenus = {}
+    for spec in epingles:                      # phase 1 : rien n'est écrit
+        for actif in _actifs_a_installer(spec):
+            donnees = telecharger(url_actif(spec, actif))
+            reelle = empreinte(donnees)
+            if reelle != spec.sha256[actif]:
+                raise ChecksumError(...)       # sortie ici : destination intacte
+            contenus[spec.id][actif] = donnees
+
+    for identifiant, actifs in contenus.items():   # phase 2 : que des écritures
+        ...</code></pre>
+
+    <p>Tout est téléchargé et vérifié en mémoire avant la première écriture. Une empreinte fausse
+    sur le neuvième plugin annule aussi les huit premiers.</p>
+
+    <div class="callout astuce">
+      <p>Le test qui pin cette propriété ne vérifie pas qu'une exception est levée — n'importe quel
+      code cassé lèverait une exception. Il vérifie que <strong>le dossier de destination est resté
+      vide</strong> :</p>
+      <pre><code class="language-python">with pytest.raises(ChecksumError, match="calendar"):
+    preparer([bon, mauvais], tmp_path, faux_telechargeur(table))
+assert list(tmp_path.iterdir()) == []</code></pre>
+      <p>C'est la différence entre tester le symptôme et tester la garantie.</p>
+    </div>
+
+    <h3>Basculer par renommage</h3>
+
+    <p>La nouvelle configuration se construit dans <code>.obsidian.new/</code>, puis on échange :</p>
+
+    <pre><code class="language-python">try:
+    if actuel.exists():
+        actuel.rename(ancien)      # .obsidian → .obsidian.old
+    neuf.rename(actuel)            # .obsidian.new → .obsidian
+except OSError as exc:
+    if ancien.exists() and not actuel.exists():
+        ancien.rename(actuel)      # restauration
+    shutil.rmtree(neuf, ignore_errors=True)
+    raise
+shutil.rmtree(ancien, ignore_errors=True)</code></pre>
+
+    <p>Le renommage est atomique au niveau du système de fichiers : à aucun instant
+    <code>.obsidian/</code> n'est un mélange des deux versions. Et si le second renommage échoue, on
+    remet l'ancien en place avant de propager l'erreur.</p>
+
+    <div class="callout piege">
+      <p>Ce cas n'est pas théorique. Sur Windows, Obsidian tient des handles ouverts dans
+      <code>.obsidian/</code>, et les relâche avec un peu de retard après sa fermeture. Un
+      <code>apply</code> lancé juste après avoir quitté Obsidian donne&nbsp;:</p>
+      <pre class="term"><code>echec : [Errno 13] Permission denied: '.obsidian.new' -> '.obsidian'</code></pre>
+      <p>La restauration a fonctionné, <code>.obsidian/</code> était intact, aucun résidu — et la
+      même commande trente secondes plus tard est passée. Sans le bloc de restauration, le vault
+      serait resté sans configuration du tout.</p>
+    </div>
+
+    <h3>Ce qui survit à la bascule</h3>
+
+    <p>Trois choses sont recopiées dans la nouvelle configuration au lieu d'être régénérées :</p>
+
+    <pre><code class="language-python">PRESERVES = ("workspace.json", "themes", "snippets")</code></pre>
+
+    <p><code>workspace.json</code> parce que c'est de l'état, pas de la configuration.
+    <code>themes/</code> et <code>snippets/</code> parce que ce sont <em>tes</em> fichiers : le
+    manifeste ne les décrit pas, et les supprimer à chaque reconstruction serait une perte
+    silencieuse.</p>
+
+    <h2>3. <code>pin</code> — les empreintes ne s'écrivent pas</h2>
+
+    <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py pin
+dataview epingle en 0.5.70
+templater-obsidian epingle en 2.24.3
+obsidian-git epingle en 2.38.6
+quickadd epingle en 2.21.0
+...</code></pre>
+
+    <p>Pour chaque plugin qui n'est pas encore épinglé, <code>pin</code> interroge l'API GitHub pour
+    la dernière version, télécharge les fichiers, calcule leurs empreintes, et réécrit le manifeste
+    en place.</p>
+
+    <p>Trois décisions valent d'être notées :</p>
+
+    <ul>
+      <li><strong>Un plugin déjà épinglé n'est pas retouché.</strong> Relancer <code>pin</code> ne
+      produit aucun changement — sinon la commande deviendrait un générateur de bruit dans
+      l'historique git.</li>
+      <li><strong>Écriture tout ou rien.</strong> Le manifeste est réécrit une fois, après la
+      boucle. Si le cinquième plugin échoue, le fichier sur disque est inchangé.</li>
+      <li><strong>Les actifs optionnels sont optionnels.</strong> <code>styles.css</code> n'existe
+      pas chez tous les plugins ; son absence n'est pas une erreur, contrairement à
+      <code>main.js</code> ou <code>manifest.json</code>.</li>
+    </ul>
+
+    <div class="callout piege">
+      <p>Corollaire du premier point : pour <strong>mettre à jour</strong> un plugin, il ne suffit
+      pas de changer le numéro de version. <code>pin</code> saute l'entrée puisqu'elle a déjà une
+      version et des empreintes, et <code>apply</code> échouera ensuite sur une empreinte qui ne
+      correspond plus.</p>
+      <p>La procédure est : <strong>supprimer <code>version</code> et <code>sha256</code>, puis
+      relancer <code>pin</code></strong>. Non découvrable — d'où sa présence dans le README du
+      vault.</p>
+    </div>
+
+    <h2>4. <code>doctor</code> — mesurer la dérive</h2>
+
+    <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py doctor
+hotkeys.json : different — manifeste {'quickadd:choice:61a7…': [...]},
+               vault {'quickadd:capture': [...], 'quickadd:choice:61a7…': [...]}
+1 ecart(s)</code></pre>
+
+    <p>La commande compare ce que <code>render</code> produirait avec ce qui est réellement sur
+    disque, et sort en code&nbsp;1 s'il y a au moins un écart — de quoi la mettre dans un script.</p>
+
+    <p>Quatre choix de conception la rendent utilisable au quotidien :</p>
+
+    <ol>
+      <li><strong>La comparaison porte sur le JSON analysé, pas sur le texte.</strong> Une
+      différence d'indentation ou d'ordre de clés n'est pas une dérive. Sans ça, la commande
+      hurlerait au premier passage d'Obsidian, qui réécrit les fichiers à sa façon.</li>
+      <li><strong>L'état est hors périmètre.</strong> <code>workspace.json</code> n'est jamais
+      comparé.</li>
+      <li><strong>Les fichiers préservés sont hors périmètre.</strong> Sinon, installer un thème
+      condamnerait <code>doctor</code> à sortir en erreur pour toujours.</li>
+      <li><strong>Les plugins non gérés sont hors périmètre.</strong> C'est la règle du
+      chapitre&nbsp;8 : sans elle, le <code>data.json</code> d'Excalidraw serait signalé
+      « en trop » à chaque exécution.</li>
+    </ol>
+
+    <div class="callout note">
+      <p>Un outil de détection qui crie tout le temps ne détecte plus rien : on cesse de le lire.
+      La valeur de <code>doctor</code> tient entièrement à ce qu'il puisse <strong>revenir à
+      zéro</strong>. Chacun des quatre choix ci-dessus existe pour rendre le zéro atteignable.</p>
+    </div>
+
+    <h2>5. <code>export</code> — le chemin de retour</h2>
+
+    <p><code>doctor</code> signale la dérive ; <code>export</code> la promeut en décision. Il lit
+    <code>.obsidian/</code> et propose le fragment de manifeste correspondant :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py export
+appearance:
+  theme: obsidian
+  base_font_size: 16
+plugins:
+- id: dataview
+  settings:
+    enableDataviewJs: true
+...
+non exportable : plugins/obsidian-excalidraw-plugin/data.json : réglages non gérés
+non exportable : plugins/table-editor-obsidian/data.json : réglages non gérés</code></pre>
+
+    <p>Les lignes « non exportable » partent sur la sortie d'erreur. Elles matérialisent une règle
+    simple : <strong>ce que l'outil ne sait pas exprimer, il le dit</strong> — il ne le recopie pas
+    tel quel, et il ne le tait pas.</p>
+
+    <p>Sont signalés de cette façon : les réglages des plugins non gérés, les champs d'apparence
+    qu'Obsidian écrit et que le manifeste ne connaît pas (<code>interfaceFontFamily</code>,
+    <code>translucency</code>…), les commandes dont le raccourci a été retiré, et celles qui portent
+    plusieurs liaisons — le manifeste ne sait en exprimer qu'une.</p>
+
+    <h3>La propriété qui compte : le fragment doit être rechargeable</h3>
+
+    <div class="callout piege">
+      <p>Une commande <code>export</code> peut sembler fonctionner tout en produisant un fragment
+      que le manifeste refuse. C'est arrivé au vault de référence, et de trois façons à la
+      fois&nbsp;: <code>plugins</code> était émis comme dictionnaire là où le schéma attend une
+      liste ; un raccourci délié faisait planter la commande sur un accès à un tableau vide ; et
+      les champs d'apparence inconnus étaient recopiés, ce qui faisait échouer le
+      <code>render</code> suivant.</p>
+      <p>Trois symptômes, une seule cause : <strong>aucun test ne rejouait le fragment</strong>. Les
+      tests vérifiaient la <em>forme</em> du dictionnaire produit, jamais qu'il repassait par
+      <code>load_manifest</code> puis <code>render</code>.</p>
+    </div>
+
+    <p>Le test qui ferme les trois d'un coup est un aller-retour complet :</p>
+
+    <pre><code class="language-python">fragment, ignores = patch_et_ignores(racine, non_geres)
+# on écrit le fragment dans un manifeste, puis on le relit et on le rend
+manifeste = load_manifest(ecrire_manifeste(fragment))
+rendu = render(manifeste)
+assert set(rendu) == set(OBSERVE)              # mêmes fichiers
+for nom in OBSERVE:
+    assert json.loads(rendu[nom]) == json.loads(OBSERVE[nom])   # même contenu</code></pre>
+
+    <div class="callout astuce">
+      <p>Leçon généralisable : quand deux fonctions sont censées être l'inverse l'une de l'autre,
+      le seul test qui vaut est celui qui les compose. Tester chacune séparément laisse passer
+      exactement les incompatibilités qu'on cherche à éviter.</p>
+    </div>
+
+    <h2>6. Les erreurs, et leur sortie</h2>
+
+    <p>Toutes les commandes convergent vers un seul traitement d'erreur :</p>
+
+    <pre><code class="language-python">except (ManifestError, ChecksumError, DownloadError, OSError) as exc:
+    print(f"echec : {exc}", file=sys.stderr)
+    return 1</code></pre>
+
+    <p>Ce qui suppose que toute panne prévisible se présente sous l'une de ces quatre formes. C'est
+    un travail en soi : un manifeste absent doit lever <code>ManifestError</code> et non
+    <code>FileNotFoundError</code> ; un YAML mal formé aussi ; une coupure réseau doit devenir
+    <code>DownloadError</code> et non <code>ConnectionResetError</code>.</p>
+
+    <div class="callout note">
+      <p>Le critère : <strong>un utilisateur ne doit jamais voir une trace d'appels Python.</strong>
+      Une trace signifie que l'outil n'avait pas prévu le cas — et l'utilisateur, lui, ne sait pas
+      si son vault est intact.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li><code>apply</code> vérifie tout avant d'écrire, puis bascule par renommage avec
+        restauration : un échec laisse le vault dans son état précédent.</li>
+        <li><code>PRESERVES</code> garde <code>workspace.json</code>, <code>themes/</code> et
+        <code>snippets/</code> d'une reconstruction à l'autre.</li>
+        <li><code>pin</code> calcule les empreintes, ne retouche pas l'existant, et écrit en tout ou
+        rien. Mettre à jour un plugin exige d'effacer <code>version</code> et
+        <code>sha256</code>.</li>
+        <li><code>doctor</code> compare du JSON analysé, ignore l'état, les fichiers préservés et
+        les plugins non gérés — pour que le zéro reste atteignable.</li>
+        <li><code>export</code> propose le fragment inverse et <strong>signale</strong> ce qu'il ne
+        sait pas exprimer.</li>
+        <li>Deux fonctions inverses se testent en les composant, jamais séparément.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Prédire l'état après un échec</h3>
+      <p>Le manifeste déclare neuf plugins. Le réseau tombe pendant le téléchargement du sixième.
+      Décris l'état du vault après l'échec : contenu de <code>.obsidian/</code>, présence de
+      dossiers temporaires, code de sortie.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><code>.obsidian/</code> est <strong>strictement inchangé</strong> : la panne survient en
+        phase&nbsp;1 de <code>preparer</code>, où rien n'est écrit. Les cinq plugins déjà
+        téléchargés étaient en mémoire et sont perdus, sans conséquence.</p>
+        <p><strong>Aucun dossier temporaire</strong> ne subsiste : <code>.obsidian.new/</code> avait
+        été créé pour recevoir les plugins, et le bloc de nettoyage le supprime avant de propager
+        l'erreur. Même s'il en restait un, l'exécution suivante commence par les effacer.</p>
+        <p><strong>Code de sortie 1</strong>, avec un message de la forme
+        <code>echec : &lt;url&gt; : &lt;erreur&gt;</code> sur la sortie d'erreur — et non une trace
+        Python, à condition que l'erreur réseau ait bien été convertie en
+        <code>DownloadError</code>.</p>
+        <p>Question subsidiaire utile : est-ce reprenable ? Non, et c'est voulu. <code>apply</code>
+        retélécharge tout à chaque exécution. Un cache accélérerait et permettrait un amorçage hors
+        ligne — c'était prévu par la spécification initiale sous la forme d'une option
+        <code>--from-cache</code>, et ça n'a jamais été construit.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Un doctor qui ne revient pas à zéro</h3>
+      <p>Après avoir ouvert Obsidian pour la première fois sur un vault fraîchement reconstruit,
+      <code>doctor</code> signale sept écarts, dont plusieurs « en trop » :
+      <code>app.json</code>, <code>types.json</code>, trois <code>data.json</code> de plugins.
+      Comment reviens-tu à zéro, et lesquels de ces écarts ne devraient pas être là ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Revenir à zéro</strong> : lancer <code>export</code>, reporter les blocs
+        proposés dans le manifeste, relancer <code>doctor</code>. C'est le cycle normal — Obsidian
+        écrit de lui-même des fichiers que le manifeste ne connaissait pas encore.</p>
+        <p><strong>Ceux qui devraient être là</strong> : <code>app.json</code> et
+        <code>types.json</code> sont de vraies configurations, écrites par Obsidian au premier
+        lancement. Ils rejoignent <code>core_plugins.settings</code>. Les <code>data.json</code> de
+        plugins <em>gérés</em> aussi.</p>
+        <p><strong>Ceux qui ne devraient pas y être</strong> : les <code>data.json</code> de plugins
+        <em>non gérés</em>. S'ils apparaissent, c'est que la règle du chapitre&nbsp;8 n'est pas
+        appliquée dans <code>doctor</code> — et alors la commande ne pourra jamais revenir à zéro,
+        puisque ces fichiers réapparaîtront à chaque démarrage du plugin.</p>
+        <p>Le vrai enseignement : <strong>un écart persistant n'est pas toujours une dérive de
+        configuration, c'est parfois un défaut de l'outil de détection.</strong></p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Concevoir un garde-fou</h3>
+      <p><code>apply</code> installe les plugins qui ont <code>repo</code>, <code>version</code> et
+      <code>sha256</code>. Que se passe-t-il si le manifeste déclare un plugin avec seulement son
+      <code>id</code> ? Où placerais-tu le contrôle ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Sans contrôle</strong> : l'entrée est ignorée à l'installation, mais son
+        identifiant est quand même écrit dans <code>community-plugins.json</code>. Obsidian
+        démarre, lit la liste, cherche <code>plugins/&lt;id&gt;/main.js</code>, ne le trouve pas, et
+        affiche un plugin cassé. Le pire est que <code>doctor</code> retourne
+        <code>0 ecart(s)</code> : le fichier attendu par le manifeste est bien là, le fichier absent
+        n'est attendu par personne. La commande censée détecter les problèmes certifie un vault
+        cassé.</p>
+        <p><strong>Où placer le contrôle</strong> : dans <code>apply</code>, <em>avant</em> tout
+        téléchargement, avec une erreur nommant les plugins fautifs. C'est là que l'invariant a un
+        sens : « je ne construis pas un vault que je ne peux pas rendre complet ».</p>
+        <p><strong>Où ne pas le placer</strong> : dans <code>load_manifest</code>, en rendant
+        <code>repo</code> obligatoire. Ce serait tentant, mais un plugin sans <code>repo</code> est
+        un état légitime — c'est exactement l'état d'un plugin qu'on vient d'ajouter et que
+        <code>pin</code> n'a pas encore traité. Interdire cet état casserait le flux de travail
+        normal.</p>
+        <p>Leçon : <strong>un invariant se place là où il doit tenir, pas là où il est le plus
+        facile à écrire.</strong></p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-08.html"><span class="lbl">← Précédent</span>Le problème de la configuration</a>
+    <a class="next" href="chapitre-10.html"><span class="lbl">Suivant →</span>Les conventions du vault</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

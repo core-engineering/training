@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 04 — Les plugins cœur : notes quotidiennes, templates, recherche</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 04</span><br>Les plugins cœur : notes quotidiennes, templates, recherche</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Distinguer plugin cœur et plugin communautaire, et savoir où se lit l'état de chacun.</li>
+        <li>Configurer les notes quotidiennes : dossier, format de nom, template.</li>
+        <li>Maîtriser la recherche et ses opérateurs — le seul outil qui trouve tout, tout de
+        suite.</li>
+        <li>Travailler au clavier : palette de commandes, ouverture rapide, signets.</li>
+      </ul>
+    </div>
+
+    <h2>1. Cœur et communauté</h2>
+
+    <p>Obsidian découpe ses fonctions en <strong>plugins cœur</strong>, livrés avec l'application et
+    seulement à activer, et <strong>plugins communautaires</strong>, écrits par des tiers, à
+    télécharger.</p>
+
+    <p>La différence pratique tient en trois points : les plugins cœur sont maintenus avec
+    l'application donc ne cassent jamais à une mise à jour, ils ne demandent aucune confiance
+    envers un tiers, et leur activation se lit dans un seul fichier :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> cat ~/vault/.obsidian/core-plugins.json
+{
+  "daily-notes": true,
+  "backlink": true,
+  "graph": true,
+  "global-search": true,
+  "templates": true,
+  "file-explorer": true,
+  "command-palette": true,
+  "properties": true,
+  "bookmarks": true,
+  "publish": false,
+  "sync": false,
+  ...
+}</code></pre>
+
+    <div class="callout astuce">
+      <p>Règle d'hygiène : <strong>si un plugin cœur fait le travail, n'installe pas le plugin
+      communautaire équivalent.</strong> Chaque plugin tiers est du code à maintenir, à mettre à
+      jour, et une chose de plus qui peut casser à la prochaine version d'Obsidian. La
+      partie&nbsp;II montre le coût de reconstruction que chacun représente.</p>
+    </div>
+
+    <h2>2. Notes quotidiennes</h2>
+
+    <p>Le plugin <strong>Daily Notes</strong> crée une note par jour, d'un clic ou d'un raccourci.
+    C'est la colonne vertébrale d'un journal de travail : chaque jour a un point d'entrée, et le
+    reste s'y rattache par liens.</p>
+
+    <p>Trois réglages seulement, mais ils comptent :</p>
+
+    <pre><code class="language-json">{
+  "folder": "10-journal",
+  "format": "YYYY/YYYY-MM-DD",
+  "template": "90-meta/templates/daily"
+}</code></pre>
+
+    <ul>
+      <li><strong><code>folder</code></strong> — où les notes atterrissent. Sans ça, elles tombent
+      à la racine du vault et la polluent en quelques semaines.</li>
+      <li><strong><code>format</code></strong> — le nom du fichier, en syntaxe Moment.js. Une barre
+      oblique crée un sous-dossier : <code>YYYY/YYYY-MM-DD</code> donne
+      <code>10-journal/2026/2026-08-02.md</code>. Range par année sans effort.</li>
+      <li><strong><code>template</code></strong> — le chemin d'un fichier dont le contenu est
+      inséré à la création. Sans extension.</li>
+    </ul>
+
+    <div class="callout piege">
+      <p>Le format de date par défaut est <code>YYYY-MM-DD</code>. N'y touche pas pour mettre du
+      français : un nom comme <code>02 août 2026</code> ne se trie plus alphabétiquement, casse le
+      lien entre le calendrier et la note, et rend les requêtes par date impossibles. Le format
+      ISO trie correctement par construction.</p>
+    </div>
+
+    <h2>3. Templates</h2>
+
+    <p>Le plugin cœur <strong>Templates</strong> insère le contenu d'un fichier dans la note
+    courante. Un seul réglage — le dossier où il va chercher — et trois variables&nbsp;:
+    <code>{{date}}</code>, <code>{{time}}</code>, <code>{{title}}</code>.</p>
+
+    <pre><code class="language-markdown">## Réunion du {{date}}
+
+Participants :
+Ordre du jour :</code></pre>
+
+    <p>C'est volontairement pauvre. Dès que tu veux une date d'hier, une condition, ou une valeur
+    demandée à la saisie, il faut Templater — chapitre&nbsp;6. Beaucoup de vaults gardent les deux
+    activés : le cœur pour ce qu'il sait faire, Templater pour le reste.</p>
+
+    <h2>4. La recherche</h2>
+
+    <p>C'est l'outil le plus rentable d'Obsidian, et le plus sous-utilisé. La recherche globale
+    (<code>Ctrl+Maj+F</code>) accepte des opérateurs qui la transforment en langage de requête
+    léger&nbsp;:</p>
+
+    <table>
+      <thead><tr><th>Opérateur</th><th>Trouve</th></tr></thead>
+      <tbody>
+        <tr><td><code>path:10-journal</code></td><td>les notes dont le chemin contient
+          <code>10-journal</code></td></tr>
+        <tr><td><code>file:2026-08</code></td><td>les notes dont le <em>nom</em> contient
+          <code>2026-08</code></td></tr>
+        <tr><td><code>tag:#safety</code></td><td>les notes portant l'étiquette, du corps ou du
+          front-matter</td></tr>
+        <tr><td><code>line:(profinet mrp)</code></td><td>les deux mots sur la <em>même
+          ligne</em></td></tr>
+        <tr><td><code>section:(cycle temps)</code></td><td>les deux mots sous le même titre</td></tr>
+        <tr><td><code>["texte exact"]</code></td><td>correspondance stricte, casse comprise</td></tr>
+        <tr><td><code>/reg?ex/</code></td><td>expression régulière</td></tr>
+        <tr><td><code>-terme</code></td><td>exclut ; <code>OR</code> pour l'alternative</td></tr>
+      </tbody>
+    </table>
+
+    <pre><code class="language-text">path:20-notes tag:#safety -tag:#à-trier line:(rétraction bras)</code></pre>
+
+    <p>Les fiches de <code>20-notes</code> marquées safety, pas encore à trier, où « rétraction » et
+    « bras » apparaissent sur la même ligne.</p>
+
+    <div class="callout astuce">
+      <p>La recherche répond aux questions <em>ponctuelles</em> : je cherche ça, maintenant. Quand
+      une question revient toutes les semaines, elle mérite une vue Dataview (chapitre&nbsp;5) —
+      une note qui affiche la réponse en permanence, sans qu'on la reformule.</p>
+    </div>
+
+    <h2>5. Travailler au clavier</h2>
+
+    <p>Trois raccourcis couvrent l'essentiel de la navigation :</p>
+
+    <table>
+      <thead><tr><th>Raccourci</th><th>Ce que ça ouvre</th><th>Quand</th></tr></thead>
+      <tbody>
+        <tr><td><code>Ctrl+O</code></td><td>Ouverture rapide par nom de note</td>
+          <td>Tu sais ce que tu cherches</td></tr>
+        <tr><td><code>Ctrl+P</code></td><td>Palette de commandes</td>
+          <td>Tu sais ce que tu veux faire, pas où c'est</td></tr>
+        <tr><td><code>Ctrl+Maj+F</code></td><td>Recherche globale</td>
+          <td>Tu cherches un contenu, pas une note</td></tr>
+      </tbody>
+    </table>
+
+    <p>La palette mérite un mot : toute action d'Obsidian et de ses plugins y est listée par son
+    nom. C'est aussi là que tu découvres ce qu'un plugin fraîchement installé sait faire — tape son
+    nom et lis la liste.</p>
+
+    <div class="callout obs">
+      <p>Les <strong>signets</strong> (bookmarks) épinglent notes, recherches ou dossiers dans un
+      panneau. Le cas d'usage qui les justifie : épingler une <em>recherche</em> fréquente, par
+      exemple <code>tag:#à-trier</code>, pour la relancer d'un clic. Épingler des notes est moins
+      utile — <code>Ctrl+O</code> est plus rapide.</p>
+    </div>
+
+    <h3>Les raccourcis, et ce qu'Obsidian en enregistre</h3>
+
+    <p><em>Settings → Hotkeys</em> liste toutes les commandes et permet de les réassigner. Détail
+    qui aura son importance en partie&nbsp;II : <code>hotkeys.json</code> ne contient
+    <strong>que tes personnalisations</strong>, pas les raccourcis par défaut.</p>
+
+    <pre class="term"><code><span class="prompt">$</span> cat ~/vault/.obsidian/hotkeys.json
+{
+  "quickadd:choice:61a731e5-7663-49b9-8676-ae7024578ed0": [
+    { "modifiers": ["Mod", "Shift"], "key": "I" }
+  ]
+}</code></pre>
+
+    <p><code>Mod</code> désigne <code>Ctrl</code> sous Windows et Linux, <code>Cmd</code> sous
+    macOS — c'est ce qui rend un raccourci portable entre plateformes.</p>
+
+    <div class="callout piege">
+      <p>Remarque l'identifiant de commande : <code>quickadd:choice:&lt;uuid&gt;</code>. Les
+      plugins n'exposent pas toujours un nom lisible ; certains génèrent un identifiant à la
+      création de l'action. Un raccourci écrit à la main sur un identifiant deviné ne se
+      rattachera à rien — silencieusement. Le chapitre&nbsp;9 montre comment récupérer le vrai.</p>
+    </div>
+
+    <h2>6. Les autres plugins cœur utiles</h2>
+
+    <table>
+      <thead><tr><th>Plugin</th><th>Ce qu'il apporte</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Backlinks</strong></td><td>Le panneau de liens retour du chapitre&nbsp;2.
+          Indispensable.</td></tr>
+        <tr><td><strong>Outline</strong></td><td>Le plan de la note courante par ses titres.
+          Utile au-delà d'un écran de texte.</td></tr>
+        <tr><td><strong>Properties</strong></td><td>L'éditeur de front-matter en tableau. C'est lui
+          qui quote les liens correctement.</td></tr>
+        <tr><td><strong>Page preview</strong></td><td>Aperçu au survol d'un lien. Évite d'ouvrir
+          une note pour vérifier ce qu'elle contient.</td></tr>
+        <tr><td><strong>Tag pane</strong></td><td>Toutes les étiquettes du vault, avec leur
+          nombre d'occurrences. Sert surtout à repérer les doublons de casse.</td></tr>
+        <tr><td><strong>File recovery</strong></td><td>Instantanés locaux périodiques. Un filet
+          <em>en plus</em> de git, pas à la place.</td></tr>
+        <tr><td><strong>Canvas</strong></td><td>Tableau blanc où poser notes et flèches. Bon pour
+          penser une architecture, mauvais pour stocker de l'information.</td></tr>
+        <tr><td><strong>Bases</strong></td><td>Vues tabulaires natives, plus récentes. Recouvre une
+          partie de Dataview sans dépendance tierce ; écosystème plus jeune.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Les plugins cœur ne cassent pas aux mises à jour et n'engagent aucune confiance
+        tierce : préfère-les quand ils suffisent.</li>
+        <li>Notes quotidiennes : dossier, format ISO avec sous-dossier annuel, template.</li>
+        <li>Le plugin Templates est volontairement pauvre — trois variables. Templater prend le
+        relais.</li>
+        <li>La recherche a de vrais opérateurs : <code>path:</code>, <code>file:</code>,
+        <code>tag:</code>, <code>line:</code>, <code>section:</code>, la regex et la négation.</li>
+        <li><code>Ctrl+O</code>, <code>Ctrl+P</code>, <code>Ctrl+Maj+F</code> couvrent la
+        navigation.</li>
+        <li><code>hotkeys.json</code> n'enregistre que tes personnalisations, sous des
+        identifiants de commande qui ne sont pas toujours devinables.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Écrire la recherche</h3>
+      <p>Formule une recherche unique qui trouve : les notes du dossier <code>30-projets</code>,
+      contenant « FAT » et « retard » dans le même paragraphe, et qui ne portent pas l'étiquette
+      <code>#clos</code>.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-text">path:30-projets section:(FAT retard) -tag:#clos</code></pre>
+        <p><code>section:</code> plutôt que <code>line:</code> parce que l'énoncé dit « même
+        paragraphe » : <code>line:</code> exigerait les deux mots sur la même ligne, ce qui est plus
+        strict. À noter que <code>section:</code> raisonne en fait par titre — c'est
+        l'approximation la plus proche d'un paragraphe qu'offre la recherche.</p>
+        <p>Piège possible : écrire <code>-#clos</code> au lieu de <code>-tag:#clos</code>. Le
+        premier exclut le <em>texte</em> « #clos », ce qui marche par accident dans la plupart des
+        cas mais raterait une étiquette déclarée en front-matter.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Diagnostiquer une note quotidienne</h3>
+      <p>Tu cliques sur « note du jour » et tu obtiens une note vide, nommée
+      <code>2026-08-02.md</code>, à la racine du vault, alors que tu as bien renseigné un dossier
+      et un template. Deux causes possibles ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Cause 1 — le réglage n'est pas celui qu'on croit.</strong> Il existe plusieurs
+        endroits où un dossier de notes quotidiennes se configure : le plugin cœur Daily Notes, et
+        certains plugins tiers (Calendar, Periodic Notes) qui ont leurs propres réglages et
+        prennent le pas. Si un plugin tiers crée la note, il applique <em>sa</em> configuration.
+        Vérifier dans <code>.obsidian/daily-notes.json</code> ce que le plugin cœur a réellement
+        enregistré.</p>
+        <p><strong>Cause 2 — le chemin du template est faux.</strong> Il s'écrit sans extension et
+        relativement à la racine du vault : <code>90-meta/templates/daily</code>, pas
+        <code>90-meta/templates/daily.md</code> ni un chemin absolu. Un chemin invalide ne produit
+        aucune erreur visible — la note est simplement créée vide. C'est le symptôme décrit.</p>
+        <p>Pour le dossier racine, le plus probable reste que le réglage a été saisi puis
+        qu'Obsidian n'a pas été redémarré, ou que le champ contient une barre oblique de tête
+        (<code>/10-journal</code>) qui le rend invalide.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Arbitrer cœur ou communauté</h3>
+      <p>Tu veux un calendrier mensuel cliquable pour naviguer entre notes quotidiennes. Le plugin
+      communautaire Calendar le fait. Quelles questions te poses-tu avant de l'installer ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Quatre questions, dans cet ordre&nbsp;:</p>
+        <ol>
+          <li><strong>Un plugin cœur fait-il déjà l'essentiel ?</strong> Daily Notes plus
+          <code>Ctrl+O</code> avec le nom de la date couvrent la navigation. Le calendrier apporte
+          la <em>vue d'ensemble du mois</em>, ce qui est réel mais modeste.</li>
+          <li><strong>Le plugin est-il vivant ?</strong> Date de la dernière version, activité du
+          dépôt. Un plugin sans publication depuis plusieurs années finira par casser à une mise à
+          jour d'Obsidian, et personne ne le réparera.</li>
+          <li><strong>Que coûte-t-il à reconstruire ?</strong> En partie&nbsp;II, chaque plugin est
+          une entrée de manifeste, une version épinglée, des empreintes à vérifier, et une
+          dépendance réseau à l'amorçage.</li>
+          <li><strong>Que se passe-t-il s'il disparaît ?</strong> Un plugin qui ne fait
+          qu'<em>afficher</em> se retire sans dommage. Un plugin qui <em>stocke</em> dans un format
+          propriétaire emporte tes données avec lui.</li>
+        </ol>
+        <p>Sur ce cas précis, l'histoire tranche : la dernière version publiée de Calendar date
+        d'avril 2021 et porte encore la mention beta. Le vault de la partie&nbsp;II a fini par le
+        retirer pour cette raison, après l'avoir installé.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-03.html"><span class="lbl">← Précédent</span>Le front-matter</a>
+    <a class="next" href="chapitre-05.html"><span class="lbl">Suivant →</span>Dataview</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 11 — Exploitation : au quotidien, sur machine neuve, et les pièges</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 11</span><br>Exploitation : au quotidien, sur machine neuve, et les pièges</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Connaître la boucle quotidienne — et constater qu'elle ne demande presque rien.</li>
+        <li>Amorcer le vault sur une machine neuve, et savoir ce que cette vérification prouve.</li>
+        <li>Mettre à jour un plugin, promouvoir un réglage, ajouter un type de note.</li>
+        <li>Traiter la confidentialité d'un dépôt dont l'historique est permanent.</li>
+        <li>Reconnaître les aspérités réelles de la plateforme Windows plus WSL.</li>
+      </ul>
+    </div>
+
+    <h2>1. La boucle quotidienne</h2>
+
+    <ol>
+      <li>Ouvrir Obsidian. Obsidian Git tire les modifications distantes.</li>
+      <li>Écrire : note du jour par Daily Notes, captures par <code>Ctrl+Maj+I</code>, fiches par
+      template.</li>
+      <li>Obsidian Git commite et pousse toutes les dix minutes. Rien à lancer.</li>
+    </ol>
+
+    <p>C'est tout. L'outillage de la partie&nbsp;II ne sert <em>pas</em> au quotidien — et c'est le
+    signe qu'il est bien conçu. Une infrastructure qu'on doit invoquer tous les jours est une
+    infrastructure qui n'a pas fini son travail.</p>
+
+    <p>Ponctuellement, deux vérifications de quelques secondes :</p>
+
+    <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/vault.py doctor
+0 probleme(s)
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py doctor
+0 ecart(s)</code></pre>
+
+    <p>Le premier après une session d'écriture nourrie, le second après avoir touché aux réglages
+    d'Obsidian.</p>
+
+    <h2>2. La machine neuve</h2>
+
+    <pre class="term"><code><span class="prompt">$</span> git clone git@github.com:moi/vault.git &amp;&amp; cd vault
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py apply
+40 fichiers ecrits dans .obsidian/</code></pre>
+
+    <p>Puis ouvrir le dossier comme vault dans Obsidian. Neuf plugins à leur version épinglée et
+    vérifiée, réglages en place, raccourci actif.</p>
+
+    <div class="callout astuce">
+      <p>Cette séquence est aussi le <strong>test d'acceptation</strong> de tout l'édifice, et il
+      vaut la peine de le rejouer de temps en temps depuis un clone jetable&nbsp;:</p>
+      <pre class="term"><code><span class="prompt">$</span> cd /tmp &amp;&amp; rm -rf verif &amp;&amp; git clone ~/vault verif &amp;&amp; cd verif
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py apply
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py doctor
+0 ecart(s)
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/vault.py doctor
+0 probleme(s)
+<span class="prompt">$</span> uv run --project 90-meta/tooling pytest -q
+148 passed</code></pre>
+      <p>Ce que ça prouve : <strong>rien d'essentiel ne vit hors du dépôt</strong>. Une
+      configuration oubliée sur ta machine se révèle ici, et nulle part ailleurs.</p>
+    </div>
+
+    <p>Prérequis réels : git, <code>uv</code>, un accès réseau à GitHub. Le troisième est le plus
+    fragile — derrière un proxy d'entreprise, <code>apply</code> échoue. Un mode hors ligne à
+    partir d'un cache de plugins était prévu au départ ; il n'a jamais été construit. C'est la
+    limite connue la plus sérieuse du dispositif.</p>
+
+    <h2>3. Les opérations courantes</h2>
+
+    <h3>Mettre à jour un plugin</h3>
+
+    <pre class="term"><code><span class="prompt">$</span> <span class="c"># dans 90-meta/manifest.yaml, supprimer version ET sha256 du plugin</span>
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py pin
+dataview epingle en 0.5.71
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py apply
+<span class="prompt">$</span> git add 90-meta/manifest.yaml &amp;&amp; git commit -m "chore: dataview 0.5.71"</code></pre>
+
+    <p>Supprimer les <em>deux</em> champs : <code>pin</code> saute toute entrée qui a déjà une
+    version et des empreintes. Changer le numéro sans effacer les empreintes produit un échec de
+    vérification à l'<code>apply</code> suivant — message clair, mais après coup.</p>
+
+    <h3>Promouvoir un réglage fait à la souris</h3>
+
+    <pre class="term"><code><span class="prompt">$</span> <span class="c"># après avoir réglé quelque chose dans Obsidian, Obsidian fermé</span>
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py doctor
+plugins/dataview/data.json : different — ...
+1 ecart(s)
+<span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/bootstrap.py export</code></pre>
+
+    <p>Reporter le bloc concerné dans le manifeste, relancer <code>doctor</code>, commiter. Le
+    cycle complet prend une minute et laisse une trace datée de la décision.</p>
+
+    <h3>Ajouter un plugin</h3>
+
+    <p>Ajouter <code>- id: …</code> et <code>repo: …</code> au manifeste, lancer <code>pin</code>
+    puis <code>apply</code>. Si tu veux piloter ses réglages, configure-le dans Obsidian puis
+    <code>export</code> — c'est aussi le seul moyen d'obtenir la structure exacte de son
+    <code>data.json</code>, que sa documentation ne décrit généralement pas.</p>
+
+    <h2>4. Confidentialité</h2>
+
+    <p>Un vault professionnel poussé sur un dépôt distant pose une question qu'il vaut mieux
+    trancher au début qu'après.</p>
+
+    <div class="callout vlt">
+      <p>Trois faits qui ne dépendent d'aucun outillage&nbsp;:</p>
+      <ul>
+        <li><strong>L'historique git est permanent.</strong> Supprimer une donnée déjà poussée exige
+        de réécrire l'historique (<code>git filter-repo</code>), de forcer la mise à jour du
+        distant, et de considérer la donnée comme divulguée si quelqu'un a pu cloner entre-temps.
+        Effacer le fichier au commit suivant ne suffit pas : <code>git log -p</code> l'affiche
+        toujours.</li>
+        <li><strong>Le dépôt doit être privé dès sa création</strong>, et ne jamais devenir public.
+        Un dépôt rendu privé après coup ne rattrape pas les clones déjà faits.</li>
+        <li><strong>Une architecture décrite en détail reste identifiable sans nom propre.</strong>
+        Retirer les noms de clients ne suffit pas si le reste permet de reconnaître
+        l'installation.</li>
+      </ul>
+    </div>
+
+    <p>Le vault de référence a choisi l'anonymisation manuelle : pas de nom de client, pas de code
+    affaire, pas d'adresse IP d'installation, pas d'extrait de code livrable. Un contrôle
+    automatique — une liste de motifs interdits vérifiée avant chaque commit — avait été conçu puis
+    écarté, pour une raison instructive.</p>
+
+    <div class="callout piege">
+      <p>Un tel contrôle ne peut pas être <em>bloquant</em> tant qu'Obsidian Git commite tout seul :
+      le plugin n'exécute pas les hooks git (chapitre&nbsp;7). Le rendre bloquant obligerait à
+      désactiver l'auto-commit et à passer tous les commits par un script.</p>
+      <p>Le choix a donc été : garder le confort, assumer la discipline manuelle, et
+      <strong>l'écrire</strong> dans les conventions plutôt que de laisser croire à une garantie
+      inexistante. Ce qui compte n'est pas le choix retenu, c'est qu'il soit explicite.</p>
+    </div>
+
+    <h2>5. Les pièges de plateforme</h2>
+
+    <p>Ceux qui suivent viennent tous d'un usage réel sur Windows plus WSL2, avec le vault sur un
+    disque NTFS.</p>
+
+    <h3>Deux git pour un même dépôt</h3>
+
+    <div class="callout piege">
+      <p>Un dépôt sur <code>/mnt/c/…</code> est accessible depuis le git Linux de WSL et depuis le
+      git Windows. Utiliser les deux, ou utiliser le git Linux pour une activité intense, a déjà
+      produit des <code>.git</code> corrompus — références et objets remplis de zéros.</p>
+      <p>La règle retenue : <strong>toujours le binaire Windows</strong>, y compris appelé depuis
+      WSL, et pousser après chaque commit pour que le distant serve de filet.</p>
+      <pre class="term"><code><span class="prompt">$</span> alias git=/mnt/c/Users/moi/AppData/Local/Programs/Git/cmd/git.exe</code></pre>
+      <p>Obsidian Git n'est pas concerné : il écrit depuis Windows avec sa propre implémentation,
+      jamais à travers la couche WSL.</p>
+    </div>
+
+    <h3>Les handles qui traînent</h3>
+
+    <p>Fermer Obsidian ne libère pas instantanément <code>.obsidian/</code>. Un <code>apply</code>
+    lancé dans la foulée échoue sur le renommage, alors qu'aucun processus Obsidian n'apparaît
+    dans la liste des tâches. Trente secondes plus tard, la même commande passe.</p>
+
+    <p>Rien de grave grâce à la restauration du chapitre&nbsp;9 — mais il faut le savoir pour ne pas
+    conclure à une panne. Une reprise automatique sur le renommage réglerait la question ; elle n'a
+    pas été écrite, faute de pouvoir reproduire l'échec à la demande.</p>
+
+    <h3>Les fins de ligne</h3>
+
+    <p>Obsidian écrit côté Windows, les scripts côté WSL. Sans précaution, chaque aller-retour
+    produit un diff de fins de ligne sur des fichiers dont le contenu n'a pas bougé. Un
+    <code>.gitattributes</code> avec <code>* text=auto eol=lf</code>, écrit par <code>apply</code>,
+    ferme le sujet.</p>
+
+    <h3>Le service de synchronisation</h3>
+
+    <p>Répété du chapitre&nbsp;1 parce que c'est le piège le plus coûteux : <strong>aucun service de
+    synchronisation ne doit surveiller le dossier du vault</strong>. Le vault de référence a été
+    déplacé hors de OneDrive avant même la première ligne de code.</p>
+
+    <h2>6. Ce que le dispositif ne fait pas</h2>
+
+    <p>Un inventaire honnête vaut mieux qu'une promesse creuse.</p>
+
+    <table>
+      <thead><tr><th>Limite</th><th>Conséquence</th></tr></thead>
+      <tbody>
+        <tr><td>Pas de mode hors ligne</td><td><code>apply</code> exige GitHub joignable. Derrière
+          un proxy, l'amorçage échoue.</td></tr>
+        <tr><td>Pas de contrôle de contenu bloquant</td><td>L'anonymisation repose sur la
+          discipline.</td></tr>
+        <tr><td>Réglages non gérés</td><td>Excalidraw et Advanced Tables repartent de leurs
+          défauts sur une machine neuve.</td></tr>
+        <tr><td>Un raccourci par commande</td><td>Le manifeste ne sait pas exprimer plusieurs
+          liaisons ; <code>export</code> le signale.</td></tr>
+        <tr><td>Aucune gestion de conflit</td><td>Deux machines désynchronisées produisent un
+          conflit git ordinaire, à résoudre à la main.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <p>Aucune de ces limites n'est un oubli : chacune est un arbitrage, et chacune est écrite
+      quelque part dans le vault. C'est peut-être le vrai enseignement du cours — <strong>la
+      différence entre un système fiable et un système fragile tient moins à ce qu'il garantit qu'à
+      la clarté avec laquelle il dit ce qu'il ne garantit pas.</strong></p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Au quotidien, l'outillage ne sert pas : Obsidian Git suffit. C'est le signe qu'il est
+        à sa place.</li>
+        <li>Machine neuve : cloner, <code>apply</code>, ouvrir. La même séquence sur un clone
+        jetable est le test d'acceptation de l'ensemble.</li>
+        <li>Mettre à jour un plugin : effacer <code>version</code> <em>et</em> <code>sha256</code>,
+        puis <code>pin</code>.</li>
+        <li>L'historique git est permanent : le dépôt est privé dès sa création, ou il ne l'est
+        jamais vraiment.</li>
+        <li>Un seul git sur un dépôt NTFS, et laisse retomber les handles avant de reconstruire.</li>
+        <li>Les limites connues valent mieux écrites que supposées résolues.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Le collègue et le proxy</h3>
+      <p>Un collègue clone ton vault sur un poste d'entreprise où GitHub est bloqué.
+      <code>apply</code> échoue au premier plugin. Que peux-tu lui proposer aujourd'hui, et que
+      faudrait-il construire ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Aujourd'hui</strong>, trois contournements, du moins au plus lourd&nbsp;:</p>
+        <ul>
+          <li>Lui transmettre un <code>.obsidian/plugins/</code> déjà construit depuis ta machine.
+          Ça marche, et ça contourne complètement la vérification par empreinte — donc à réserver à
+          quelqu'un à qui il fait confiance, ce qui est le cas ici.</li>
+          <li>Retirer temporairement les plugins du manifeste et travailler avec les seuls plugins
+          cœur. Le vault reste utilisable : les notes sont du markdown, seules les vues Dataview
+          s'affichent en code source.</li>
+          <li>Faire ouvrir GitHub par l'informatique, ce qui est la vraie réponse mais pas la plus
+          rapide.</li>
+        </ul>
+        <p><strong>Ce qu'il faudrait construire</strong> : l'option <code>--from-cache &lt;dir&gt;</code>
+        prévue par la spécification initiale. <code>apply</code> chercherait les actifs dans un
+        dossier local avant d'aller sur le réseau, <strong>en vérifiant les mêmes empreintes</strong>.
+        C'est le point qui distingue cette option du premier contournement : le cache est une source
+        d'octets, pas une dispense de contrôle. Un cache constitué sur une machine connectée devient
+        alors transportable sur clé USB.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Une fuite déjà poussée</h3>
+      <p>Tu réalises qu'un commit d'il y a trois semaines contient une adresse IP d'installation et
+      un nom de client, dans une note depuis modifiée. Le dépôt est privé, personne d'autre n'y a
+      accès. Quelles options, et laquelle retiens-tu ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Option 1 — ne rien faire.</strong> Le dépôt est privé, l'accès est limité à toi.
+        Le risque résiduel est celui d'une compromission du compte ou d'un changement de visibilité
+        par erreur. Acceptable pour une IP privée, discutable pour un nom de client sous accord de
+        confidentialité.</p>
+        <p><strong>Option 2 — réécrire l'historique.</strong> <code>git filter-repo</code> pour
+        supprimer la chaîne des trois semaines de commits, puis <code>push --force</code>.
+        Faisable ici : dépôt privé, aucun autre clone, historique linéaire. C'est le moment le moins
+        cher pour le faire — dans un an, avec des centaines de commits et peut-être un second
+        clone, ce sera une opération à risque.</p>
+        <p><strong>Option 3 — repartir d'un dépôt neuf</strong>, en n'important que l'arbre courant.
+        Radical, on perd l'historique, mais imparable et sans manipulation délicate.</p>
+        <p><strong>Ce qu'on retient</strong> : l'option&nbsp;2, parce que le coût de la réécriture
+        croît avec le temps et que la donnée est réellement sensible. Et surtout, on note la leçon —
+        vérifier ce qu'on écrit <em>avant</em> le commit, puisque après, la seule option propre est
+        chirurgicale.</p>
+        <p>Détail à ne pas oublier : après réécriture, le contenu reste accessible via les objets
+        non référencés et le <code>reflog</code> local pendant un temps, et le distant peut garder
+        des objets orphelins. Sur GitHub, un commit atteignable par son empreinte reste servi un
+        moment même sans référence — d'où l'intérêt de contacter le support pour un cas
+        sérieux.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Juger l'édifice</h3>
+      <p>Avec le recul des onze chapitres : quelle partie de ce dispositif recommanderais-tu à
+      quelqu'un qui débute avec Obsidian, et quelle partie lui déconseillerais-tu ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Il n'y a pas de réponse unique, mais une ligne de partage défendable.</p>
+        <p><strong>À recommander tout de suite</strong> : l'arborescence plate, le front-matter
+        normé, les templates, la capture, et git pour la synchronisation. Ces cinq choses coûtent
+        une heure à mettre en place et changent l'usage dès la première semaine. Rien n'y est
+        irréversible.</p>
+        <p><strong>À déconseiller au début</strong> : le manifeste et son outillage. Ils résolvent
+        un problème qu'on ne rencontre qu'après — quand on change de machine, quand on a assez de
+        plugins pour ne plus se souvenir de leurs réglages, quand une reconstruction devient
+        coûteuse. Construire cette infrastructure avant d'avoir le problème, c'est de la
+        sophistication prématurée : on maintient un outil pour un besoin hypothétique.</p>
+        <p><strong>Le signal qui indique le bon moment</strong> : le jour où tu hésites à toucher un
+        réglage parce que tu crains de ne pas savoir le refaire. Ce jour-là, le manifeste devient
+        rentable — pas avant.</p>
+        <p>Formulé autrement, et c'est peut-être ce qu'il faut retenir du cours entier : la
+        partie&nbsp;I rend un vault agréable, la partie&nbsp;II le rend <em>durable</em>. Les deux
+        n'ont pas la même urgence.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-10.html"><span class="lbl">← Précédent</span>Les conventions du vault</a>
+    <a class="next" href="index.html"><span class="lbl">Sommaire →</span>Obsidian &amp; le vault autoportant</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

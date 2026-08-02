@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 10 — Les conventions : arborescence plate et front-matter normé</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 10</span><br>Les conventions : arborescence plate et front-matter normé</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Justifier une arborescence de cinq dossiers sans sous-hiérarchie.</li>
+        <li>Lire le validateur de contenu et comprendre ce qu'il garantit — et ce qu'il ne garantit
+        pas.</li>
+        <li>Comprendre pourquoi son périmètre est une liste blanche et non une liste noire.</li>
+        <li>Voir comment conventions, templates, vues et validateur se tiennent mutuellement.</li>
+      </ul>
+    </div>
+
+    <h2>1. L'arborescence</h2>
+
+    <pre class="term"><code>vault/
+├── 00-inbox/          <span class="c"># capture brute, sans front-matter</span>
+├── 10-journal/2026/   <span class="c"># notes quotidiennes, un sous-dossier par année</span>
+├── 20-notes/          <span class="c"># fiches de connaissance, à plat</span>
+├── 30-projets/        <span class="c"># une note par projet, à plat</span>
+├── 80-assets/         <span class="c"># images, PDF</span>
+├── 90-meta/           <span class="c"># manifeste, conventions, templates, vues, outillage</span>
+└── 99-archive/</code></pre>
+
+    <p>Les préfixes numériques ne servent qu'à l'ordre d'affichage. Aucun dossier n'a de
+    sous-dossier, sauf <code>10-journal/</code> découpé par année pour ne pas atteindre mille
+    fichiers dans un même répertoire.</p>
+
+    <h3>Pourquoi si peu</h3>
+
+    <p>Une hiérarchie profonde impose de répondre à « où ça va ? » à chaque note, et cette question
+    n'a souvent pas de bonne réponse. Une fiche sur les temps de cycle PROFINET appartient-elle au
+    réseau, à la performance, ou au projet en cours ? Les trois. Un dossier n'en garde qu'un.</p>
+
+    <p>Le modèle plat déplace la question : on ne demande plus <em>où</em> ranger, mais
+    <em>ce que c'est</em>. Le classement se reconstruit ensuite à volonté par requête — et une note
+    peut apparaître dans autant de vues qu'elle concerne, sans jamais être dupliquée ni
+    déplacée.</p>
+
+    <div class="callout astuce">
+      <p>Le test qui valide une arborescence : <strong>combien de temps hésites-tu avant de
+      créer une note ?</strong> Plus d'une seconde, et la structure travaille contre toi. Avec cinq
+      dossiers dont trois seulement reçoivent des notes rédigées, l'hésitation disparaît.</p>
+    </div>
+
+    <h3>Ce que porte chaque dossier</h3>
+
+    <table>
+      <thead><tr><th>Dossier</th><th>Contenu</th><th>Front-matter</th></tr></thead>
+      <tbody>
+        <tr><td><code>00-inbox/</code></td><td>Une ligne horodatée par capture, un fichier par
+          mois</td><td>aucun, par conception</td></tr>
+        <tr><td><code>10-journal/</code></td><td>Une note par jour</td><td><code>type:
+          daily</code></td></tr>
+        <tr><td><code>20-notes/</code></td><td>Fiches durables, une idée par note</td>
+          <td><code>type: concept</code></td></tr>
+        <tr><td><code>30-projets/</code></td><td>Une note par projet, cible des liens
+          <code>projets</code></td><td><code>type: projet</code></td></tr>
+        <tr><td><code>90-meta/</code></td><td>Conventions, vues, templates, manifeste,
+          outillage</td><td>selon le fichier</td></tr>
+        <tr><td><code>99-archive/</code></td><td>Ce qu'on ne veut plus voir sans vouloir le
+          supprimer</td><td>non validé</td></tr>
+      </tbody>
+    </table>
+
+    <h2>2. Le contrat, rappelé</h2>
+
+    <p>Le chapitre&nbsp;3 l'a introduit ; le voici comme règle exécutable. Cinq champs obligatoires
+    partout :</p>
+
+    <pre><code class="language-yaml">type: daily | projet | concept
+titre: …
+cree: 2026-08-02        # ISO, jamais modifié
+maj: 2026-08-02         # touché à chaque édition
+scope: pro | perso</code></pre>
+
+    <p>Plus, selon le type : <code>statut</code> obligatoire sur un projet (<code>actif</code>,
+    <code>dormant</code>, <code>clos</code>), <code>depot</code> et <code>jalons</code> optionnels ;
+    <code>sources</code> et <code>voir_aussi</code> sur un concept ; <code>projets</code> sur une
+    note quotidienne.</p>
+
+    <p>Ce contrat est documenté dans <code>90-meta/conventions.md</code> — une note ordinaire,
+    lisible dans Obsidian, à côté des vues qu'elle rend possibles.</p>
+
+    <h2>3. Le validateur</h2>
+
+    <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/vault.py doctor
+0 probleme(s)</code></pre>
+
+    <p>Il parcourt les notes du périmètre et vérifie cinq choses : le front-matter est présent et
+    lisible, les champs obligatoires sont là, <code>type</code> et <code>scope</code> sont dans
+    leur énumération, un projet a un <code>statut</code> valide, et chaque lien de
+    <code>projets</code> vise une note qui existe dans <code>30-projets/</code>.</p>
+
+    <h3>La précédence des problèmes</h3>
+
+    <p>Le validateur s'arrête au premier problème d'une note plutôt que de tout accumuler :</p>
+
+    <pre><code class="language-python"># La précédence est délibérée : un champ manquant rend les contrôles
+# suivants ininterprétables, on ne les tente pas.
+for champ in CHAMPS_OBLIGATOIRES:
+    if champ not in entete:
+        problemes.append(...)
+if problemes:
+    return problemes
+if entete["type"] not in TYPES:
+    return [Probleme(relatif, f"type invalide : {entete['type']}")]</code></pre>
+
+    <p>Signaler « <code>type</code> invalide » sur une note où <code>type</code> est absent n'aide
+    personne. Le comportement est fixé par deux tests, pour qu'un remaniement ne le change pas
+    par accident.</p>
+
+    <h3>Une note illisible n'arrête pas le reste</h3>
+
+    <div class="callout piege">
+      <p>Version initiale du validateur : <code>yaml.safe_load</code> sans garde. Une seule note
+      avec un YAML mal formé — un deux-points non quoté suffit — levait une exception qui remontait
+      jusqu'à la sortie du programme. Résultat : <strong>une note cassée masquait les diagnostics de
+      toutes les autres</strong>, sur un outil dont le seul travail est de lister les problèmes.</p>
+      <p>La note illisible doit devenir un problème signalé comme un autre, et le parcours
+      continuer. Même traitement pour un fichier illisible en UTF-8.</p>
+    </div>
+
+    <h2>4. Le périmètre : liste blanche</h2>
+
+    <pre><code class="language-python">DOSSIERS_VALIDES = ("10-journal", "20-notes", "30-projets", "90-meta")
+DOSSIERS_EXCLUS = ("90-meta/templates", "90-meta/tooling")</code></pre>
+
+    <p>Le validateur ne regarde que ces dossiers, moins ces exclusions. La formulation inverse — une
+    liste noire de ce qu'on ignore — paraît plus naturelle et se révèle fausse.</p>
+
+    <p>Ce qui doit rester dehors, et pourquoi :</p>
+
+    <ul>
+      <li><code>00-inbox/</code> — pas de front-matter, par conception (chapitre&nbsp;6) ;</li>
+      <li><code>90-meta/templates/</code> — les templates contiennent
+      <code>&lt;% tp.date.now() %&gt;</code>, qui n'est pas une date valide ;</li>
+      <li><code>90-meta/tooling/</code> — du code, et surtout des artefacts générés ;</li>
+      <li><code>README.md</code>, <code>docs/</code>, <code>99-archive/</code> — pas des notes
+      normées.</li>
+    </ul>
+
+    <div class="callout piege">
+      <p>C'est le dernier point qui tranche. Avec une liste noire, <strong>chaque nouveau fichier
+      apparu à la racine devient un faux positif</strong> jusqu'à ce qu'on pense à l'ajouter.</p>
+      <p>Le cas réel : <code>90-meta/tooling/</code> est dans le périmètre, et pytest y écrit
+      <code>.pytest_cache/README.md</code>. Lancer la suite de tests suffisait donc à faire échouer
+      <code>doctor</code> — sur un fichier généré, sans rapport avec le contenu du vault. Pire, le
+      test d'acceptation du vault lançait <code>doctor</code> <em>depuis</em> pytest : il échouait à
+      cause d'un fichier que pytest venait de créer lui-même.</p>
+    </div>
+
+    <h2>5. Les vues comme notes</h2>
+
+    <p>Les trois vues du vault vivent dans <code>90-meta/vues/</code> et sont des notes ordinaires,
+    avec leur front-matter <code>type: concept</code>. Elles sont donc versionnées, liables, et
+    validées comme les autres.</p>
+
+    <p>Ce n'est pas anodin. Une vue rangée dans la configuration serait invisible dans le vault,
+    non liable, et perdue à la reconstruction. Comme note, elle se cite, se modifie, s'améliore au
+    fil de l'usage.</p>
+
+    <div class="callout vlt">
+      <p><strong>Concepts orphelins</strong> est celle qui rend le mieux service — elle liste les
+      fiches que rien ne cite et qui ne citent rien. C'est le détecteur de base de connaissance qui
+      pourrit : une fiche isolée ne remontera jamais dans un lien retour, donc ne sera jamais
+      relue, donc n'aurait pas dû être écrite sous cette forme.</p>
+    </div>
+
+    <h2>6. Comment les pièces se tiennent</h2>
+
+    <p>Chaque élément de ce chapitre dépend des autres, et c'est ce qui rend l'ensemble stable :</p>
+
+    <table>
+      <thead><tr><th>Pièce</th><th>Ce qu'elle exige</th><th>Ce qu'elle permet</th></tr></thead>
+      <tbody>
+        <tr><td>Arborescence plate</td><td>Un classement porté ailleurs</td>
+          <td>Aucune hésitation au moment d'écrire</td></tr>
+        <tr><td>Front-matter normé</td><td>Des templates qui l'appliquent</td>
+          <td>Des vues qui reconstruisent le classement</td></tr>
+        <tr><td>Templates</td><td>Templater correctement déclenché</td>
+          <td>Que la voie conforme soit la plus rapide</td></tr>
+        <tr><td>Validateur</td><td>Un périmètre bien défini</td>
+          <td>Que la dérive se voie en trois secondes</td></tr>
+        <tr><td>Vues</td><td>Un front-matter fiable</td>
+          <td>Que le vault réponde à des questions</td></tr>
+      </tbody>
+    </table>
+
+    <p>Retire une pièce et l'édifice penche. Sans templates, le front-matter dérive et les vues se
+    vident. Sans validateur, la dérive ne se voit qu'au moment où une vue devient fausse — trop
+    tard. Sans vues, plus rien ne justifie l'effort du front-matter, et on retourne aux dossiers.</p>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Cinq dossiers, aucune sous-hiérarchie sauf l'année du journal : la question devient
+        « qu'est-ce que c'est » et non « où ça va ».</li>
+        <li>Cinq champs obligatoires, trois types fermés, un <code>statut</code> sur les
+        projets.</li>
+        <li>Le validateur s'arrête au premier problème d'une note — précédence délibérée, fixée par
+        des tests.</li>
+        <li>Une note illisible devient un problème signalé, jamais une exception qui masque les
+        autres.</li>
+        <li>Le périmètre est une liste blanche : une liste noire produit un faux positif à chaque
+        fichier nouveau.</li>
+        <li>Les vues sont des notes : versionnées, liables, validées.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Placer une note</h3>
+      <p>Où ranges-tu, et avec quel front-matter : (a) le compte-rendu d'un essai du 12 août ;
+      (b) une fiche sur la norme IEC 61158 ; (c) une idée notée en réunion, pas encore réfléchie ;
+      (d) le suivi d'un projet terminé l'an dernier ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>(a)</strong> Dans la note quotidienne du 12 août, <code>10-journal/2026/</code>,
+        comme une section. Un essai est un événement, il appartient à sa date. S'il mérite une
+        conclusion durable, celle-ci devient une fiche dans <code>20-notes/</code> que la note du
+        jour cite.</p>
+        <p><strong>(b)</strong> <code>20-notes/</code>, <code>type: concept</code>, avec
+        <code>sources</code> renseigné. Connaissance durable, pas datée.</p>
+        <p><strong>(c)</strong> <code>00-inbox/</code> via la capture — pas de front-matter, pas de
+        décision de rangement. C'est tout l'intérêt : décider coûte, et à ce moment-là tu es en
+        réunion.</p>
+        <p><strong>(d)</strong> Il <em>reste</em> dans <code>30-projets/</code> avec
+        <code>statut: clos</code>. Le déplacer vers <code>99-archive/</code> le sortirait du
+        périmètre de validation et casserait les liens des notes quotidiennes qui le citent —
+        enfin, pas les liens eux-mêmes, mais le contrôle qui vérifie qu'ils pointent quelque part.
+        L'archive est pour ce qu'on ne veut plus voir <em>du tout</em>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Étendre le contrat</h3>
+      <p>Tu veux ajouter un type <code>source</code> pour les références externes — normes,
+      articles, documentation constructeur. Quelles modifications, et dans quel ordre ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>Cinq fichiers, dans un seul commit — c'est ce qui rend l'ajout d'un type volontairement
+        coûteux&nbsp;:</p>
+        <ol>
+          <li><code>vaulttool/notes.py</code> : ajouter <code>"source"</code> à <code>TYPES</code>,
+          et les champs propres au type s'il y en a d'obligatoires.</li>
+          <li><code>tests/test_notes.py</code> : un test qui accepte une note
+          <code>type: source</code> valide, un qui refuse une variante fautive.</li>
+          <li><code>90-meta/conventions.md</code> : documenter le type et ses champs. C'est le
+          document que tu reliras dans six mois.</li>
+          <li><code>90-meta/templates/source.md</code> : le template, sans quoi le type ne sera pas
+          utilisé correctement.</li>
+          <li>Une vue, ou une colonne dans une vue existante. Un type qu'aucune vue n'expose ne sert
+          à rien : personne ne verra jamais ces notes autrement qu'en les cherchant.</li>
+        </ol>
+        <p><strong>La vraie question, avant tout ça</strong> : est-ce qu'une fiche
+        <code>concept</code> avec <code>sources</code> renseigné ne fait pas déjà le travail ? Un
+        type se justifie quand il porte des champs différents <em>et</em> qu'on veut l'interroger
+        séparément. Sinon, c'est une étiquette.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Le validateur qui certifie à tort</h3>
+      <p><code>vault.py doctor --racine /chemin/qui/n-existe-pas</code> retourne
+      <code>0 probleme(s)</code> et sort en code 0. Pourquoi, et est-ce grave ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Pourquoi</strong> : le parcours repose sur <code>rglob</code> et
+        <code>glob</code>, qui sur un dossier inexistant retournent simplement une séquence vide
+        plutôt que de lever une erreur. Zéro note parcourue, donc zéro problème trouvé, donc
+        « tout va bien ».</p>
+        <p><strong>Est-ce grave</strong> : en usage interactif, non — on voit qu'on s'est trompé de
+        chemin. Dans un script, oui : un contrôle qui répond « conforme » alors qu'il n'a rien
+        examiné est pire qu'un contrôle absent, parce qu'on lui fait confiance.</p>
+        <p>C'est la même famille de défaut que l'exercice&nbsp;2 du chapitre&nbsp;9 : la commande ne
+        distingue pas « rien à signaler » de « rien examiné ». Le correctif tient en deux lignes —
+        vérifier que la racine existe et contient au moins un des dossiers attendus, sinon échouer
+        franchement.</p>
+        <p>Généralisation utile : <strong>tout contrôle qui peut retourner « conforme » sans avoir
+        rien vérifié doit être capable de dire combien d'objets il a examinés.</strong> Afficher
+        « 0 probleme(s) sur 148 notes » aurait rendu le défaut visible immédiatement.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-09.html"><span class="lbl">← Précédent</span>L'outillage</a>
+    <a class="next" href="chapitre-11.html"><span class="lbl">Suivant →</span>Exploitation</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

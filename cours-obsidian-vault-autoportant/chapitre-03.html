@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 03 — Le front-matter : le contrat de données</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 03</span><br>Le front-matter : le contrat de données</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Écrire un front-matter YAML valide et connaître les clés qu'Obsidian traite
+        spécialement.</li>
+        <li>Comprendre le typage des propriétés, où il est stocké, et ce qu'il change.</li>
+        <li>Éviter les trois pièges de syntaxe qui cassent silencieusement une requête.</li>
+        <li>Concevoir un schéma de front-matter comme un contrat : fermé, obligatoire,
+        vérifiable.</li>
+      </ul>
+    </div>
+
+    <h2>1. Un bloc YAML en tête de fichier</h2>
+
+    <p>Une note peut commencer par un bloc délimité par deux lignes de trois tirets. Obsidian
+    l'appelle « propriétés », le reste du monde l'appelle front-matter :</p>
+
+    <pre><code class="language-markdown">---
+type: concept
+titre: Rétraction de bras
+cree: 2026-08-02
+maj: 2026-08-02
+scope: pro
+tags: [safety, siemens]
+---
+
+## Définition
+
+Le corps de la note commence ici.</code></pre>
+
+    <p>Le bloc doit être <strong>tout en haut</strong> du fichier, sans ligne vide avant. Un
+    front-matter précédé d'un titre ou d'une ligne blanche n'est pas reconnu : il s'affiche comme
+    du texte.</p>
+
+    <div class="callout obs">
+      <p>Obsidian affiche ce bloc sous forme de tableau éditable en haut de la note. Le mode source
+      (<code>Ctrl+E</code> bascule) montre le YAML brut. L'éditeur de propriétés est confortable et
+      il <strong>quote automatiquement</strong> ce qui doit l'être — un point qui aura son
+      importance en section&nbsp;4.</p>
+    </div>
+
+    <h2>2. Les clés qu'Obsidian connaît</h2>
+
+    <p>La plupart des clés sont libres : tu inventes les noms qui te servent. Quatre ont un sens
+    particulier pour Obsidian&nbsp;:</p>
+
+    <table>
+      <thead>
+        <tr><th>Clé</th><th>Effet</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>tags</code></td><td>Équivalent des <code>#étiquettes</code> du corps, mais
+          déclarées proprement. À préférer : elles ne polluent pas le texte.</td></tr>
+        <tr><td><code>aliases</code></td><td>Noms alternatifs sous lesquels la note est
+          atteignable par lien et par recherche.</td></tr>
+        <tr><td><code>cssclasses</code></td><td>Classes CSS appliquées à la note — utile avec un
+          extrait CSS pour, par exemple, élargir une note de tableau.</td></tr>
+        <tr><td><code>publish</code></td><td>Utilisé par le service Obsidian Publish. Sans intérêt
+          si tu ne l'utilises pas.</td></tr>
+      </tbody>
+    </table>
+
+    <p>Tout le reste — <code>type</code>, <code>statut</code>, <code>depot</code>,
+    <code>projets</code> — n'existe que pour toi et pour tes requêtes.</p>
+
+    <h2>3. Le typage des propriétés</h2>
+
+    <p>Obsidian associe un type à chaque nom de propriété rencontré dans le vault : texte, liste,
+    nombre, date, date et heure, case à cocher. Ce type gouverne l'éditeur — un champ typé
+    « date » ouvre un calendrier — et il est global au vault, pas par note.</p>
+
+    <p>Ces associations vivent dans <code>.obsidian/types.json</code> :</p>
+
+    <pre><code class="language-json">{
+  "types": {
+    "aliases": "aliases",
+    "cssclasses": "multitext",
+    "tags": "tags",
+    "cree": "date",
+    "statut": "text"
+  }
+}</code></pre>
+
+    <div class="callout piege">
+      <p>Le typage est déduit de la première valeur rencontrée, puis figé. Si ta toute première
+      note écrit <code>jalons: 3</code>, la propriété devient un nombre pour tout le vault, et
+      <code>jalons: [étude, FAT]</code> ailleurs deviendra incohérent.</p>
+      <p>Le remède est le même que pour le reste du chapitre : décide du schéma d'abord, et
+      applique-le par template plutôt qu'à la main.</p>
+    </div>
+
+    <h2>4. Les trois pièges de syntaxe</h2>
+
+    <h3>Un lien non quoté n'est pas un lien</h3>
+
+    <p>C'est le piège le plus coûteux, parce qu'il est silencieux. En YAML, un crochet ouvrant
+    démarre une liste. Donc&nbsp;:</p>
+
+    <pre><code class="language-yaml">projets: [[supervision]]      <span class="c"># ← PAS un lien</span></code></pre>
+
+    <p>YAML lit une liste contenant une liste contenant la chaîne <code>supervision</code>. Ni
+    Obsidian ni Dataview n'y verront un lien. Il faut quoter&nbsp;:</p>
+
+    <pre><code class="language-yaml">projets: ["[[supervision]]"]  <span class="c"># ← un lien, dans une liste</span>
+projets:
+  - "[[supervision]]"         <span class="c"># ← même chose, forme longue</span></code></pre>
+
+    <p>L'éditeur de propriétés d'Obsidian quote tout seul. Le piège ne se déclenche que si tu
+    édites le YAML à la main, en mode source — ce qui arrive dès qu'on écrit un template.</p>
+
+    <h3>Les deux-points coupent la valeur</h3>
+
+    <pre><code class="language-yaml">titre: Rétraction : le cas du bras 3   <span class="c"># ← YAML invalide</span>
+titre: "Rétraction : le cas du bras 3" <span class="c"># ← correct</span></code></pre>
+
+    <p>Un deux-points suivi d'une espace sépare une clé de sa valeur. Dans une valeur non quotée,
+    il rend le document invalide — et un front-matter invalide n'est pas partiellement lu, il est
+    ignoré <em>en entier</em>.</p>
+
+    <h3>Les dates ne sont pas des chaînes</h3>
+
+    <pre><code class="language-yaml">cree: 2026-08-02       <span class="c"># ← une date pour YAML</span>
+cree: "2026-08-02"     <span class="c"># ← une chaîne qui ressemble à une date</span></code></pre>
+
+    <p>Les deux s'affichent pareil et se trient pareil tant que le format est ISO. La différence
+    apparaît en requête : Dataview sait faire de l'arithmétique sur une date, pas sur une chaîne.
+    Reste cohérent dans tout le vault, et le format ISO <code>AAAA-MM-JJ</code> te protège dans les
+    deux cas.</p>
+
+    <h2>5. Le front-matter comme contrat</h2>
+
+    <p>Jusqu'ici, du confort. L'idée qui change tout est ailleurs : <strong>si le front-matter est
+    régulier, il devient une base de données</strong>, et l'arborescence peut être plate.</p>
+
+    <p>Régulier veut dire quatre choses :</p>
+
+    <ol>
+      <li><strong>Des champs obligatoires.</strong> Toute note en porte le même noyau — dans le
+      vault de la partie&nbsp;II : <code>type</code>, <code>titre</code>, <code>cree</code>,
+      <code>maj</code>, <code>scope</code>.</li>
+      <li><strong>Des énumérations fermées.</strong> <code>type</code> vaut <code>daily</code>,
+      <code>projet</code> ou <code>concept</code>, et rien d'autre. Trois valeurs, pas quarante.</li>
+      <li><strong>Des noms stables.</strong> Un seul nom par idée : jamais <code>projet</code> ici
+      et <code>projets</code> là.</li>
+      <li><strong>Quelque chose qui vérifie.</strong> Une convention que rien ne contrôle dérive en
+      quelques semaines.</li>
+    </ol>
+
+    <div class="callout vlt">
+      <p>Voici le schéma du vault de la partie&nbsp;II, qui sert d'exemple fil rouge. Noms en
+      français sans accent — cohérent avec la langue de travail, et les requêtes Dataview sur clés
+      accentuées sont pénibles à écrire.</p>
+      <pre><code class="language-yaml">---
+type: daily | projet | concept   # énumération fermée
+titre: Rétraction de bras
+cree: 2026-08-02                 # ISO, jamais modifié après création
+maj: 2026-08-02                  # mis à jour à chaque édition
+scope: pro | perso
+tags: [safety]
+---</code></pre>
+      <p>Puis, selon le <code>type</code> :</p>
+      <pre><code class="language-yaml"># type: projet
+statut: actif | dormant | clos
+depot: 100-industrial-supervision   # nom de dossier local, jamais une URL
+jalons: []
+
+# type: concept
+sources: []
+voir_aussi: []
+
+# type: daily
+projets: ["[[supervision]]"]        # noter les guillemets</code></pre>
+    </div>
+
+    <h3>Pourquoi <code>cree</code> et <code>maj</code> séparés</h3>
+
+    <p><code>cree</code> ne change jamais après la création ; <code>maj</code> bouge à chaque
+    édition. Cette séparation permet deux tris différents — « les fiches les plus récentes » et
+    « ce que j'ai touché cette semaine » — et garde le tri chronologique stable quand on retouche
+    une vieille note.</p>
+
+    <h3>Pourquoi une énumération fermée</h3>
+
+    <p>Parce qu'ouvrir <code>type</code> le condamne. En quelques mois tu auras
+    <code>meeting-notes</code>, <code>réunion</code>, <code>Réunion</code> et <code>meeting</code>,
+    et aucune requête ne pourra plus les traiter ensemble.</p>
+
+    <p>Trois valeurs, c'est peu, et c'est délibéré : ajouter un type doit coûter un effort
+    conscient — modifier la convention, le template, la vue, dans le même commit.</p>
+
+    <div class="callout astuce">
+      <p>Un champ mérite d'exister s'il répond à une question que tu te poses vraiment. « Quels
+      projets sont actifs ? » justifie <code>statut</code>. « Quelle est l'humeur de cette
+      note ? » ne justifie rien : personne ne posera jamais la question, et le champ ne sera pas
+      rempli au bout de trois semaines.</p>
+    </div>
+
+    <h2>6. Vérifier plutôt qu'espérer</h2>
+
+    <p>Un contrat sans contrôle est un vœu. Le vault de la partie&nbsp;II embarque un validateur,
+    <code>vault.py doctor</code>, qui parcourt les notes et vérifie&nbsp;: front-matter présent,
+    champs obligatoires renseignés, <code>type</code> et <code>scope</code> dans leur énumération,
+    <code>statut</code> présent et valide sur les projets, et aucun lien de projet pointant vers
+    une note inexistante.</p>
+
+    <pre class="term"><code><span class="prompt">$</span> uv run --project 90-meta/tooling 90-meta/tooling/vault.py doctor
+20-notes/temps-de-cycle.md : champ obligatoire manquant : scope
+30-projets/supervision.md : statut invalide : en cours
+10-journal/2026/2026-08-01.md : projet inconnu : superivsion
+3 probleme(s)</code></pre>
+
+    <p>Trois secondes d'exécution, et la dérive est nommée avant d'avoir contaminé cent notes. Le
+    chapitre&nbsp;10 détaille ce validateur.</p>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Le front-matter est un bloc YAML tout en haut du fichier, délimité par
+        <code>---</code>.</li>
+        <li><code>tags</code>, <code>aliases</code>, <code>cssclasses</code> ont un sens pour
+        Obsidian ; le reste n'existe que pour toi et tes requêtes.</li>
+        <li>Le typage des propriétés est global au vault et figé à la première valeur vue.</li>
+        <li>Trois pièges : un lien non quoté n'est pas un lien, un deux-points non quoté invalide
+        tout le bloc, une date quotée n'est plus une date.</li>
+        <li>Champs obligatoires, énumérations fermées, noms stables, et un validateur : c'est ce
+        qui autorise une arborescence plate.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Trouver l'erreur</h3>
+      <p>Ce front-matter ne produit rien dans les requêtes. Trois défauts, lesquels ?</p>
+      <pre><code class="language-yaml">
+---
+type: Projet
+titre: Supervision : refonte du poste opérateur
+statut: en cours
+projets: [[ruwais]]
+---</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>1. Le deux-points dans <code>titre</code>.</strong> Non quoté, il rend le YAML
+        invalide, et un front-matter invalide est ignoré en entier — c'est la cause première du
+        « rien ne remonte ». À écrire <code>titre: "Supervision : refonte du poste
+        opérateur"</code>.</p>
+        <p><strong>2. <code>type: Projet</code> avec une majuscule</strong>, et
+        <code>statut: en cours</code> hors énumération. Une requête filtrant sur
+        <code>type = "projet"</code> et <code>statut = "actif"</code> ne verra jamais cette note.
+        Le validateur les signale tous les deux.</p>
+        <p><strong>3. <code>projets: [[ruwais]]</code> non quoté.</strong> YAML y lit une liste de
+        liste de chaînes, pas un lien. À écrire <code>projets: ["[[ruwais]]"]</code>.</p>
+        <p>À noter aussi : <code>cree</code>, <code>maj</code> et <code>scope</code> manquent, mais
+        c'est une omission, pas une erreur de syntaxe.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Concevoir un champ</h3>
+      <p>Tu veux suivre l'avancement de tes projets plus finement que <code>actif / dormant /
+      clos</code>. Un collègue propose <code>avancement: 65</code> (pourcentage). Argumente pour ou
+      contre.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p><strong>Contre, dans la plupart des cas.</strong> Trois raisons&nbsp;:</p>
+        <ul>
+          <li><em>Il ne répond à aucune question précise.</em> « Quels projets sont actifs ? » se
+          pose ; « quels projets sont entre 60 et 70&nbsp;% ? » ne se pose jamais.</li>
+          <li><em>Il exige une mise à jour continue</em> pour rester vrai. Un champ dont la valeur
+          se périme en silence est pire qu'un champ absent : il fait croire à une information.</li>
+          <li><em>Le chiffre est arbitraire.</em> 65&nbsp;% de quoi ? Sans définition partagée, deux
+          projets à 65 ne sont pas comparables.</li>
+        </ul>
+        <p><strong>Pour, à une condition</strong> : que le pourcentage soit <em>dérivé</em> plutôt
+        que saisi — par exemple le ratio de jalons cochés, calculé par une requête. Là il ne se
+        périme plus, puisqu'il est recalculé à l'affichage.</p>
+        <p>C'est la bonne réflexe général : préférer ce qui se calcule à ce qui se maintient.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Migrer sans tout casser</h3>
+      <p>Ton vault contient 200 notes avec <code>date:</code>, et tu veux passer à
+      <code>cree:</code>. Comment procèdes-tu, et dans quel ordre ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>L'ordre importe, parce que les vues et les templates dépendent du nom.</p>
+        <ol>
+          <li><strong>Sauvegarder</strong> : le vault est sous git, donc commiter d'abord. C'est ce
+          qui rend la suite sans risque.</li>
+          <li><strong>Renommer dans les fichiers</strong>, avec Obsidian fermé pour qu'il ne
+          réécrive rien pendant l'opération&nbsp;:
+          <pre class="term"><code><span class="prompt">$</span> grep -rl '^date:' 20-notes 30-projets \
+    | xargs sed -i 's/^date:/cree:/'</code></pre>
+          L'ancrage <code>^</code> évite de toucher un <code>date:</code> qui apparaîtrait au milieu
+          d'une phrase.</li>
+          <li><strong>Mettre à jour templates et vues</strong> dans le même commit, sinon une note
+          créée entre-temps repart avec l'ancien nom.</li>
+          <li><strong>Relancer le validateur</strong> et vérifier zéro problème, puis
+          <code>git diff --stat</code> pour confirmer que seuls les fichiers attendus ont bougé.</li>
+          <li><strong>Nettoyer le typage</strong> : <code>.obsidian/types.json</code> garde une
+          entrée <code>date</code> devenue orpheline. Sans conséquence, mais autant la retirer.</li>
+        </ol>
+        <p>Et si le renommage se passe mal, <code>git checkout .</code> annule tout : c'est
+        précisément pour ce genre de manipulation que le vault est versionné.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-02.html"><span class="lbl">← Précédent</span>Écrire et relier</a>
+    <a class="next" href="chapitre-04.html"><span class="lbl">Suivant →</span>Les plugins cœur</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

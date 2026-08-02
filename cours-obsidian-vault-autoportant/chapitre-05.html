@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapitre 05 — Dataview : interroger ses propres notes</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Coloration syntaxique (via CDN ; le code reste lisible hors-ligne) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>window.addEventListener('DOMContentLoaded',()=>hljs.highlightAll());</script>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <h1><span class="chap-num">Chapitre 05</span><br>Dataview : interroger ses propres notes</h1>
+
+    <div class="objectifs">
+      <h2>Objectifs du chapitre</h2>
+      <ul>
+        <li>Écrire les quatre formes de requête : <code>LIST</code>, <code>TABLE</code>,
+        <code>TASK</code>, <code>CALENDAR</code>.</li>
+        <li>Sélectionner une source avec <code>FROM</code>, filtrer avec <code>WHERE</code>, trier
+        et grouper.</li>
+        <li>Utiliser les champs implicites que Dataview expose sur chaque note, sans que tu les
+        aies écrits.</li>
+        <li>Reconnaître le piège de <code>GROUP BY</code>, qui produit un tableau vide sans le
+        moindre message d'erreur.</li>
+        <li>Comprendre pourquoi ce plugin est ce qui rend une arborescence plate viable.</li>
+      </ul>
+    </div>
+
+    <h2>1. L'idée</h2>
+
+    <p>Dataview lit le front-matter de toutes les notes du vault et t'en donne une vue de base de
+    données. Tu écris une requête dans un bloc de code, et Obsidian affiche le résultat, recalculé
+    à chaque ouverture de la note.</p>
+
+    <p>C'est le pendant du chapitre&nbsp;3 : le front-matter est le contrat, Dataview est le moteur
+    qui l'exploite. Sans lui, un vault plat n'est qu'un tas de fichiers ; avec lui, le classement
+    se reconstruit à la demande, sous autant d'angles que tu veux.</p>
+
+    <pre><code class="language-markdown">```dataview
+TABLE statut, depot, maj
+FROM "30-projets"
+WHERE type = "projet" AND statut = "actif"
+SORT maj DESC
+```</code></pre>
+
+    <div class="callout astuce">
+      <p>Le renversement à saisir : <strong>tu ne ranges plus, tu décris</strong>. Une note bien
+      décrite apparaît toute seule dans toutes les vues qui la concernent — et dans celles que tu
+      inventeras dans six mois, sans avoir à la déplacer.</p>
+    </div>
+
+    <h2>2. Les quatre formes de requête</h2>
+
+    <table>
+      <thead><tr><th>Forme</th><th>Produit</th><th>Quand</th></tr></thead>
+      <tbody>
+        <tr><td><code>LIST</code></td><td>Une liste de liens</td><td>« Quelles notes… ? »</td></tr>
+        <tr><td><code>TABLE</code></td><td>Un tableau, une colonne par expression</td>
+          <td>« Quelles notes, et avec quelles valeurs ? »</td></tr>
+        <tr><td><code>TASK</code></td><td>Les cases à cocher, cochables depuis la vue</td>
+          <td>« Que reste-t-il à faire ? »</td></tr>
+        <tr><td><code>CALENDAR</code></td><td>Un calendrier pointé par une date</td>
+          <td>Rare ; joli, peu actionnable</td></tr>
+      </tbody>
+    </table>
+
+    <pre><code class="language-sql">LIST
+FROM "20-notes"
+WHERE type = "concept"
+SORT file.name ASC
+
+TABLE WITHOUT ID file.link AS Note, maj AS "Dernière touche"
+FROM "20-notes"
+LIMIT 10
+
+TASK
+FROM "30-projets"
+WHERE !completed</code></pre>
+
+    <p><code>WITHOUT ID</code> supprime la première colonne, ajoutée d'office, qui contient le lien
+    vers la note. À utiliser dès que tu veux maîtriser tes colonnes, comme ci-dessus où le lien est
+    remis à la main sous un nom choisi.</p>
+
+    <h2>3. Choisir la source</h2>
+
+    <p><code>FROM</code> restreint l'ensemble de départ. Sans lui, la requête porte sur tout le
+    vault.</p>
+
+    <pre><code class="language-sql">FROM "30-projets"                <span class="c">-- un dossier (guillemets obligatoires)</span>
+FROM #safety                      <span class="c">-- une étiquette</span>
+FROM [[profinet]]                 <span class="c">-- les notes qui pointent VERS cette note</span>
+FROM outgoing([[profinet]])       <span class="c">-- les notes QUE cette note cite</span>
+FROM "20-notes" AND #safety       <span class="c">-- combinaisons avec AND / OR / -</span>
+FROM "20-notes" AND -#à-trier</code></pre>
+
+    <div class="callout astuce">
+      <p><code>FROM [[une note]]</code> mérite d'être connu : c'est la version interrogeable des
+      liens retour. Placé dans une fiche projet, il liste toutes les notes quotidiennes qui l'ont
+      citée — un journal de projet reconstitué sans qu'on l'ait jamais tenu.</p>
+    </div>
+
+    <h2>4. Les champs implicites</h2>
+
+    <p>Au-delà de ton front-matter, Dataview expose sur chaque note un objet <code>file</code> que
+    tu n'as rien eu à remplir :</p>
+
+    <table>
+      <thead><tr><th>Champ</th><th>Contenu</th></tr></thead>
+      <tbody>
+        <tr><td><code>file.name</code></td><td>Nom sans extension</td></tr>
+        <tr><td><code>file.link</code></td><td>Lien cliquable vers la note</td></tr>
+        <tr><td><code>file.folder</code></td><td>Dossier parent</td></tr>
+        <tr><td><code>file.ctime</code> / <code>file.mtime</code></td><td>Création et modification,
+          vues par le système de fichiers</td></tr>
+        <tr><td><code>file.tags</code></td><td>Étiquettes, corps et front-matter confondus</td></tr>
+        <tr><td><code>file.inlinks</code> / <code>file.outlinks</code></td><td>Liens entrants et
+          sortants</td></tr>
+        <tr><td><code>file.tasks</code></td><td>Les cases à cocher de la note</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout piege">
+      <p><code>file.ctime</code> et <code>file.mtime</code> viennent du <em>système de
+      fichiers</em>, pas de toi. Un <code>git clone</code>, une copie, une synchronisation les
+      réécrivent toutes à la date de l'opération. C'est exactement pourquoi le schéma du
+      chapitre&nbsp;3 porte ses propres <code>cree</code> et <code>maj</code> : eux voyagent avec
+      le contenu.</p>
+    </div>
+
+    <h3>Les champs en ligne</h3>
+
+    <p>Dataview lit aussi des champs posés dans le corps de la note, avec un double deux-points :</p>
+
+    <pre><code class="language-markdown">Mesure effectuée le terrain. duree:: 45min
+- [ ] Reprendre l'essai [échéance:: 2026-09-01]</code></pre>
+
+    <p>Pratique pour annoter une ligne précise. À utiliser avec parcimonie : ces champs échappent au
+    front-matter, donc au contrat du chapitre&nbsp;3, donc au validateur.</p>
+
+    <h2>5. Filtrer, trier, limiter</h2>
+
+    <pre><code class="language-sql">WHERE type = "projet" AND statut != "clos"
+WHERE contains(tags, "safety")
+WHERE cree >= date(2026-01-01)
+WHERE length(file.inlinks) = 0
+WHERE contains(projets, this.file.link)
+
+SORT maj DESC, file.name ASC
+LIMIT 20</code></pre>
+
+    <p><code>this</code> désigne la note qui contient la requête. C'est ce qui permet d'écrire une
+    requête <em>générique</em> dans un template : la même ligne, recopiée dans chaque fiche projet,
+    donne à chaque fois le bon résultat.</p>
+
+    <p>Les fonctions les plus utiles : <code>contains(liste, valeur)</code>,
+    <code>length(liste)</code>, <code>date(…)</code> et <code>dur(…)</code>,
+    <code>choice(test, si_vrai, si_faux)</code>, <code>filter()</code>, <code>map()</code>,
+    <code>sum()</code>, <code>round()</code>.</p>
+
+    <h2>6. Grouper — et le piège</h2>
+
+    <p><code>GROUP BY</code> regroupe les résultats par la valeur d'une expression. Et il change ce
+    qui est visible à partir de là, ce que la documentation ne crie pas assez fort.</p>
+
+    <pre><code class="language-sql">TABLE depot, maj
+FROM "30-projets"
+WHERE type = "projet"
+GROUP BY statut</code></pre>
+
+    <p>Cette requête <strong>s'affiche sans erreur</strong>, avec les bons groupes… et deux colonnes
+    intégralement vides.</p>
+
+    <div class="callout piege">
+      <p>Après <code>GROUP BY</code>, une ligne de résultat n'est plus une note : c'est un groupe.
+      Deux choses seulement existent à ce niveau — la clé du groupe (<code>key</code>) et
+      <code>rows</code>, le tableau des notes qui le composent. <code>depot</code> et
+      <code>maj</code> n'y sont pas définis, donc s'affichent vides.</p>
+      <p>Il faut passer par <code>rows</code> :</p>
+      <pre><code class="language-sql">TABLE rows.file.link AS Projet, rows.depot, rows.maj
+FROM "30-projets"
+WHERE type = "projet"
+GROUP BY statut</code></pre>
+      <p>Ce défaut est passé au travers d'une revue dans le vault de la partie&nbsp;II : la requête
+      s'affichait, les groupes étaient corrects, et personne ne remarquait les colonnes vides. Aucun
+      test ne peut l'attraper — seule la lecture du résultat le révèle.</p>
+    </div>
+
+    <p><code>FLATTEN</code> fait l'inverse : il déplie une liste pour produire une ligne par
+    élément. Utile pour éclater les étiquettes ou les liens d'une note.</p>
+
+    <pre><code class="language-sql">TABLE file.link
+FROM "10-journal"
+FLATTEN projets AS projet
+WHERE projet = this.file.link</code></pre>
+
+    <h2>7. Les trois vues du vault de référence</h2>
+
+    <div class="callout vlt">
+      <p>Dans le vault de la partie&nbsp;II, les vues sont des <em>notes ordinaires</em> rangées
+      dans <code>90-meta/vues/</code>. Elles sont donc versionnées, liables, et modifiables sans
+      toucher à la configuration.</p>
+    </div>
+
+    <h3>Tableau de bord</h3>
+
+    <pre><code class="language-sql">TABLE statut, depot, maj
+FROM "30-projets"
+WHERE type = "projet" AND statut = "actif"
+SORT maj DESC</code></pre>
+
+    <p>Complété par la liste de l'inbox à trier et, via le plugin Tasks, les tâches en retard.</p>
+
+    <h3>Concepts orphelins</h3>
+
+    <pre><code class="language-sql">LIST
+FROM "20-notes"
+WHERE type = "concept"
+  AND length(file.inlinks) = 0
+  AND (!voir_aussi OR length(voir_aussi) = 0)
+SORT file.name ASC</code></pre>
+
+    <p>C'est le détecteur de base de connaissance qui pourrit : une fiche que rien ne cite et qui ne
+    cite rien ne sera jamais relue. La double condition couvre les deux formes d'absence — champ
+    inexistant, et champ présent mais vide.</p>
+
+    <h2>8. Dataview JS, et quand s'arrêter</h2>
+
+    <p>Dataview offre aussi un mode JavaScript, <code>dataviewjs</code>, où tu construis le rendu
+    à la main. Il permet tout, y compris des choses qu'on regrette.</p>
+
+    <div class="callout piege">
+      <p>Trois raisons de rester sur le langage de requête tant que possible : le JavaScript
+      s'exécute à chaque affichage et peut ralentir sérieusement une note ; il est illisible pour
+      qui reprend le vault ; et il permet d'écrire dans le vault, donc de casser des choses depuis
+      ce qui devrait n'être qu'un affichage.</p>
+      <p>Si une vue demande vraiment du JavaScript, demande-toi d'abord si le schéma de front-matter
+      n'est pas en cause. Les neuf fois sur dix, la requête complexe compense une donnée mal
+      structurée.</p>
+    </div>
+
+    <h2>Récapitulatif</h2>
+    <div class="callout note">
+      <ul>
+        <li>Quatre formes : <code>LIST</code>, <code>TABLE</code>, <code>TASK</code>,
+        <code>CALENDAR</code>. <code>WITHOUT ID</code> pour maîtriser les colonnes.</li>
+        <li><code>FROM</code> accepte dossier, étiquette, lien entrant, <code>outgoing()</code>, et
+        leurs combinaisons.</li>
+        <li>L'objet <code>file</code> expose des champs que tu n'as pas écrits — mais
+        <code>file.ctime</code> ment après un clone.</li>
+        <li><code>this</code> désigne la note porteuse : c'est ce qui rend une requête générique
+        dans un template.</li>
+        <li>Après <code>GROUP BY</code>, seuls <code>key</code> et <code>rows</code> existent.
+        Tout le reste s'affiche vide, sans erreur.</li>
+        <li>Une requête compliquée est presque toujours le symptôme d'un front-matter mal
+        conçu.</li>
+      </ul>
+    </div>
+
+    <h2>Exercices</h2>
+
+    <div class="exercice">
+      <h3>Exercice 1 — Écrire la requête</h3>
+      <p>Écris une requête qui liste, sous forme de tableau, les fiches de <code>20-notes</code>
+      touchées depuis le 1<sup>er</sup> juillet 2026, avec leur date de mise à jour et leur nombre
+      de liens entrants, les plus citées d'abord.</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-sql">TABLE WITHOUT ID file.link AS Fiche,
+      maj AS "Mise à jour",
+      length(file.inlinks) AS Citations
+FROM "20-notes"
+WHERE type = "concept" AND maj >= date(2026-07-01)
+SORT length(file.inlinks) DESC</code></pre>
+        <p>Points d'attention : <code>date(2026-07-01)</code> sans guillemets — c'est un littéral de
+        date, pas une chaîne ; <code>length(file.inlinks)</code> se répète dans la colonne et dans
+        le tri, Dataview ne permet pas de trier sur l'alias ; et <code>WITHOUT ID</code> évite la
+        colonne de lien en double.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 2 — Réparer la requête</h3>
+      <p>Cette requête affiche les bons groupes mais des colonnes vides. Corrige-la, et explique en
+      une phrase pourquoi elle ne produisait aucune erreur.</p>
+      <pre><code class="language-sql">TABLE titre, cree
+FROM "20-notes"
+GROUP BY type</code></pre>
+      <details>
+        <summary>Voir la solution</summary>
+        <pre><code class="language-sql">TABLE rows.file.link AS Note, rows.titre, rows.cree
+FROM "20-notes"
+GROUP BY type</code></pre>
+        <p><strong>Pourquoi pas d'erreur</strong> : après <code>GROUP BY</code>, <code>titre</code>
+        et <code>cree</code> ne sont pas des noms invalides, ce sont des champs simplement absents
+        du contexte de groupe. Dataview traite un champ absent comme vide — comportement voulu, qui
+        évite qu'une note sans le champ fasse planter toute la vue. Le coût, c'est qu'une faute de
+        frappe ou une erreur de portée passe inaperçue.</p>
+        <p>Le réflexe à prendre : <strong>une colonne vide sur toutes les lignes n'est pas un
+        vault mal rempli, c'est une requête fausse</strong>.</p>
+      </details>
+    </div>
+
+    <div class="exercice">
+      <h3>Exercice 3 — Concevoir la vue manquante</h3>
+      <p>Tu veux repérer les notes quotidiennes qui mentionnent un projet dont le
+      <code>statut</code> est <code>clos</code> — signe que tu travailles encore sur quelque chose
+      que tu crois terminé. Comment t'y prends-tu ?</p>
+      <details>
+        <summary>Voir la solution</summary>
+        <p>La difficulté est que la condition porte sur une propriété de la note <em>liée</em>, pas
+        de la note courante. Il faut déplier les liens puis suivre le lien&nbsp;:</p>
+        <pre><code class="language-sql">TABLE WITHOUT ID file.link AS Jour, projet AS Projet
+FROM "10-journal"
+FLATTEN projets AS projet
+WHERE projet AND projet.statut = "clos"
+SORT file.name DESC</code></pre>
+        <p><code>FLATTEN</code> produit une ligne par projet cité, puis <code>projet.statut</code>
+        déréférence le lien pour lire le front-matter de la cible.</p>
+        <p>Le <code>WHERE projet AND …</code> n'est pas décoratif : une note quotidienne sans
+        <code>projets</code> produit un <code>projet</code> nul, et déréférencer nul remonterait une
+        erreur.</p>
+        <p>Autre approche, plus simple à lire mais moins directe : partir des projets clos et lister
+        leurs liens entrants avec <code>FROM [[…]]</code>. Il faudrait alors une requête par projet
+        — d'où l'intérêt de la version ci-dessus, qui tient en une vue.</p>
+      </details>
+    </div>
+  </main>
+
+  <nav class="pager">
+    <a class="prev" href="chapitre-04.html"><span class="lbl">← Précédent</span>Les plugins cœur</a>
+    <a class="next" href="chapitre-06.html"><span class="lbl">Suivant →</span>Templater et QuickAdd</a>
+  </nav>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Obsidian &amp; le vault autoportant — Sommaire</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="index.html">🧠 Obsidian <span>· &amp; le vault autoportant</span></a>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Obsidian &amp; le vault autoportant</h1>
+      <p class="sub">Apprendre Obsidian et ses principaux plugins — <strong>Dataview, Templater,
+      QuickAdd, Tasks, Obsidian&nbsp;Git</strong> — puis construire un vault dont
+      <em>toute</em> la configuration est décrite dans le vault lui-même et reconstructible par une
+      commande. 11 chapitres en français : concepts, fichiers réels commentés, et exercices à
+      solutions repliables.</p>
+    </div>
+
+    <div class="callout note">
+      <strong>Comment lire ce cours ?</strong> La <strong>partie I</strong> part de zéro sur Obsidian :
+      ce qu'est un vault, comment on relie des notes, le front-matter, puis un plugin par chapitre
+      jusqu'à savoir écrire ses propres vues. La <strong>partie II</strong> répond à une question que
+      la partie I laisse ouverte : « si tout est dans des fichiers, pourquoi ma configuration,
+      elle, n'est-elle nulle part ? » On y construit un manifeste et l'outillage qui le
+      matérialise. Les encarts « 💡 Intuition », « ⚠️ Piège », « 🖥️ Au shell », « 🧠 Dans Obsidian »
+      et « 🗂️ Dans le vault » balisent le texte. Chaque chapitre finit par des
+      <strong>exercices</strong> à solution repliable.
+    </div>
+
+    <div class="callout obs">
+      <p>Le cours suppose seulement Obsidian installé (version 1.9 ou plus récente). La partie II
+      utilise en plus&nbsp;:</p>
+      <ul>
+        <li><strong>git</strong>, pour versionner le vault — les commandes sont montrées, aucun
+        prérequis avancé ;</li>
+        <li><strong>Python 3.12 et <code>uv</code></strong>, pour l'outillage du manifeste. Le code
+        est commenté ligne à ligne : savoir lire du Python suffit, pas besoin d'en écrire.</li>
+      </ul>
+      <p>Tous les extraits de configuration, de code et de sortie de commande viennent d'un vault
+      réel, pas d'un exemple inventé.</p>
+    </div>
+
+    <ul class="klegend" aria-hidden="true">
+      <li><span class="sw sw-l1"></span> Partie I — Obsidian</li>
+      <li><span class="sw sw-l2"></span> Partie II — Vault autoportant</li>
+    </ul>
+
+    <div class="part-title">Partie I — Obsidian et ses plugins</div>
+    <ul class="toc">
+      <li><a href="chapitre-01.html">
+        <span class="num">01</span>
+        <span>
+          <strong>Le vault : un dossier de fichiers, rien de plus</strong>
+          <span class="desc">Ce qu'Obsidian est vraiment — un éditeur au-dessus d'un dossier de
+          markdown. Anatomie d'un vault, rôle de <code>.obsidian/</code>, et pourquoi cette
+          transparence change tout pour la suite.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-02.html">
+        <span class="num">02</span>
+        <span>
+          <strong>Écrire et relier : liens, backlinks, graphe</strong>
+          <span class="desc">Les liens <code>[[…]]</code>, les liens retour, le graphe local.
+          Dossiers contre étiquettes contre liens : lequel porte quoi, et pourquoi une hiérarchie
+          profonde devient vite une prison.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-03.html">
+        <span class="num">03</span>
+        <span>
+          <strong>Le front-matter : le contrat de données</strong>
+          <span class="desc">Les propriétés YAML en tête de note : types, pièges de syntaxe, et
+          l'idée maîtresse du cours — une note bien décrite se retrouve sans être rangée.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-04.html">
+        <span class="num">04</span>
+        <span>
+          <strong>Les plugins cœur : notes quotidiennes, templates, recherche</strong>
+          <span class="desc">Ce qu'Obsidian sait faire sans rien installer : Daily Notes,
+          Templates, la recherche et ses opérateurs, la palette de commandes, les signets.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-05.html">
+        <span class="num">05</span>
+        <span>
+          <strong>Dataview : interroger ses propres notes</strong>
+          <span class="desc"><code>LIST</code>, <code>TABLE</code>, <code>TASK</code>, champs
+          implicites et champs de front-matter, <code>GROUP BY</code> et son piège classique.
+          Le moteur qui rend l'arborescence plate viable.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-06.html">
+        <span class="num">06</span>
+        <span>
+          <strong>Templater et QuickAdd : générer et capturer</strong>
+          <span class="desc">Des templates qui s'évaluent à la création, et une capture en une
+          touche. Deux plugins qui décident du coût d'écrire une note — et deux pièges de
+          configuration qui les rendent silencieusement inertes.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-07.html">
+        <span class="num">07</span>
+        <span>
+          <strong>Le confort : Tasks, Kanban, Excalidraw… et Obsidian Git</strong>
+          <span class="desc">Les plugins qu'on ajoute pour le confort, ce qu'ils coûtent en
+          maintenance, et la synchronisation par git — avec la limite qu'il faut connaître avant
+          de compter dessus.</span>
+        </span>
+      </a></li>
+    </ul>
+
+    <div class="part-title">Partie II — Le vault autoportant</div>
+    <ul class="toc">
+      <li><a href="chapitre-08.html">
+        <span class="num">08</span>
+        <span>
+          <strong>Le problème : une configuration illisible et non rejouable</strong>
+          <span class="desc">Pourquoi versionner <code>.obsidian/</code> ne marche pas, pourquoi
+          la documenter ne marche pas non plus, et l'idée du manifeste : un fichier lisible qui
+          fait autorité, et un <code>.obsidian/</code> jetable.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-09.html">
+        <span class="num">09</span>
+        <span>
+          <strong>L'outillage : apply, pin, doctor, export</strong>
+          <span class="desc">Quatre commandes et les propriétés qu'elles portent : reconstruction
+          atomique, plugins vérifiés par empreinte, détection de dérive, et le chemin de retour
+          quand on règle quelque chose à la souris.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-10.html">
+        <span class="num">10</span>
+        <span>
+          <strong>Les conventions : arborescence plate et front-matter normé</strong>
+          <span class="desc">Cinq dossiers, trois types de note, un validateur. Comment un
+          contrat de données rend les vues possibles, et pourquoi le périmètre de validation est
+          une liste blanche.</span>
+        </span>
+      </a></li>
+      <li><a href="chapitre-11.html">
+        <span class="num">11</span>
+        <span>
+          <strong>Exploitation : au quotidien, sur machine neuve, et les pièges</strong>
+          <span class="desc">La boucle de tous les jours, l'amorçage en une commande, la mise à
+          jour d'un plugin, la confidentialité d'un dépôt permanent, et les aspérités réelles
+          rencontrées sur Windows et WSL.</span>
+        </span>
+      </a></li>
+    </ul>
+
+    <div class="callout astuce">
+      <p>Si tu connais déjà Obsidian et que tu veux seulement le workflow, la partie II se lit
+      seule&nbsp;: le chapitre&nbsp;8 rappelle en quelques lignes ce qu'il faut savoir de
+      <code>.obsidian/</code>. Dans l'autre sens, la partie I est un cours Obsidian complet et se
+      referme sans la partie II.</p>
+    </div>
+  </main>
+
+  <footer class="site">
+    Cours personnel · Obsidian &amp; le vault autoportant 🧠
+  </footer>
+</body>
+</html>
